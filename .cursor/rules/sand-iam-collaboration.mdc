@@ -1,0 +1,14 @@
+---
+description: SandIAM 与 Codex 的目录独占、契约冻结和并行规则
+alwaysApply: true
+---
+
+# SandIAM 协作
+
+先读 `AGENTS.md` 与 `sand-iam/docs/development/sand-iam-task-board.md`。
+
+- Codex 独占：`sand-iam/plugin/sand-iam/`（PHP、SQL、菜单/路由、契约）
+- Cursor 独占：`sand-iam/sandadmin-artd/src/views/plugin/sand-iam/`
+- 未冻结字段不得猜测；跨界修改必须先写看板交接
+- 业务拒绝：`plugin\sandadmin\exception\ApiException`，显式 `400`/`401`
+- 仅 PostgreSQL，表前缀 `sand_iam_*`

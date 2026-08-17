@@ -1,0 +1,12 @@
+.DS_Store
+.idea/
+
+.env
+.env.*
+!.env.example
+
+*.log
+tmp/
+.cursor/autopilot/watch.log
+.cursor/autopilot/wake.signal
+.cursor/autopilot/_fp_*

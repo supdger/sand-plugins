@@ -1,0 +1,14 @@
+# IAM-04 execution record
+
+- Status: completed, 2026-08-14.
+- Changed paths: SandIAM `0.1.1` lifecycle SQL/migration, authorization and organization-access support, identity/role/resource/policy/identity-role/admin-organization-grant/audit controllers, management routes, and Cursor-facing API handoff documentation.
+- Implemented: fail-closed `PolicyAuthorizer`; P0 condition/scope grammar; same-priority deny precedence; active identity/role/resource/policy checks; allow/deny/scope audit; delegated organization control-plane scope; super-admin-only global service catalog; package-local namespace compatibility for the host's in-progress `saiadmin → sandadmin` migration.
+- Schema verification: isolated PostgreSQL install/update created `sand_iam_admin_organization_grant`; real SaiAdmin-PG acceptance DB contains 18 `sand_iam_*` tables and the new grant table.
+- Runtime verification: clean host worktree plus the real host's migration dependencies proved role allow, condition mismatch deny, same-priority deny precedence, absent-policy deny, scope denial, six audit rows and `residual_org=0` after rollback.
+- Real-host verification: all `list/read/create/update/delete/export/batch` operations returned allow under a published policy; cross-organization delegation returned `SAND_IAM_ORGANIZATION_ACCESS_DENIED`; seven audit rows were visible before rollback and `residual_org=0` after it.
+- HTTP verification: after a complete service restart (needed to reload the host Composer namespace mapping), `GET /app/sand-iam/admin/policy/index` returns 401 without a login and `POST /app/sand-iam/runtime/context/issue` returns the stable signer-missing 503. No signer or admin credential was created or persisted.
+- Cursor handoff: `sand-iam-management-api-v0.1.md` freezes management routes, DTO fields, permission codes and UI error states for U-03.
+- Completion audit addendum: implemented the already-frozen `identity_binding`, `user_type`, and `identity_user_type` P0 objects and management routes. A real-host rollback transaction created all three and proved the identity/user-type application boundary; all three HTTP routes return 401 when no host session is provided.
+- Completion audit correction: cross-organization denial now writes an `organization.access` denied audit at the organization-access gate. Real-host rollback evidence: `SAND_IAM_ORGANIZATION_ACCESS_DENIED`, one denial audit, and `residual_org=0`.
+- Lifecycle regression: dedicated isolated database contained only 18 SandIAM tables before the run. `uninstall → install → update → uninstall` produced 18 tables, 213 constraints, 53 indexes, a successful update, and zero residual SandIAM tables.
+- Route-consistency correction: added the standard `identity-binding/update` controller method; it can only change status, never provider or subject. The real host plugin was synced and reloaded; source lint passed.

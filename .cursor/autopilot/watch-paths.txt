@@ -1,0 +1,8 @@
+# One relative path per line; missing files fingerprint as <missing> and still wake DETECT when created.
+sand-iam/docs/development/sand-iam-task-board.md
+sand-iam/docs/development/sand-iam-development-entry.md
+sand-iam/docs/development/sand-iam-p0-contract.md
+sand-iam/docs/development/sand-iam-management-api-v0.1.md
+sand-iam/docs/development/sand-iam-authorization-contract.md
+.codex/autopilot/tasks.md
+.codex/autopilot/state.json

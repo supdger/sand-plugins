@@ -1,0 +1,58 @@
+<template>
+  <div class="art-full-height workflow-center-page">
+    <FlowWorkbench
+      :items="workbenchItems"
+      :loading="loading"
+      :current-page="pagination.current"
+      :page-size="pagination.size"
+      :total="pagination.total"
+      @refresh="refreshData"
+      @page-change="handleCurrentChange"
+      @processed="handleProcessed"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+  import { computed } from 'vue'
+  import { useTable } from '@/hooks/core/useTable'
+  import FlowWorkbench from '../../components/flow-workbench.vue'
+  import type { FlowWorkbenchItem } from '../../components/flow-workbench'
+  import {
+    extractInitiatorName,
+    extractSummaryLines
+  } from '../../components/flow-workbench'
+  import api from '../../api'
+
+  const { data, loading, pagination, refreshData, handleCurrentChange } = useTable({
+    core: {
+      apiFn: api.instance.pending,
+      columnsFactory: () => []
+    }
+  })
+
+  const workbenchItems = computed<FlowWorkbenchItem[]>(() =>
+    data.value.map((task) => ({
+      key: task.id,
+      instanceId: task.instance_id,
+      taskId: task.id,
+      title: task.instance?.name || `审批实例 #${task.instance_id}`,
+      initiatorName: task.instance ? extractInitiatorName(task.instance) : undefined,
+      summaryLines: task.instance ? extractSummaryLines(task.instance.form_value) : undefined,
+      nodeName: task.node_name || '待审批节点',
+      time: task.create_time,
+      statusText: '待审批',
+      statusType: 'primary'
+    }))
+  )
+
+  function handleProcessed(): void {
+    refreshData()
+  }
+</script>
+
+<style scoped>
+  .workflow-center-page {
+    min-height: 0;
+  }
+</style>

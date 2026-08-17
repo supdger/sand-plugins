@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "mode": "run_all",
+  "updated_at": "2026-08-14T09:49:00+00:00",
+  "active_task": "DETECT-01",
+  "same_task_continuations": 1,
+  "max_same_task_continuations": 8,
+  "detect_mode": "waiting",
+  "detect_backoff_seconds": 3600,
+  "detect_backoff_until": "2026-08-14T10:48:00+00:00",
+  "watch_fingerprint": "ccea03f4fd5a7ccd",
+  "workspace_watch_fingerprint": "4a98f5952ada3326"
+}

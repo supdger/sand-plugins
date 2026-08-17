@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@arco-design/web-vue": "^2.58.0",
+    "vue-draggable-plus": "^0.6.0",
+    "less": "^4.6.7"
+  },
+  "require": {}
+}
