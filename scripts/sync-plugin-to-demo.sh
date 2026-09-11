@@ -54,7 +54,7 @@ rsync_arguments=(-a --delete-delay --itemize-changes)
 $apply || rsync_arguments+=(--dry-run)
 export_excludes=(
   '--exclude=.git/' '--exclude=.artifacts/' '--exclude=.backups/'
-  '--exclude=.staging/' '--exclude=.tmp/' '--exclude=.pnpm-store/'
+  '--exclude=.staging/' '--exclude=.tmp/' '--exclude=.pnpm-store/' '--exclude=.dart_tool/'
   '--exclude=node_modules/' '--exclude=vendor/' '--exclude=.playwright-cli/'
   '--exclude=.DS_Store'
 )
@@ -75,8 +75,9 @@ remaining="$(rsync -ani --delete-delay --itemize-changes "${export_excludes[@]}"
 }
 
 mkdir -p "$lock_root"
-source_revision="$(git -C "$workspace_root" rev-parse HEAD)"
-source_ref="$(git -C "$workspace_root" describe --tags --exact-match 2>/dev/null || print "commit:$source_revision")"
+source_revision="$(git -C "$workspace_root" log -1 --format=%H -- "$plugin_id")"
+[[ -n "$source_revision" ]] || { print -u2 "Cannot resolve source revision for $plugin_id"; exit 5; }
+source_ref="$(git -C "$workspace_root" describe --tags --exact-match "$source_revision" 2>/dev/null || print "commit:$source_revision")"
 cat > "$lock_root/${plugin_id}.lock" <<EOF
 format=1
 plugin=$plugin_id

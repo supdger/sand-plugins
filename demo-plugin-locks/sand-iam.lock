@@ -1,0 +1,9 @@
+format=1
+plugin=sand-iam
+source_revision=9a006842f6c286d58d48fe0c3f4f38b69dd7610a
+source_ref=commit:9a006842f6c286d58d48fe0c3f4f38b69dd7610a
+source_state=clean
+export_kind=source-tree
+formal_lifecycle=false
+synced_at_utc=2026-09-11T14:47:36Z
+target=sandadmin-demo-host/plugins/sand-iam
