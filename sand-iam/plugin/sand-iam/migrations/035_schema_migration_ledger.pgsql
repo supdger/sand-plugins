@@ -26,11 +26,25 @@ DECLARE
     recorded_rows integer;
     total_recorded_rows integer;
 BEGIN
+    SELECT count(*) INTO total_recorded_rows FROM sand_iam_schema_migration;
+
     IF cardinality(base_tables) <> 82
-       OR (SELECT count(*) FROM pg_class relation_class JOIN pg_namespace relation_namespace ON relation_namespace.oid = relation_class.relnamespace WHERE relation_namespace.nspname = current_schema() AND relation_class.relkind IN ('r', 'p') AND relation_class.relname LIKE 'sand_iam_%' AND relation_class.relname <> 'sand_iam_schema_migration') <> 83
        OR EXISTS (SELECT unnest(base_tables) EXCEPT SELECT relation_class.relname FROM pg_class relation_class JOIN pg_namespace relation_namespace ON relation_namespace.oid = relation_class.relnamespace WHERE relation_namespace.nspname = current_schema() AND relation_class.relkind IN ('r', 'p') AND relation_class.relname LIKE 'sand_iam_%' AND relation_class.relname <> 'sand_iam_schema_migration')
-       OR EXISTS (SELECT relation_class.relname FROM pg_class relation_class JOIN pg_namespace relation_namespace ON relation_namespace.oid = relation_class.relnamespace WHERE relation_namespace.nspname = current_schema() AND relation_class.relkind IN ('r', 'p') AND relation_class.relname LIKE 'sand_iam_%' AND relation_class.relname <> 'sand_iam_schema_migration' EXCEPT (SELECT unnest(base_tables) UNION SELECT 'sand_iam_identity_group_role')) THEN
-        RAISE EXCEPTION 'SandIAM migration ledger refuses baseline adoption: exact 0.6.0 82-table or post-033 83-table relation set is incompatible';
+       OR (
+            total_recorded_rows = 0
+            AND (
+                (SELECT count(*) FROM pg_class relation_class JOIN pg_namespace relation_namespace ON relation_namespace.oid = relation_class.relnamespace WHERE relation_namespace.nspname = current_schema() AND relation_class.relkind IN ('r', 'p') AND relation_class.relname LIKE 'sand_iam_%' AND relation_class.relname <> 'sand_iam_schema_migration') <> 83
+                OR EXISTS (SELECT relation_class.relname FROM pg_class relation_class JOIN pg_namespace relation_namespace ON relation_namespace.oid = relation_class.relnamespace WHERE relation_namespace.nspname = current_schema() AND relation_class.relkind IN ('r', 'p') AND relation_class.relname LIKE 'sand_iam_%' AND relation_class.relname <> 'sand_iam_schema_migration' EXCEPT (SELECT unnest(base_tables) UNION SELECT 'sand_iam_identity_group_role'))
+            )
+       )
+       OR (
+            total_recorded_rows > 0
+            AND (
+                (SELECT count(*) FROM pg_class relation_class JOIN pg_namespace relation_namespace ON relation_namespace.oid = relation_class.relnamespace WHERE relation_namespace.nspname = current_schema() AND relation_class.relkind IN ('r', 'p') AND relation_class.relname LIKE 'sand_iam_%' AND relation_class.relname <> 'sand_iam_schema_migration') <> 85
+                OR EXISTS (SELECT relation_class.relname FROM pg_class relation_class JOIN pg_namespace relation_namespace ON relation_namespace.oid = relation_class.relnamespace WHERE relation_namespace.nspname = current_schema() AND relation_class.relkind IN ('r', 'p') AND relation_class.relname LIKE 'sand_iam_%' AND relation_class.relname <> 'sand_iam_schema_migration' EXCEPT (SELECT unnest(base_tables) UNION SELECT 'sand_iam_identity_group_role' UNION SELECT 'sand_iam_initialization_draft' UNION SELECT 'sand_iam_initialization_draft_revision'))
+            )
+       ) THEN
+        RAISE EXCEPTION 'SandIAM migration ledger refuses schema adoption: exact legacy or ledger-backed relation fingerprint is incompatible';
     END IF;
 
     WITH required_baseline_column(table_name, column_name, data_type, is_nullable, requires_default) AS (
@@ -154,11 +168,11 @@ BEGIN
       END
       AND (
           (expected.constraint_type <> 'c' AND pg_get_constraintdef(actual_constraint.oid, true) = expected.definition_token)
-          OR (expected.constraint_type = 'c' AND regexp_replace(regexp_replace(regexp_replace(regexp_replace(lower(pg_get_constraintdef(actual_constraint.oid, true)), '\\s+not\\s+valid$', '', 'g'), '::[a-z_][a-z0-9_]*(\\s+varying)?(\\[\\])?', '', 'g'), '\\s+', '', 'g'), '[()]', '', 'g') = expected.normalized_check_definition)
+          OR (expected.constraint_type = 'c' AND regexp_replace(regexp_replace(regexp_replace(regexp_replace(lower(pg_get_constraintdef(actual_constraint.oid, true)), E'\\s+not\\s+valid$', '', 'g'), E'::[a-z_][a-z0-9_]*(\\s+varying)?(\\[\\])?', '', 'g'), E'\\s+', '', 'g'), '[()]', '', 'g') = expected.normalized_check_definition)
       );
 
     IF matched_columns <> 30 THEN
-        RAISE EXCEPTION 'SandIAM migration ledger refuses baseline adoption: scoped constraint definition fingerprint is incompatible';
+        RAISE EXCEPTION 'SandIAM migration ledger refuses baseline adoption: scoped constraint definition fingerprint is incompatible (matched %/30)', matched_columns;
     END IF;
 
     WITH required_ledger_column(column_name, data_type, character_maximum_length, is_nullable, requires_default) AS (
@@ -201,7 +215,7 @@ BEGIN
               AND ledger_revision.conname = 'ck_sand_iam_schema_migration_revision'
               AND ledger_revision.contype = 'c'
               AND ledger_revision.convalidated
-              AND regexp_replace(regexp_replace(regexp_replace(lower(pg_get_constraintdef(ledger_revision.oid, true)), '::[a-z_][a-z0-9_]*(\\s+varying)?(\\[\\])?', '', 'g'), '\\s+', '', 'g'), '[()]', '', 'g') = 'checkrevision>=1andrevision<=999'
+              AND regexp_replace(regexp_replace(regexp_replace(lower(pg_get_constraintdef(ledger_revision.oid, true)), E'::[a-z_][a-z0-9_]*(\\s+varying)?(\\[\\])?', '', 'g'), E'\\s+', '', 'g'), '[()]', '', 'g') = 'checkrevision>=1andrevision<=999'
        ) OR NOT EXISTS (
             SELECT 1
             FROM pg_constraint ledger_checksum
@@ -212,7 +226,7 @@ BEGIN
               AND ledger_checksum.conname = 'ck_sand_iam_schema_migration_checksum'
               AND ledger_checksum.contype = 'c'
               AND ledger_checksum.convalidated
-              AND regexp_replace(regexp_replace(regexp_replace(lower(pg_get_constraintdef(ledger_checksum.oid, true)), '::[a-z_][a-z0-9_]*(\\s+varying)?(\\[\\])?', '', 'g'), '\\s+', '', 'g'), '[()]', '', 'g') = 'checkchecksum~''^[0-9a-f]{64}$'''
+              AND regexp_replace(regexp_replace(regexp_replace(lower(pg_get_constraintdef(ledger_checksum.oid, true)), E'::[a-z_][a-z0-9_]*(\\s+varying)?(\\[\\])?', '', 'g'), E'\\s+', '', 'g'), '[()]', '', 'g') = 'checkchecksum~''^[0-9a-f]{64}$'''
        ) THEN
         RAISE EXCEPTION 'SandIAM migration ledger table definition is incompatible';
     END IF;
@@ -315,7 +329,7 @@ BEGIN
         package_version varchar(32) NOT NULL
     ) ON COMMIT DROP;
 
-WITH self_checksum(checksum) AS (VALUES ('7dc16a91f04e2d0d13ee1365c0a4bafcfd2131ae225790c201c35f91e16207af')),
+WITH self_checksum(checksum) AS (VALUES ('dba897d87a695b2ba4dac1dfac856c49668ef20f9ae941e8bcf0ef1fc75a6032')),
     expected(migration_file, revision, checksum, package_version) AS (
         VALUES
             ('001_iam04_admin_organization_grant.pgsql', 1, 'd214397c680631150f4cc1199d0af27063e968211b13b24a1e857ec9f0ceb5f6', '0.6.0'),
@@ -353,7 +367,8 @@ WITH self_checksum(checksum) AS (VALUES ('7dc16a91f04e2d0d13ee1365c0a4bafcfd2131
             ('032_initialization_binding_application_business_action.pgsql', 32, '5d3f6f7893356167f51eac62fa667990dcae2aebc4f12c11c3ac8e88f87353cb', '0.6.0'),
             ('033_identity_group_role.pgsql', 33, '0c45fefa5bcb2248c66140aaf8c439b8fecfb8e6c975c1e7677996ebc02fc83a', '0.7.0'),
         ('034_identity_group_role_permission_catalog.pgsql', 34, '97ab44356d905eb0e1c13ca3101a3dd0b8a4af3264cecb81310e1f522dfc2485', '0.7.0'),
-        ('036_acceptance_fixture_support.pgsql', 36, '68a9e2a01b0037d4750a2e9861034029dea4620b638c809cb1020ac8608b208a', '0.7.0')
+        ('036_acceptance_fixture_support.pgsql', 36, 'd74d038b7455d24699a8805d3941f65867de206ea79ea168fa4dabf7169042d8', '0.7.0'),
+        ('037_initialization_draft.pgsql', 37, 'cf7013ee42f9bd6319e8c23524f274e382901af7fbb32fa947732cd8beeb640c', '0.7.0')
         UNION ALL
         SELECT '035_schema_migration_ledger.pgsql', 35, self_checksum.checksum, '0.7.0'
         FROM self_checksum
@@ -390,8 +405,6 @@ WITH self_checksum(checksum) AS (VALUES ('7dc16a91f04e2d0d13ee1365c0a4bafcfd2131
     FROM sand_iam_schema_migration recorded
     JOIN pg_temp.sand_iam_schema_migration_expected expected ON expected.migration_file = recorded.migration_file;
 
-    SELECT count(*) INTO total_recorded_rows FROM sand_iam_schema_migration;
-
     IF recorded_rows = 0 THEN
         INSERT INTO sand_iam_schema_migration (migration_file, revision, checksum, package_version, executed_time)
         SELECT migration_file, revision, checksum, package_version, CURRENT_TIMESTAMP
@@ -409,9 +422,20 @@ WITH self_checksum(checksum) AS (VALUES ('7dc16a91f04e2d0d13ee1365c0a4bafcfd2131
                 WHERE expected.revision <= 35
                   AND recorded.migration_file IS NULL
             )
+            AND EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision = 36)
+            AND NOT EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision = 37)
+        )
+        OR (
+            recorded_rows = expected_rows - 2
+            AND total_recorded_rows = expected_rows - 2
             AND NOT EXISTS (
-                SELECT 1 FROM sand_iam_schema_migration WHERE revision = 36
+                SELECT 1
+                FROM pg_temp.sand_iam_schema_migration_expected expected
+                LEFT JOIN sand_iam_schema_migration recorded ON recorded.migration_file = expected.migration_file
+                WHERE expected.revision <= 35
+                  AND recorded.migration_file IS NULL
             )
+            AND NOT EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision IN (36, 37))
         )
     ) THEN
         RAISE EXCEPTION 'SandIAM migration ledger is partial; refusing to adopt or overwrite missing baseline records';

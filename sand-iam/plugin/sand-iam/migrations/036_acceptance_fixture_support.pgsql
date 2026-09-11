@@ -49,7 +49,7 @@ BEGIN
     END IF;
 
     SELECT count(*) INTO ledger_rows FROM sand_iam_schema_migration;
-    IF ledger_rows NOT IN (36, 37) THEN
+    IF ledger_rows NOT IN (36, 37, 38) THEN
         RAISE EXCEPTION 'SandIAM 0.7.0 acceptance cleanup requires the exact migration 001-035 ledger prefix';
     END IF;
     SELECT migration_file, revision, package_version INTO migration_row
@@ -220,14 +220,14 @@ BEGIN
     WHERE migration_file = '036_acceptance_fixture_support.pgsql';
     IF recorded.revision IS NOT NULL AND (
         recorded.revision <> 36
-        OR recorded.checksum <> '68a9e2a01b0037d4750a2e9861034029dea4620b638c809cb1020ac8608b208a'
+        OR recorded.checksum <> 'd74d038b7455d24699a8805d3941f65867de206ea79ea168fa4dabf7169042d8'
         OR recorded.package_version <> '0.7.0'
     ) THEN
         RAISE EXCEPTION 'SandIAM migration 036 ledger identity conflicts with the controlled acceptance-fixture support';
     END IF;
 END $$;
 
-WITH self_checksum(checksum) AS (VALUES ('68a9e2a01b0037d4750a2e9861034029dea4620b638c809cb1020ac8608b208a'))
+WITH self_checksum(checksum) AS (VALUES ('d74d038b7455d24699a8805d3941f65867de206ea79ea168fa4dabf7169042d8'))
 INSERT INTO sand_iam_schema_migration (migration_file, revision, checksum, package_version, executed_time)
 SELECT '036_acceptance_fixture_support.pgsql', 36, self_checksum.checksum, '0.7.0', CURRENT_TIMESTAMP
 FROM self_checksum
@@ -241,9 +241,9 @@ BEGIN
     FROM sand_iam_schema_migration
     WHERE migration_file = '036_acceptance_fixture_support.pgsql'
       AND revision = 36
-      AND checksum = '68a9e2a01b0037d4750a2e9861034029dea4620b638c809cb1020ac8608b208a'
+      AND checksum = 'd74d038b7455d24699a8805d3941f65867de206ea79ea168fa4dabf7169042d8'
       AND package_version = '0.7.0';
-    IF recorded_rows <> 1 OR (SELECT count(*) FROM sand_iam_schema_migration) <> 37 THEN
+    IF recorded_rows <> 1 OR (SELECT count(*) FROM sand_iam_schema_migration) NOT IN (37, 38) THEN
         RAISE EXCEPTION 'SandIAM migration 036 did not close the exact 001-036 ledger';
     END IF;
 END $$;

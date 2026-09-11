@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly db_prefix='sand_iam_t01_'
+readonly db_prefix='sand_iam_acceptance_t01_'
 readonly maintenance_db="${SAND_IAM_T01_MAINTENANCE_DB:-postgres}"
 readonly db_name="${SAND_IAM_T01_DB:-${db_prefix}run_$$}"
 readonly repo_root="$(git rev-parse --show-toplevel)"
@@ -10,7 +10,7 @@ readonly sand_iam_root="${repo_root}/sand-iam"
 database_created=false
 
 fail() { printf 'IAM-T01 lifecycle failed: %s\n' "$*" >&2; exit 1; }
-[[ "${db_name}" =~ ^sand_iam_t01_[a-z0-9_]{1,48}$ ]] || fail 'unsafe temporary database name'
+[[ "${db_name}" =~ ^sand_iam_acceptance_t01_[a-z0-9_]{1,48}$ ]] || fail 'unsafe temporary database name'
 [[ "${db_name}" != "${maintenance_db}" ]] || fail 'temporary database cannot be the maintenance database'
 
 cleanup() {
@@ -171,15 +171,22 @@ BEGIN
 END $$;
 SQL
 
+printf 'IAM-T01 post-install schema snapshot: tables=%s ledger_rows=%s\n' \
+    "$(psql_test --tuples-only --no-align --command="SELECT count(*) FROM pg_tables WHERE schemaname = current_schema() AND tablename LIKE 'sand_iam_%'")" \
+    "$(psql_test --tuples-only --no-align --command="SELECT count(*) FROM sand_iam_schema_migration")"
+psql_test --tuples-only --no-align --command="SELECT tablename FROM pg_tables WHERE schemaname = current_schema() AND tablename LIKE 'sand_iam_%' ORDER BY tablename" \
+    | sed 's/^/IAM-T01 post-install table: /'
+
 psql_test --file="${sand_iam_root}/update.sql"
 psql_test --file="${sand_iam_root}/update.sql"
 psql_test --file="${sand_iam_root}/uninstall.sql"
 [[ "$(psql_test --tuples-only --no-align --command="SELECT count(*) FROM pg_tables WHERE schemaname = current_schema() AND tablename LIKE 'sand_iam_%'")" == '0' ]] || fail 'uninstall left SandIAM tables'
 
-# Rebuild the same isolated database at the 003 boundary, then prove the package
-# update crosses 003 -> 004 cleanly and preserves application isolation in SQL.
-awk '/^-- IAM-T02-004 BEGIN/{exit} {print}' "${sand_iam_root}/install.sql" | psql_test
-[[ "$(psql_test --tuples-only --no-align --command="SELECT to_regclass('sand_iam_auth_session') IS NOT NULL AND to_regclass('sand_iam_mfa_factor') IS NULL")" == 't' ]] || fail 'could not establish the isolated 003 baseline'
+# Rebuild the same isolated database at the published 0.6.0/032 boundary, then
+# prove the package update crosses 032 -> 037 cleanly and preserves application
+# isolation in SQL.
+awk '/^-- lifecycle source: migrations\/033_identity_group_role\.pgsql/{exit} {print}' "${sand_iam_root}/install.sql" | psql_test
+[[ "$(psql_test --tuples-only --no-align --command="SELECT to_regclass('sand_iam_auth_session') IS NOT NULL AND to_regclass('sand_iam_identity_group_role') IS NULL AND to_regclass('sand_iam_schema_migration') IS NULL")" == 't' ]] || fail 'could not establish the isolated 0.6.0/032 baseline'
 psql_test --file="${sand_iam_root}/update.sql"
 psql_test --file="${sand_iam_root}/update.sql"
 
@@ -243,14 +250,14 @@ BEGIN
         WHERE table_name = 'sand_iam_mfa_factor'
           AND column_name IN ('credential_id', 'public_key', 'user_handle', 'sign_count')
     ) THEN
-        RAISE EXCEPTION '003 -> 004 upgrade retained the obsolete mixed MFA factor schema';
+        RAISE EXCEPTION '0.6.0/032 -> 0.7.0 upgrade retained the obsolete mixed MFA factor schema';
     END IF;
     IF to_regclass('sand_iam_webauthn_credential') IS NULL THEN
-        RAISE EXCEPTION '003 -> 004 upgrade did not create the separate WebAuthn credential table';
+        RAISE EXCEPTION '0.6.0/032 -> 0.7.0 upgrade did not preserve the separate WebAuthn credential table';
     END IF;
 END $$;
 SQL
 
 psql_test --file="${sand_iam_root}/uninstall.sql"
-[[ "$(psql_test --tuples-only --no-align --command="SELECT count(*) FROM pg_tables WHERE schemaname = current_schema() AND tablename LIKE 'sand_iam_%'")" == '0' ]] || fail '003 -> 004 upgrade uninstall left SandIAM tables'
-printf 'SandIAM auth lifecycle passed: fresh install -> update -> uninstall; isolated 003 -> current x2 -> isolation checks -> uninstall (%s).\n' "${db_name}"
+[[ "$(psql_test --tuples-only --no-align --command="SELECT count(*) FROM pg_tables WHERE schemaname = current_schema() AND tablename LIKE 'sand_iam_%'")" == '0' ]] || fail '0.6.0/032 -> 0.7.0 upgrade uninstall left SandIAM tables'
+printf 'SandIAM auth lifecycle passed: fresh install -> update x2 -> uninstall; isolated 0.6.0/032 -> 0.7.0 update x2 -> isolation checks -> uninstall (%s).\n' "${db_name}"

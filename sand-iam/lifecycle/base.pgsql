@@ -240,6 +240,12 @@ WITH path_entity("path_code","entity_code") AS (
         ('SandIAMApiRouteBinding','SandIAMApiRouteBinding'),
         ('SandIAMRouteManifest','SandIAMConnection'),
         ('SandIAMPolicySimulate','SandIAMPolicy')
+), route_menu("code") AS (
+    SELECT menu."code"
+    FROM "sand_system_menu" menu
+    JOIN "sand_system_menu" root ON root."id" = menu."parent_id"
+    WHERE root."code" = 'SandIAM'
+      AND menu."type" = 2
 ), sandiam_role("role_id","entity_code") AS (
     SELECT DISTINCT role_menu."role_id", entity."code"
     FROM "sand_system_role_menu" role_menu

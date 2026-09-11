@@ -90,7 +90,7 @@ release070Assert('036 changes only the two nullable audit ownership links to SET
     str_contains($migration036, "column_name IN ('organization_id', 'application_id')")
     && substr_count($migration036, 'ON DELETE SET NULL') >= 4
     && str_contains($migration036, '036_acceptance_fixture_support.pgsql')
-    && str_contains($migration036, '(SELECT count(*) FROM sand_iam_schema_migration) <> 37'));
+    && str_contains($migration036, '(SELECT count(*) FROM sand_iam_schema_migration) NOT IN (37, 38)'));
 
 $ledger = (string) file_get_contents($migrations . '/035_schema_migration_ledger.pgsql');
 $packageLedger = (string) file_get_contents($packageMigrations . '/035_schema_migration_ledger.pgsql');
@@ -107,24 +107,21 @@ release070Assert('035 records the required migration identity fields and guards 
     && str_contains($ledger, 'checksum char(64) NOT NULL')
     && str_contains($ledger, 'package_version varchar(32) NOT NULL')
     && str_contains($ledger, 'executed_time timestamp(0) without time zone NOT NULL')
-    && str_contains($ledger, 'exact 0.6.0 82-table or post-033 83-table relation set is incompatible')
+    && str_contains($ledger, 'exact legacy or ledger-backed relation fingerprint is incompatible')
     && str_contains($ledger, 'migration ledger checksum or package-version conflict; refusing to continue')
     && str_contains($ledger, 'migration ledger is partial; refusing to adopt or overwrite missing baseline records')
     && str_contains($ledger, 'migration ledger contains an unknown migration filename; refusing to continue')
     && str_contains($ledger, "WHERE revision <= 35")
     && str_contains($ledger, 'recorded_rows = expected_rows - 1')
+    && str_contains($ledger, 'recorded_rows = expected_rows - 2')
     && str_contains($ledger, "('036_acceptance_fixture_support.pgsql', 36,"));
 $sourceMigrationNames = array_map('basename', glob($migrations . '/*.pgsql') ?: []);
 sort($sourceMigrationNames, SORT_STRING);
-$historicalLedgerMigrationNames = array_values(array_filter(
-    $sourceMigrationNames,
-    static fn (string $name): bool => $name !== '037_initialization_draft.pgsql'
-));
 preg_match_all("/^\\s*\\('([0-9]{3}_[^']+\\.pgsql)',\\s*\\d+,\\s*'[0-9a-f]{64}'/m", $ledger, $ledgerMigrationMatches);
 $ledgerMigrationNames = $ledgerMigrationMatches[1] ?? [];
 $ledgerMigrationNames[] = '035_schema_migration_ledger.pgsql';
 sort($ledgerMigrationNames, SORT_STRING);
-release070Assert('035 preserves its frozen historical filename set instead of rewriting a shipped ledger', $ledgerMigrationNames === $historicalLedgerMigrationNames);
+release070Assert('035 catalogs every migration filename that can already exist when update.sql is replayed', $ledgerMigrationNames === $sourceMigrationNames);
 $draftMigration = (string) file_get_contents($migrations . '/037_initialization_draft.pgsql');
 $packageDraftMigration = (string) file_get_contents($packageMigrations . '/037_initialization_draft.pgsql');
 preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $draftMigration, $draftChecksum);

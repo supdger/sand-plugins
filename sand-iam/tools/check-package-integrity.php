@@ -498,7 +498,7 @@ $assert('published 0.6.0 migration 021 remains byte-immutable in root and packag
     return true;
 });
 
-$assert('migration ledgers preserve the frozen 035 catalog and register the 037 draft checksum', static function () use ($root, $manifestMigrationNames): bool {
+$assert('migration ledger catalogs every shipped migration and registers the 037 draft checksum', static function () use ($root, $manifestMigrationNames): bool {
     $ledger = (string) file_get_contents($root . '/migrations/035_schema_migration_ledger.pgsql');
     if ($ledger === '' || !str_contains($ledger, 'CREATE TABLE IF NOT EXISTS sand_iam_schema_migration')
         || !str_contains($ledger, 'migration_file varchar(160) PRIMARY KEY')
@@ -514,7 +514,7 @@ $assert('migration ledgers preserve the frozen 035 catalog and register the 037 
     if (!is_string($canonical) || hash('sha256', $canonical) !== $self[1]) {
         return false;
     }
-    foreach (array_filter($manifestMigrationNames, static fn (string $name): bool => $name !== '037_initialization_draft.pgsql') as $name) {
+    foreach ($manifestMigrationNames as $name) {
         if (!str_contains($ledger, "'{$name}'")) {
             return false;
         }
@@ -534,7 +534,7 @@ $assert('migration ledgers preserve the frozen 035 catalog and register the 037 
         return false;
     }
     return str_contains($ledger, 'migration ledger checksum or package-version conflict; refusing to continue')
-        && str_contains($ledger, 'exact 0.6.0 82-table or post-033 83-table relation set is incompatible')
+        && str_contains($ledger, 'exact legacy or ledger-backed relation fingerprint is incompatible')
         && str_contains($ledger, 'migration ledger contains an unknown migration filename; refusing to continue')
         && str_contains($ledger, "('sand_iam_identity_provider', 'application_id', 'bigint', 'YES', false)")
         && str_contains($ledger, "'ck_sand_iam_identity_provider_scope', 'c', NULL, 'checkscope_type=''application''andapplication_idisnotnullorscope_type=''organization''andapplication_idisnull'")
