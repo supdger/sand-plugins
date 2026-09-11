@@ -82,6 +82,9 @@ git -C "${repo_root}" cat-file -e "${baseline_ref}^{commit}" 2>/dev/null \
     || fail "0.1 baseline commit is unavailable: ${baseline_ref}"
 git -C "${repo_root}" show "${baseline_ref}:sand-iam/install.sql" | psql_fixture
 awk '/^BEGIN;/{exit} {print}' "${sand_iam_root}/lifecycle/base.pgsql" | psql_fixture
+# The published 0.6 demo menu predates the dedicated developer route. Keep
+# that real predecessor shape so migration 036 must create its own new parent.
+psql_fixture --command="DELETE FROM sand_system_menu WHERE code = 'SandIAMDeveloperDocs'"
 
 if ! psql_fixture --tuples-only --no-align --command="SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'sand_iam_identity_binding' AND column_name = 'provider_code'" | grep -qx '1'; then
     fail "baseline ${baseline_ref} did not create the expected 0.1 provider_code fixture"
@@ -129,6 +132,52 @@ done
 psql_fixture --file="${sand_iam_root}/update.sql"
 
 psql_fixture <<'SQL'
+DO $$
+DECLARE
+    developer_menu_count integer;
+    acceptance_permission_count integer;
+BEGIN
+    SELECT count(*) INTO developer_menu_count
+    FROM sand_system_menu developer
+    JOIN sand_system_menu root ON root.id = developer.parent_id
+    WHERE developer.code = 'SandIAMDeveloperDocs'
+      AND root.code = 'SandIAM'
+      AND developer.name = '开发者接入'
+      AND developer.slug = ''
+      AND developer.type = 2
+      AND developer.path = 'developer-docs'
+      AND developer.component = '/plugin/sand-iam/developer-docs/index'
+      AND developer.icon = ''
+      AND developer.sort = 56
+      AND developer.is_hidden = 1
+      AND developer.status = 1;
+    IF developer_menu_count <> 1 THEN
+        RAISE EXCEPTION '0.6.0 -> 0.7.0 upgrade did not create the exact unique developer menu';
+    END IF;
+
+    SELECT count(*) INTO acceptance_permission_count
+    FROM sand_system_menu permission
+    JOIN sand_system_menu developer ON developer.id = permission.parent_id
+    WHERE developer.code = 'SandIAMDeveloperDocs'
+      AND permission.code IN ('sand_iam:acceptance_fixture:cleanup', 'sand_iam:acceptance_fixture:read')
+      AND permission.slug = permission.code
+      AND permission.type = 3
+      AND permission.is_hidden = 1
+      AND permission.status = 1;
+    IF acceptance_permission_count <> 2 THEN
+        RAISE EXCEPTION '0.6.0 -> 0.7.0 upgrade did not attach the exact acceptance permissions';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM sand_system_role_menu role_menu
+        JOIN sand_system_menu permission ON permission.id = role_menu.menu_id
+        WHERE permission.code IN ('sand_iam:acceptance_fixture:cleanup', 'sand_iam:acceptance_fixture:read')
+    ) THEN
+        RAISE EXCEPTION '0.6.0 -> 0.7.0 upgrade granted acceptance permissions to an existing role';
+    END IF;
+END
+$$;
+
 DO $$
 BEGIN
     IF NOT EXISTS (

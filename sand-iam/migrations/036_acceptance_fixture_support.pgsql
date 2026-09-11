@@ -94,6 +94,54 @@ END $$;
 
 DO $$
 DECLARE
+    root_menu_id bigint;
+    root_menu_count integer;
+    developer_menu_id bigint;
+    developer_parent_id bigint;
+    developer_menu_count integer;
+BEGIN
+    SELECT count(*), min(id)
+    INTO root_menu_count, root_menu_id
+    FROM sand_system_menu
+    WHERE code = 'SandIAM';
+    IF root_menu_count <> 1 THEN
+        RAISE EXCEPTION 'SandIAM 0.7.0 cannot add developer access: root menu SandIAM must be unique';
+    END IF;
+
+    SELECT count(*), min(id), min(parent_id)
+    INTO developer_menu_count, developer_menu_id, developer_parent_id
+    FROM sand_system_menu
+    WHERE code = 'SandIAMDeveloperDocs';
+    IF developer_menu_count > 1 THEN
+        RAISE EXCEPTION 'SandIAM 0.7.0 cannot add developer access: menu SandIAMDeveloperDocs is duplicated';
+    END IF;
+    IF developer_menu_count = 1 AND developer_parent_id IS DISTINCT FROM root_menu_id THEN
+        RAISE EXCEPTION 'SandIAM 0.7.0 cannot add developer access: menu SandIAMDeveloperDocs has incompatible ownership';
+    END IF;
+
+    IF developer_menu_count = 0 THEN
+        INSERT INTO sand_system_menu
+            (parent_id, name, code, slug, type, path, component, icon, sort, is_hidden, status, create_time, update_time)
+        VALUES
+            (root_menu_id, '开发者接入', 'SandIAMDeveloperDocs', '', 2, 'developer-docs', '/plugin/sand-iam/developer-docs/index', '', 56, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+    ELSE
+        UPDATE sand_system_menu
+        SET name = '开发者接入',
+            slug = '',
+            type = 2,
+            path = 'developer-docs',
+            component = '/plugin/sand-iam/developer-docs/index',
+            icon = '',
+            sort = 56,
+            is_hidden = 1,
+            status = 1,
+            update_time = CURRENT_TIMESTAMP
+        WHERE id = developer_menu_id;
+    END IF;
+END $$;
+
+DO $$
+DECLARE
     parent_menu_id bigint;
 BEGIN
     SELECT id INTO parent_menu_id
@@ -220,14 +268,14 @@ BEGIN
     WHERE migration_file = '036_acceptance_fixture_support.pgsql';
     IF recorded.revision IS NOT NULL AND (
         recorded.revision <> 36
-        OR recorded.checksum <> 'd74d038b7455d24699a8805d3941f65867de206ea79ea168fa4dabf7169042d8'
+        OR recorded.checksum <> '403f0fbadaf54436b81d8ff9d9eb2c14cbe83b5a26c3d13594241f2b40e17a3b'
         OR recorded.package_version <> '0.7.0'
     ) THEN
         RAISE EXCEPTION 'SandIAM migration 036 ledger identity conflicts with the controlled acceptance-fixture support';
     END IF;
 END $$;
 
-WITH self_checksum(checksum) AS (VALUES ('d74d038b7455d24699a8805d3941f65867de206ea79ea168fa4dabf7169042d8'))
+WITH self_checksum(checksum) AS (VALUES ('403f0fbadaf54436b81d8ff9d9eb2c14cbe83b5a26c3d13594241f2b40e17a3b'))
 INSERT INTO sand_iam_schema_migration (migration_file, revision, checksum, package_version, executed_time)
 SELECT '036_acceptance_fixture_support.pgsql', 36, self_checksum.checksum, '0.7.0', CURRENT_TIMESTAMP
 FROM self_checksum
@@ -241,7 +289,7 @@ BEGIN
     FROM sand_iam_schema_migration
     WHERE migration_file = '036_acceptance_fixture_support.pgsql'
       AND revision = 36
-      AND checksum = 'd74d038b7455d24699a8805d3941f65867de206ea79ea168fa4dabf7169042d8'
+      AND checksum = '403f0fbadaf54436b81d8ff9d9eb2c14cbe83b5a26c3d13594241f2b40e17a3b'
       AND package_version = '0.7.0';
     IF recorded_rows <> 1 OR (SELECT count(*) FROM sand_iam_schema_migration) NOT IN (37, 38) THEN
         RAISE EXCEPTION 'SandIAM migration 036 did not close the exact 001-036 ledger';

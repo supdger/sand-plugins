@@ -92,6 +92,11 @@ release070Assert('036 is byte-identical, transactional and has a stable canonica
 release070Assert('036 exposes only two hidden developer permissions and never grants a role',
     array_reduce($acceptancePermissions, static fn (bool $ok, string $code): bool => $ok && substr_count($migration036, $code) >= 1, true)
     && str_contains($migration036, "code = 'SandIAMDeveloperDocs'")
+    && str_contains($migration036, "code = 'SandIAM'")
+    && str_contains($migration036, 'root menu SandIAM must be unique')
+    && str_contains($migration036, 'menu SandIAMDeveloperDocs is duplicated')
+    && str_contains($migration036, 'menu SandIAMDeveloperDocs has incompatible ownership')
+    && str_contains($migration036, "(root_menu_id, '开发者接入', 'SandIAMDeveloperDocs'")
     && str_contains($migration036, 'matched_permissions <> 2')
     && !str_contains($migration036, 'sand_system_role_menu'));
 release070Assert('036 changes only the two nullable audit ownership links to SET NULL and registers itself last',
