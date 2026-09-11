@@ -47,6 +47,14 @@ $package021 = $packageMigrations . '/021_admin_permission_catalog.pgsql';
 release070Assert('published 0.6.0 migration 021 hash is immutable in root and package',
     hash_file('sha256', $migration021) === $published021 && hash_file('sha256', $package021) === $published021);
 
+$migration033 = (string) file_get_contents($migrations . '/033_identity_group_role.pgsql');
+$package033 = (string) file_get_contents($packageMigrations . '/033_identity_group_role.pgsql');
+release070Assert('033 is byte-identical and owns one explicit transaction before schema mutation',
+    hash('sha256', $migration033) === hash('sha256', $package033)
+    && substr_count($migration033, 'BEGIN;') === 1
+    && substr_count($migration033, 'COMMIT;') === 1
+    && strpos($migration033, 'BEGIN;') < strpos($migration033, 'CREATE UNIQUE INDEX'));
+
 $migration034 = (string) file_get_contents($migrations . '/034_identity_group_role_permission_catalog.pgsql');
 $package034 = (string) file_get_contents($packageMigrations . '/034_identity_group_role_permission_catalog.pgsql');
 $permissionCodes = [

@@ -3,6 +3,8 @@
 -- records must carry the same application_id, which belongs to exactly one
 -- SandIAM organization.
 
+BEGIN;
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_sand_iam_role_id_application
     ON sand_iam_role (id, application_id);
 
@@ -26,3 +28,5 @@ CREATE TABLE IF NOT EXISTS sand_iam_identity_group_role (
 
 CREATE INDEX IF NOT EXISTS idx_sand_iam_identity_group_role_role
     ON sand_iam_identity_group_role (application_id, role_id, status);
+
+COMMIT;

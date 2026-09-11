@@ -329,7 +329,7 @@ BEGIN
         package_version varchar(32) NOT NULL
     ) ON COMMIT DROP;
 
-WITH self_checksum(checksum) AS (VALUES ('dba897d87a695b2ba4dac1dfac856c49668ef20f9ae941e8bcf0ef1fc75a6032')),
+WITH self_checksum(checksum) AS (VALUES ('a2fed0df445db29483907944c80e72f13fa4283106f2ca425554228c471d4b8c')),
     expected(migration_file, revision, checksum, package_version) AS (
         VALUES
             ('001_iam04_admin_organization_grant.pgsql', 1, 'd214397c680631150f4cc1199d0af27063e968211b13b24a1e857ec9f0ceb5f6', '0.6.0'),
@@ -365,7 +365,7 @@ WITH self_checksum(checksum) AS (VALUES ('dba897d87a695b2ba4dac1dfac856c49668ef2
             ('030_service_grant_invocation_control.pgsql', 30, '9fa587065ae878777d191db10f62d2e6e0dd33a97d90edcee883b709081602bc', '0.6.0'),
             ('031_oidc_signing_key_rotation.pgsql', 31, '7ce71dca33ee220faf2ca12812c0d132dd4190ed4c3094eb69e10bf8fdb31f14', '0.6.0'),
             ('032_initialization_binding_application_business_action.pgsql', 32, '5d3f6f7893356167f51eac62fa667990dcae2aebc4f12c11c3ac8e88f87353cb', '0.6.0'),
-            ('033_identity_group_role.pgsql', 33, '0c45fefa5bcb2248c66140aaf8c439b8fecfb8e6c975c1e7677996ebc02fc83a', '0.7.0'),
+            ('033_identity_group_role.pgsql', 33, '161352617d1e46205a2abbf3b074ab7276e9dd691d151b61a2d8d146de26fd68', '0.7.0'),
         ('034_identity_group_role_permission_catalog.pgsql', 34, '97ab44356d905eb0e1c13ca3101a3dd0b8a4af3264cecb81310e1f522dfc2485', '0.7.0'),
         ('036_acceptance_fixture_support.pgsql', 36, 'd74d038b7455d24699a8805d3941f65867de206ea79ea168fa4dabf7169042d8', '0.7.0'),
         ('037_initialization_draft.pgsql', 37, 'cf7013ee42f9bd6319e8c23524f274e382901af7fbb32fa947732cd8beeb640c', '0.7.0')
