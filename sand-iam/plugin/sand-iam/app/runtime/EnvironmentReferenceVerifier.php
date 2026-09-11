@@ -6,6 +6,7 @@ namespace plugin\SandIam\app\runtime;
 
 use plugin\SandIam\app\model\Application;
 use plugin\SandIam\app\model\Environment;
+use plugin\SandIam\app\model\Organization;
 use plugin\sandadmin\exception\ApiException;
 
 final class EnvironmentReferenceVerifier
@@ -24,8 +25,12 @@ final class EnvironmentReferenceVerifier
         if ($application === null) {
             throw new ApiException('SAND_IAM_SERVICE_ACTION_FORBIDDEN: application reference is unavailable', 403);
         }
+        $organization = Organization::where('id', (int) $application->organization_id)->where('status', 1)->find();
+        if ($organization === null) {
+            throw new ApiException('SAND_IAM_SERVICE_ACTION_FORBIDDEN: organization reference is unavailable', 403);
+        }
         return [
-            'organization_id' => (int) $application->organization_id,
+            'organization_id' => (int) $organization->id,
             'application_id' => (int) $application->id,
             'environment_id' => (int) $environment->id,
             'status' => (int) $environment->status,

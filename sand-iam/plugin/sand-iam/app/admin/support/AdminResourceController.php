@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace plugin\SandIam\app\admin\support;
 
 use plugin\SandIam\app\service\AuditWriter;
+use plugin\SandIam\app\service\RequestId;
 use plugin\sandadmin\basic\BaseController;
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
@@ -20,6 +21,7 @@ abstract class AdminResourceController extends BaseController
     protected array $requiredFields = ['code', 'name'];
     protected string $resourceType;
     protected bool $requiresSuperAdmin = false;
+    protected ?string $keywordField = 'name';
 
     public function index(Request $request): Response
     {
@@ -36,8 +38,8 @@ abstract class AdminResourceController extends BaseController
             }
         }
         $keyword = trim((string) $request->input('keywords', ''));
-        if ($keyword !== '') {
-            $query->whereLike('name', '%' . $keyword . '%');
+        if ($keyword !== '' && $this->keywordField !== null) {
+            $query->whereLike($this->keywordField, '%' . $keyword . '%');
         }
         return $this->success($query->paginate(['page' => $page, 'list_rows' => $limit])->toArray());
     }
@@ -51,6 +53,7 @@ abstract class AdminResourceController extends BaseController
     {
         $this->assertAdministrativeAccess();
         $payload = $this->payload($request, false);
+        $payload = $this->normalizePayload($payload);
         $this->assertReferences($payload);
         $this->assertPayloadAccess($payload);
         $modelClass = $this->modelClass;
@@ -65,6 +68,7 @@ abstract class AdminResourceController extends BaseController
         $model = $this->find($request);
         $payload = $this->payload($request, true);
         unset($payload['code']);
+        $payload = $this->normalizePayload($payload, $model);
         $this->assertReferences($payload, $model);
         $this->assertPayloadAccess($payload, $model);
         $model->save($payload);
@@ -94,20 +98,69 @@ abstract class AdminResourceController extends BaseController
         if (!$updating) {
             foreach ($this->requiredFields as $field) {
                 if (!isset($payload[$field]) || trim((string) $payload[$field]) === '') {
-                    throw new ApiException('SAND_IAM_VALIDATION_ERROR: ' . $field . ' is required', 400);
+                    throw new ApiException(
+                        'SAND_IAM_VALIDATION_ERROR: ' . $this->fieldLabel($field) . '不能为空',
+                        400
+                    );
                 }
             }
-            if (isset($payload['code']) && !preg_match('/^[a-z0-9][a-z0-9_-]{1,63}$/', (string) $payload['code'])) {
-                throw new ApiException('SAND_IAM_VALIDATION_ERROR: invalid code', 400);
+            if (isset($payload['code']) && !$this->isValidCode((string) $payload['code'])) {
+                throw new ApiException(
+                    'SAND_IAM_VALIDATION_ERROR: ' . $this->codeValidationMessage(),
+                    400
+                );
             }
         }
         if (isset($payload['status']) && !in_array((int) $payload['status'], [1, 2], true)) {
-            throw new ApiException('SAND_IAM_VALIDATION_ERROR: invalid status', 400);
+            throw new ApiException('SAND_IAM_VALIDATION_ERROR: 状态只能选择已启用或已停用', 400);
         }
         return $payload;
     }
 
+    protected function fieldLabel(string $field): string
+    {
+        return match ($field) {
+            'organization_id' => '所属客户主体',
+            'application_id' => '所属接入应用',
+            'environment_id' => '所属应用环境',
+            'workload_client_id' => '服务调用身份',
+            'service_action_id' => '服务动作',
+            'identity_id' => '应用身份',
+            'identity_provider_id' => '身份源',
+            'resource_id' => '业务资源',
+            'api_resource_id' => '接口目录记录',
+            'code' => '系统代码',
+            'name' => '名称',
+            'display_name' => '显示名称',
+            'audience' => '服务受众',
+            'action' => '操作代码',
+            'operation' => '数据操作类型',
+            'api_version' => '接口版本',
+            'http_method' => '请求方法',
+            'route_template' => '路由模板',
+            'risk_level' => '风险等级',
+            'effect' => '授权效果',
+            default => $field,
+        };
+    }
+
     protected function assertReferences(array $payload, ?object $existing = null): void {}
+
+    /** @param array<string,mixed> $payload @return array<string,mixed> */
+    protected function normalizePayload(array $payload, ?object $existing = null): array
+    {
+        return $payload;
+    }
+
+    protected function isValidCode(string $code): bool
+    {
+        return preg_match('/^[a-z0-9][a-z0-9_-]{1,63}$/', $code) === 1;
+    }
+
+    protected function codeValidationMessage(): string
+    {
+        return '系统代码须为 2–64 位小写字母、数字、短横线或下划线，且首位为字母或数字';
+    }
 
     protected function find(Request $request): object
     {
@@ -115,16 +168,21 @@ abstract class AdminResourceController extends BaseController
         $modelClass = $this->modelClass;
         $model = $modelClass::findOrEmpty($id);
         if ($id <= 0 || $model->isEmpty()) {
-            throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND', 400);
+            throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 未找到目标记录，可能已被删除或当前账号无权访问，请刷新列表后重试', 400);
         }
         $this->assertAdministrativeAccess();
+        $this->assertModelAccess($model);
+        return $model;
+    }
+
+    protected function assertModelAccess(object $model): void
+    {
         $organizationId = $this->organizationIdForModel($model);
         if ($organizationId === null) {
             $this->access()->assertSuperAdmin();
         } else {
             $this->access()->assertOrganization($organizationId);
         }
-        return $model;
     }
 
     protected function scopeIndexToOrganizations(object $query): void
@@ -171,11 +229,27 @@ abstract class AdminResourceController extends BaseController
 
     protected function access(): AdminOrganizationAccess
     {
-        return new AdminOrganizationAccess($this->adminId ?? 0, is_array($this->adminInfo ?? null) ? $this->adminInfo : null);
+        $token = request()->header('check_admin', []);
+        $adminId = is_array($token) ? (int) ($token['id'] ?? 0) : 0;
+        return new AdminOrganizationAccess($adminId, is_array($token) ? $token : null);
     }
 
     protected function audit(string $verb, int $id, Request $request): void
     {
-        (new AuditWriter())->write('admin', (string) ($this->adminId ?? 0), null, null, $this->resourceType . '.' . $verb, $this->resourceType, $id, 'succeeded', (string) $request->header('X-Request-Id', bin2hex(random_bytes(12))));
+        $token = request()->header('check_admin', []);
+        $adminId = is_array($token) ? (int) ($token['id'] ?? 0) : 0;
+        $modelClass = $this->modelClass;
+        $model = $modelClass::find($id);
+        [$organizationId, $applicationId] = $model === null
+            ? [null, null]
+            : $this->auditScopeForModel($model);
+        (new AuditWriter())->write('admin', (string) $adminId, $organizationId, $applicationId, $this->resourceType . '.' . $verb, $this->resourceType, $id, 'succeeded', RequestId::fromRequestCached($request));
+    }
+
+    /** @return array{0: ?int, 1: ?int} */
+    protected function auditScopeForModel(object $model): array
+    {
+        $applicationId = isset($model->application_id) ? (int) $model->application_id : null;
+        return [$this->organizationIdForModel($model), $applicationId];
     }
 }

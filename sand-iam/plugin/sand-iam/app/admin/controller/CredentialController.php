@@ -10,6 +10,8 @@ use plugin\SandIam\app\model\Environment;
 use plugin\SandIam\app\model\Application;
 use plugin\SandIam\app\model\WorkloadClient;
 use plugin\SandIam\app\service\AuditWriter;
+use plugin\SandIam\app\service\IdempotencyService;
+use plugin\SandIam\app\service\RequestId;
 use plugin\sandadmin\basic\BaseController;
 use plugin\sandadmin\exception\ApiException;
 use plugin\sandadmin\service\Permission;
@@ -40,10 +42,20 @@ final class CredentialController extends BaseController
         $data = $request->post();
         $clientId = (int) ($data['workload_client_id'] ?? 0);
         $name = trim((string) ($data['name'] ?? ''));
-        if ($clientId <= 0 || $name === '') { throw new ApiException('SAND_IAM_VALIDATION_ERROR: workload_client_id and name are required', 400); }
+        if ($clientId <= 0 || $name === '') { throw new ApiException('SAND_IAM_VALIDATION_ERROR: 请选择服务调用身份并填写凭证名称', 400); }
         $this->enabledClient($clientId);
         $this->assertClientAccess($clientId);
-        return $this->success($this->create($clientId, $name, $data['expire_time'] ?? null, $request), '凭证只显示一次');
+        $requestId = RequestId::fromRequest($request);
+        $result = (new IdempotencyService())->execute(
+            'admin',
+            $this->actor($request),
+            'credential.issue',
+            $requestId,
+            IdempotencyService::fingerprint(['workload_client_id' => $clientId, 'name' => $name, 'expire_time' => $data['expire_time'] ?? null]),
+            'credential',
+            fn (): array => ['resource_id' => ($issued = $this->create($clientId, $name, $data['expire_time'] ?? null, $requestId, $this->actor($request)))['id'], 'result' => $issued],
+        );
+        return $this->success($result['result'], $result['replayed'] ? '请求已处理；调用凭证明文不会再次显示' : '凭证只显示一次')->withHeader('Cache-Control', 'no-store');
     }
 
     #[Permission('SandIAM 轮换凭证', 'sand_iam:credential:rotate')]
@@ -51,40 +63,65 @@ final class CredentialController extends BaseController
     {
         $old = $this->credential((int) $request->post('id', 0));
         $this->enabledClient((int) $old->workload_client_id);
-        $old->save(['status' => 2, 'revoked_time' => date('Y-m-d H:i:s')]);
-        $this->audit('credential.rotate.revoke', (int) $old->id, $request);
-        return $this->success($this->create((int) $old->workload_client_id, trim((string) $request->post('name', $old->name)), $request->post('expire_time', $old->expire_time), $request), '新凭证只显示一次');
+        $name = trim((string) $request->post('name', $old->name));
+        $expireTime = $request->post('expire_time', $old->expire_time);
+        $requestId = RequestId::fromRequest($request);
+        $result = (new IdempotencyService())->execute(
+            'admin',
+            $this->actor($request),
+            'credential.rotate',
+            $requestId,
+            IdempotencyService::fingerprint(['id' => (int) $old->id, 'name' => $name, 'expire_time' => $expireTime]),
+            'credential',
+            function () use ($old, $name, $expireTime, $requestId, $request): array {
+                $old->save(['status' => 2, 'revoked_time' => date('Y-m-d H:i:s')]);
+                $this->audit('credential.rotate.revoke', (int) $old->id, $requestId, $this->actor($request));
+                $issued = $this->create((int) $old->workload_client_id, $name, $expireTime, $requestId, $this->actor($request));
+                return ['resource_id' => $issued['id'], 'result' => $issued];
+            },
+        );
+        return $this->success($result['result'], $result['replayed'] ? '请求已处理；新调用凭证明文不会再次显示' : '新凭证只显示一次')->withHeader('Cache-Control', 'no-store');
     }
 
     #[Permission('SandIAM 撤销凭证', 'sand_iam:credential:revoke')]
     public function revoke(Request $request): Response
     {
         $credential = $this->credential((int) $request->post('id', 0));
-        $credential->save(['status' => 2, 'revoked_time' => date('Y-m-d H:i:s')]);
-        $this->audit('credential.revoke', (int) $credential->id, $request);
+        $requestId = RequestId::fromRequest($request);
+        (new IdempotencyService())->execute(
+            'admin',
+            $this->actor($request),
+            'credential.revoke',
+            $requestId,
+            IdempotencyService::fingerprint(['id' => (int) $credential->id]),
+            'credential',
+            function () use ($credential, $requestId, $request): array {
+                $credential->save(['status' => 2, 'revoked_time' => date('Y-m-d H:i:s')]);
+                $this->audit('credential.revoke', (int) $credential->id, $requestId, $this->actor($request));
+                return ['resource_id' => (int) $credential->id, 'result' => ['id' => (int) $credential->id]];
+            },
+        );
         return $this->success('已撤销');
     }
 
     /** @return array{id:int,key_prefix:string,credential:string,expire_time:mixed} */
-    private function create(int $clientId, string $name, mixed $expireTime, Request $request): array
+    private function create(int $clientId, string $name, mixed $expireTime, string $requestId, string $actor): array
     {
-        $plain = 'siam_' . bin2hex(random_bytes(24));
-        $credential = Credential::create(['workload_client_id' => $clientId, 'name' => $name, 'key_prefix' => substr($plain, 0, 16), 'secret_hash' => password_hash($plain, PASSWORD_DEFAULT), 'expire_time' => $expireTime ?: null, 'status' => 1]);
-        $this->audit('credential.issue', (int) $credential->id, $request);
-        return ['id' => (int) $credential->id, 'key_prefix' => (string) $credential->key_prefix, 'credential' => $plain, 'expire_time' => $credential->expire_time];
+        return (new \plugin\SandIam\app\service\CredentialIssuanceService())->issue($clientId, $name, $expireTime, $requestId, $actor);
     }
 
     private function credential(int $id): Credential
     {
         $credential = Credential::findOrEmpty($id);
-        if ($id <= 0 || $credential->isEmpty()) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: credential', 400); }
+        if ($id <= 0 || $credential->isEmpty()) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 调用凭证不存在或当前账号无权访问', 400); }
         $this->assertClientAccess((int) $credential->workload_client_id);
         return $credential;
     }
 
-    private function enabledClient(int $id): void { if (!WorkloadClient::where('id', $id)->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: workload client', 400); }
-    private function access(): AdminOrganizationAccess { return new AdminOrganizationAccess($this->adminId ?? 0, is_array($this->adminInfo ?? null) ? $this->adminInfo : null); }
+    private function enabledClient(int $id): void { if (!WorkloadClient::where('id', $id)->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 服务调用身份不存在或已停用', 400); }
+    private function access(): AdminOrganizationAccess { $token = request()->header('check_admin', []); return new AdminOrganizationAccess(is_array($token) ? (int) ($token['id'] ?? 0) : 0, null); }
     private function assertClientAccess(int $clientId): void { $client = WorkloadClient::find($clientId); $environment = $client ? Environment::find($client->environment_id) : null; $application = $environment ? Application::find($environment->application_id) : null; $this->access()->assertOrganization($application ? (int) $application->organization_id : 0); }
     private function scopeCredentials(object $query): void { $access = $this->access(); if ($access->isSuperAdmin()) { return; } $organizationIds = $access->organizationIds(); if ($organizationIds === []) { $query->whereRaw('1 = 0'); return; } $applicationIds = Application::whereIn('organization_id', $organizationIds)->column('id'); $environmentIds = Environment::whereIn('application_id', $applicationIds)->column('id'); $query->whereIn('workload_client_id', WorkloadClient::whereIn('environment_id', $environmentIds)->column('id')); }
-    private function audit(string $action, int $resourceId, Request $request): void { (new AuditWriter())->write('admin', (string) ($this->adminId ?? 0), null, null, $action, 'credential', $resourceId, 'succeeded', (string) $request->header('X-Request-Id', bin2hex(random_bytes(12)))); }
+    private function actor(Request $request): string { $admin = $request->header('check_admin', []); return is_array($admin) ? (string) ($admin['id'] ?? 0) : '0'; }
+    private function audit(string $action, int $resourceId, string $requestId, string $actor): void { (new AuditWriter())->write('admin', $actor, null, null, $action, 'credential', $resourceId, 'succeeded', $requestId); }
 }

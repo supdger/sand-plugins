@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly db_prefix='sand_iam_sp02a_'
+readonly maintenance_db="${SAND_IAM_SP02A_MAINTENANCE_DB:-postgres}"
+readonly db_name="${SAND_IAM_SP02A_DB:-${db_prefix}run_$$}"
+readonly baseline_ref="${SAND_IAM_SP02A_BASELINE_REF:-1a6f9ef190abebe89ae2a766dbfe8bbee1a6d14e}"
+readonly repo_root="$(git rev-parse --show-toplevel)"
+readonly sand_iam_root="${repo_root}/sand-iam"
+
+database_created=false
+
+fail() {
+    printf 'SP-02A failed: %s\n' "$*" >&2
+    exit 1
+}
+
+assert_test_database_name() {
+    [[ "${db_name}" =~ ^sand_iam_sp02a_[a-z0-9_]{1,48}$ ]] || fail "refusing unsafe temporary database name: ${db_name}"
+}
+
+psql_maintenance() {
+    psql --no-psqlrc --set=ON_ERROR_STOP=1 --dbname="${maintenance_db}" "$@"
+}
+
+psql_fixture() {
+    psql --no-psqlrc --set=ON_ERROR_STOP=1 --dbname="${db_name}" "$@"
+}
+
+cleanup() {
+    if [[ "${database_created}" == true ]]; then
+        assert_test_database_name
+        dropdb --if-exists --force --maintenance-db="${maintenance_db}" "${db_name}"
+        database_created=false
+    fi
+}
+
+trap cleanup EXIT
+
+assert_test_database_name
+
+if [[ "${db_name}" == "${maintenance_db}" ]]; then
+    fail 'temporary database name must differ from the maintenance database'
+fi
+
+existing_database="$(psql_maintenance --tuples-only --no-align --command="SELECT 1 FROM pg_database WHERE datname = '${db_name}'")" || fail 'unable to inspect PostgreSQL databases'
+if [[ "${existing_database}" == '1' ]]; then
+    fail "refusing to reuse existing database: ${db_name}"
+fi
+
+createdb --template=template0 --maintenance-db="${maintenance_db}" "${db_name}"
+database_created=true
+
+git -C "${repo_root}" cat-file -e "${baseline_ref}^{commit}" 2>/dev/null \
+    || fail "0.1 baseline commit is unavailable: ${baseline_ref}"
+git -C "${repo_root}" show "${baseline_ref}:sand-iam/install.sql" | psql_fixture
+
+if ! psql_fixture --tuples-only --no-align --command="SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'sand_iam_identity_binding' AND column_name = 'provider_code'" | grep -qx '1'; then
+    fail "baseline ${baseline_ref} did not create the expected 0.1 provider_code fixture"
+fi
+
+psql_fixture <<'SQL'
+INSERT INTO sand_iam_organization (code, name) VALUES
+    ('sp02a-org-a', 'SP-02A 组织 A'),
+    ('sp02a-org-b', 'SP-02A 组织 B');
+
+INSERT INTO sand_iam_application (organization_id, code, name)
+SELECT organization.id, application.code, application.name
+FROM sand_iam_organization organization
+JOIN (VALUES
+    ('sp02a-org-a', 'sp02a-app-a', 'SP-02A 应用 A'),
+    ('sp02a-org-b', 'sp02a-app-b', 'SP-02A 应用 B')
+) AS application(organization_code, code, name) ON application.organization_code = organization.code;
+
+INSERT INTO sand_iam_identity (application_id, code, display_name)
+SELECT application.id, identity_record.code, identity_record.display_name
+FROM sand_iam_application application
+JOIN (VALUES
+    ('sp02a-app-a', 'sp02a-user-a', 'SP-02A 用户 A'),
+    ('sp02a-app-b', 'sp02a-user-b', 'SP-02A 用户 B')
+) AS identity_record(application_code, code, display_name) ON identity_record.application_code = application.code;
+
+INSERT INTO sand_iam_identity_binding (identity_id, provider_code, subject)
+SELECT identity_record.id, 'phone', '13800138000'
+FROM sand_iam_identity identity_record
+WHERE identity_record.code = 'sp02a-user-a';
+SQL
+
+psql_fixture --file="${sand_iam_root}/update.sql"
+
+psql_fixture <<'SQL'
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM sand_iam_identity_binding binding
+        JOIN sand_iam_identity identity_record ON identity_record.id = binding.identity_id
+        JOIN sand_iam_identity_provider provider ON provider.id = binding.identity_provider_id
+        WHERE binding.application_id = identity_record.application_id
+          AND provider.application_id = identity_record.application_id
+          AND identity_record.code = 'sp02a-user-a'
+          AND provider.code = 'phone'
+          AND binding.subject = '13800138000'
+    ) THEN
+        RAISE EXCEPTION 'legacy binding was not migrated to its application-scoped provider';
+    END IF;
+END
+$$;
+
+INSERT INTO sand_iam_identity_provider (application_id, code, name)
+SELECT application.id, 'phone', 'SP-02A 手机号身份源'
+FROM sand_iam_application application
+WHERE application.code = 'sp02a-app-b';
+
+INSERT INTO sand_iam_identity_binding (application_id, identity_id, identity_provider_id, subject)
+SELECT application.id, identity_record.id, provider.id, '13800138000'
+FROM sand_iam_application application
+JOIN sand_iam_identity identity_record ON identity_record.application_id = application.id
+JOIN sand_iam_identity_provider provider ON provider.application_id = application.id
+WHERE application.code = 'sp02a-app-b'
+  AND identity_record.code = 'sp02a-user-b'
+  AND provider.code = 'phone';
+
+DO $$
+BEGIN
+    INSERT INTO sand_iam_identity_binding (application_id, identity_id, identity_provider_id, subject)
+    SELECT application.id, identity_record.id, provider.id, '13800138000'
+    FROM sand_iam_application application
+    JOIN sand_iam_identity identity_record ON identity_record.application_id = application.id
+    JOIN sand_iam_identity_provider provider ON provider.application_id = application.id
+    WHERE application.code = 'sp02a-app-a'
+      AND identity_record.code = 'sp02a-user-a'
+      AND provider.code = 'phone';
+    RAISE EXCEPTION 'same-provider duplicate subject was accepted';
+EXCEPTION WHEN unique_violation THEN
+    NULL;
+END
+$$;
+
+DO $$
+BEGIN
+    INSERT INTO sand_iam_identity_binding (application_id, identity_id, identity_provider_id, subject)
+    SELECT application_a.id, identity_a.id, provider_b.id, 'sp02a-provider-cross-app'
+    FROM sand_iam_application application_a
+    JOIN sand_iam_identity identity_a ON identity_a.application_id = application_a.id
+    CROSS JOIN sand_iam_application application_b
+    JOIN sand_iam_identity_provider provider_b ON provider_b.application_id = application_b.id
+    WHERE application_a.code = 'sp02a-app-a'
+      AND identity_a.code = 'sp02a-user-a'
+      AND application_b.code = 'sp02a-app-b'
+      AND provider_b.code = 'phone';
+    RAISE EXCEPTION 'provider/application cross-binding was accepted';
+EXCEPTION WHEN foreign_key_violation THEN
+    NULL;
+END
+$$;
+
+DO $$
+BEGIN
+    INSERT INTO sand_iam_identity_binding (application_id, identity_id, identity_provider_id, subject)
+    SELECT application_b.id, identity_a.id, provider_b.id, 'sp02a-identity-cross-app'
+    FROM sand_iam_application application_a
+    JOIN sand_iam_identity identity_a ON identity_a.application_id = application_a.id
+    CROSS JOIN sand_iam_application application_b
+    JOIN sand_iam_identity_provider provider_b ON provider_b.application_id = application_b.id
+    WHERE application_a.code = 'sp02a-app-a'
+      AND identity_a.code = 'sp02a-user-a'
+      AND application_b.code = 'sp02a-app-b'
+      AND provider_b.code = 'phone';
+    RAISE EXCEPTION 'identity/application cross-binding was accepted';
+EXCEPTION WHEN foreign_key_violation THEN
+    NULL;
+END
+$$;
+SQL
+
+psql_fixture --file="${sand_iam_root}/update.sql"
+psql_fixture --file="${sand_iam_root}/uninstall.sql"
+
+remaining_tables="$(psql_fixture --tuples-only --no-align --command="SELECT count(*) FROM pg_tables WHERE schemaname = current_schema() AND tablename LIKE 'sand_iam_%'")"
+[[ "${remaining_tables}" == '0' ]] || fail "uninstall left ${remaining_tables} sand_iam_* tables"
+
+printf 'SP-02A passed: 0.1 to 0.2 upgrade, constraints, repeated upgrade, uninstall, and cleanup verified (%s).\n' "${db_name}"

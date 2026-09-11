@@ -7,6 +7,9 @@ namespace plugin\SandIam\app\runtime;
 use plugin\SandIam\app\model\Credential;
 use plugin\SandIam\app\model\WorkloadClient;
 use plugin\SandIam\app\service\AuditWriter;
+use plugin\SandIam\app\service\RequestId;
+use plugin\SandIam\app\security\NetworkPolicy;
+use plugin\SandIam\app\security\ServiceGrantConstraintNormalizer;
 use plugin\sandadmin\exception\ApiException;
 use think\facade\Db;
 
@@ -29,6 +32,8 @@ final class IdentityContextProvider
         array $requestedActions,
         ?array $subjectScope,
         string $requestId,
+        string $sourceIp = '',
+        string $serviceCode = '',
     ): array {
         $requestId = $this->requestId($requestId);
         $this->assertSigningKey();
@@ -43,9 +48,22 @@ final class IdentityContextProvider
         }
 
         $reference = (new EnvironmentReferenceVerifier())->verifyEnvironmentReferenceForClient((int) $client->environment_id);
+        if (!hash_equals((string) $client->audience, $audience)) {
+            $this->deny('workload_client', (string) $client->id, $reference['organization_id'], $reference['application_id'], 'context.issue', $requestId, 'SAND_IAM_CONTEXT_AUDIENCE_MISMATCH');
+        }
         $actions = array_values(array_unique(array_filter($requestedActions, static fn (mixed $value): bool => is_string($value) && $value !== '')));
-        $grants = $this->activeGrants((int) $client->id, $audience, $actions);
-        if (count($grants) !== count($actions)) {
+        try {
+            [$resolvedServiceCode, $grants] = $this->resolveServiceGrants((int) $client->id, $audience, $actions, $sourceIp, trim($serviceCode));
+        } catch (ApiException $exception) {
+            if ($exception->getMessage() !== 'SAND_IAM_SERVICE_NETWORK_FORBIDDEN') throw $exception;
+            $this->deny('workload_client', (string) $client->id, $reference['organization_id'], $reference['application_id'], 'context.issue', $requestId, 'SAND_IAM_SERVICE_NETWORK_FORBIDDEN');
+        }
+        try {
+            $this->normalizeGrantConstraints($grants);
+        } catch (ApiException) {
+            $this->deny('workload_client', (string) $client->id, $reference['organization_id'], $reference['application_id'], 'context.issue', $requestId, 'SAND_IAM_SERVICE_GRANT_CONSTRAINT_INVALID');
+        }
+        if ($actions === [] || count($grants) !== count($actions)) {
             $this->deny('workload_client', (string) $client->id, $reference['organization_id'], $reference['application_id'], 'context.issue', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
         }
 
@@ -58,29 +76,49 @@ final class IdentityContextProvider
             'application_id' => $reference['application_id'],
             'environment_id' => $reference['environment_id'],
             'workload_client_id' => (int) $client->id,
+            'service_code' => $resolvedServiceCode,
             'audience' => $audience,
             'actions' => $actions,
             'grant_ids' => array_values(array_map(static fn (array $grant): int => (int) $grant['id'], $grants)),
             'subject_scope' => $subjectScope,
+            'subject_scope_trust' => 'caller_asserted',
             'iat' => time(),
             'exp' => $expiresAt,
         ];
         $context = $this->sign($payload);
         $expireTime = date('Y-m-d H:i:s', $expiresAt);
-        $this->auditWriter->write('workload_client', (string) $client->id, $reference['organization_id'], $reference['application_id'], 'context.issue', 'identity_context', null, 'succeeded', $requestId, ['context_id' => $contextId, 'actions' => $actions, 'audience' => $audience]);
+        $this->auditWriter->write('workload_client', (string) $client->id, $reference['organization_id'], $reference['application_id'], 'context.issue', 'identity_context', null, 'succeeded', $requestId, ['context_id' => $contextId, 'service_code' => $resolvedServiceCode, 'actions' => $actions, 'audience' => $audience]);
         return ['context' => $context, 'context_id' => $contextId, 'expire_time' => $expireTime];
     }
 
     /** @return array<string, mixed> */
-    public function verify(string $context, string $expectedAudience, string $requiredAction): array
+    public function verify(string $context, string $expectedAudience, string $requiredAction, string $requestId = '', string $sourceIp = ''): array
+    {
+        return $this->verifyContext($context, '', $expectedAudience, $requiredAction, $sourceIp === '' ? null : $sourceIp, $requestId);
+    }
+
+    /** @return array<string, mixed> */
+    public function verifyForService(string $context, string $expectedServiceCode, string $expectedAudience, string $requiredAction, string $trustedSourceIp, string $requestId = ''): array
+    {
+        if (!$this->validServiceCode($expectedServiceCode)) throw new ApiException('SAND_IAM_SERVICE_ACTION_FORBIDDEN: expected service is invalid', 403);
+        if (inet_pton($trustedSourceIp) === false) throw new ApiException('SAND_IAM_SERVICE_NETWORK_FORBIDDEN', 403);
+        return $this->verifyContext($context, $expectedServiceCode, $expectedAudience, $requiredAction, $trustedSourceIp, $requestId);
+    }
+
+    /** @return array<string, mixed> */
+    private function verifyContext(string $context, string $expectedServiceCode, string $expectedAudience, string $requiredAction, ?string $sourceIp, string $requestId): array
     {
         $payload = $this->verifySignature($context);
-        $requestId = 'verify-' . substr((string) ($payload['context_id'] ?? 'unknown'), 0, 48) . '-' . bin2hex(random_bytes(8));
+        $requestId = RequestId::normalize($requestId);
         if ((int) ($payload['exp'] ?? 0) < time()) {
             $this->deny('context', (string) ($payload['context_id'] ?? 'unknown'), null, null, 'context.verify', $requestId, 'SAND_IAM_CONTEXT_EXPIRED');
         }
         if (($payload['audience'] ?? '') !== $expectedAudience) {
             $this->deny('context', (string) $payload['context_id'], null, null, 'context.verify', $requestId, 'SAND_IAM_CONTEXT_AUDIENCE_MISMATCH');
+        }
+        $payloadServiceCode = is_string($payload['service_code'] ?? null) ? (string) $payload['service_code'] : '';
+        if (!$this->validServiceCode($payloadServiceCode) || ($expectedServiceCode !== '' && !hash_equals($expectedServiceCode, $payloadServiceCode))) {
+            $this->deny('context', (string) ($payload['context_id'] ?? 'unknown'), null, null, 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
         }
         if (!in_array($requiredAction, $payload['actions'] ?? [], true)) {
             $this->deny('context', (string) $payload['context_id'], null, null, 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
@@ -90,7 +128,7 @@ final class IdentityContextProvider
             $this->deny('context', (string) $payload['context_id'], null, null, 'context.verify', $requestId, 'SAND_IAM_CREDENTIAL_REVOKED');
         }
         $client = WorkloadClient::where('id', (int) ($payload['workload_client_id'] ?? 0))->where('status', 1)->find();
-        if ($client === null || (int) $credential->workload_client_id !== (int) $client->id) {
+        if ($client === null || (int) $credential->workload_client_id !== (int) $client->id || !hash_equals((string) $client->audience, $expectedAudience)) {
             $this->deny('context', (string) $payload['context_id'], null, null, 'context.verify', $requestId, 'SAND_IAM_CREDENTIAL_REVOKED');
         }
         $reference = (new EnvironmentReferenceVerifier())->verifyEnvironmentReferenceForClient((int) $client->environment_id);
@@ -102,11 +140,25 @@ final class IdentityContextProvider
             $this->deny('context', (string) $payload['context_id'], $reference['organization_id'], $reference['application_id'], 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
         }
         $actions = $payload['actions'] ?? [];
-        if (!is_array($actions) || count($this->activeGrants((int) $client->id, $expectedAudience, $actions)) !== count($actions)) {
+        if (!is_array($actions) || !array_is_list($actions) || $actions === [] || count($actions) !== count(array_unique($actions))) {
+            $this->deny('context', (string) ($payload['context_id'] ?? 'unknown'), $reference['organization_id'], $reference['application_id'], 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
+        }
+        try {
+            [, $grants] = is_array($actions) ? $this->resolveServiceGrants((int) $client->id, $expectedAudience, $actions, $sourceIp, $payloadServiceCode) : ['', []];
+        } catch (ApiException $exception) {
+            if ($exception->getMessage() !== 'SAND_IAM_SERVICE_NETWORK_FORBIDDEN') throw $exception;
+            $this->deny('context', (string) $payload['context_id'], $reference['organization_id'], $reference['application_id'], 'context.verify', $requestId, 'SAND_IAM_SERVICE_NETWORK_FORBIDDEN');
+        }
+        try {
+            $actionGrants = $this->normalizeGrantConstraints($grants);
+        } catch (ApiException) {
+            $this->deny('context', (string) $payload['context_id'], $reference['organization_id'], $reference['application_id'], 'context.verify', $requestId, 'SAND_IAM_SERVICE_GRANT_CONSTRAINT_INVALID');
+        }
+        if (!is_array($actions) || count($grants) !== count($actions) || !$this->sameGrantIds($payload['grant_ids'] ?? null, $grants)) {
             $this->deny('context', (string) $payload['context_id'], $reference['organization_id'], $reference['application_id'], 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
         }
-        $this->auditWriter->write('context', (string) $payload['context_id'], (int) $payload['organization_id'], (int) $payload['application_id'], 'context.verify', 'identity_context', null, 'allowed', $requestId, ['required_action' => $requiredAction, 'audience' => $expectedAudience]);
-        return $payload;
+        $this->auditWriter->write('context', (string) $payload['context_id'], (int) $payload['organization_id'], (int) $payload['application_id'], 'context.verify', 'identity_context', null, 'allowed', $requestId, ['required_action' => $requiredAction, 'service_code' => $payloadServiceCode, 'audience' => $expectedAudience]);
+        return array_replace($payload, ['action_grants' => $actionGrants]);
     }
 
     private function credential(string $value, string $requestId): Credential
@@ -119,21 +171,108 @@ final class IdentityContextProvider
         return $credential;
     }
 
-    /** @param list<string> $actions @return list<array<string, mixed>> */
-    private function activeGrants(int $clientId, string $audience, array $actions): array
+    /** @param list<string> $actions @return array{0:string,1:list<array<string,mixed>>} */
+    private function resolveServiceGrants(int $clientId, string $audience, array $actions, ?string $sourceIp, string $serviceCode): array
     {
-        return Db::table('sand_iam_service_grant')->alias('service_grant')
+        $query = Db::table('sand_iam_service_grant')->alias('service_grant')
             ->join('sand_iam_service_action action', 'action.id = service_grant.service_action_id')
             ->where('service_grant.workload_client_id', $clientId)
             ->where('service_grant.audience', $audience)
             ->where('service_grant.status', 1)
             ->whereNull('service_grant.revoked_time')
             ->where(static function ($query): void { $query->whereNull('service_grant.expire_time')->whereOr('service_grant.expire_time', '>', date('Y-m-d H:i:s')); })
+            ->join('sand_iam_service service', 'service.id = action.service_id')
+            ->where('service.status', 1)
             ->where('action.status', 1)
-            ->whereIn('action.code', $actions)
-            ->field('service_grant.id,action.code')
-            ->select()
-            ->toArray();
+            ->whereIn('action.code', $actions);
+        if ($serviceCode !== '') {
+            if (!$this->validServiceCode($serviceCode)) return ['', []];
+            $query->where('service.code', $serviceCode);
+        }
+        $rows = $query->field('service_grant.id,service_grant.network_policy,service_grant.quota_policy,service_grant.data_class,action.code,service.code AS service_code')->select()->toArray();
+        $allByService = [];
+        $allowedByService = [];
+        foreach ($rows as $row) {
+            $rowService = (string) ($row['service_code'] ?? '');
+            $action = (string) ($row['code'] ?? '');
+            if (!$this->validServiceCode($rowService) || $action === '' || isset($allByService[$rowService][$action])) return ['', []];
+            $allByService[$rowService][$action] = $row;
+            if ($sourceIp === null || $this->networkAllows($row['network_policy'] ?? null, $sourceIp)) $allowedByService[$rowService][$action] = $row;
+        }
+        $candidates = [];
+        foreach ($allByService as $candidateService => $candidateGrants) {
+            if (count($candidateGrants) === count($actions)) $candidates[$candidateService] = array_values($candidateGrants);
+        }
+        if ($serviceCode !== '') {
+            if (!isset($candidates[$serviceCode])) return ['', []];
+            if (count($allowedByService[$serviceCode] ?? []) !== count($actions)) throw new ApiException('SAND_IAM_SERVICE_NETWORK_FORBIDDEN', 403);
+            return [$serviceCode, array_values($allowedByService[$serviceCode])];
+        }
+        if (count($candidates) !== 1) return ['', []];
+        $resolvedService = (string) array_key_first($candidates);
+        if (count($allowedByService[$resolvedService] ?? []) !== count($actions)) throw new ApiException('SAND_IAM_SERVICE_NETWORK_FORBIDDEN', 403);
+        return [$resolvedService, array_values($allowedByService[$resolvedService])];
+    }
+
+    private function networkAllows(mixed $policy, string $sourceIp): bool
+    {
+        if (inet_pton($sourceIp) === false) throw new ApiException('SAND_IAM_SERVICE_NETWORK_FORBIDDEN', 403);
+        try {
+            return NetworkPolicy::allows($policy, $sourceIp);
+        } catch (ApiException) {
+            throw new ApiException('SAND_IAM_SERVICE_NETWORK_FORBIDDEN', 403);
+        }
+    }
+
+    /** @param list<array<string,mixed>> $grants @return array<string,array{grant_id:int,service_code:string,data_class:?string,quota_policy:array}> */
+    private function normalizeGrantConstraints(array $grants): array
+    {
+        $result = [];
+        foreach ($grants as $grant) {
+            $action = (string) ($grant['code'] ?? '');
+            if ($action === '' || isset($result[$action])) throw new ApiException('SAND_IAM_SERVICE_ACTION_FORBIDDEN: ambiguous service action grant', 403);
+            $result[$action] = [
+                'grant_id' => (int) ($grant['id'] ?? 0),
+                'service_code' => (string) ($grant['service_code'] ?? ''),
+                'data_class' => ServiceGrantConstraintNormalizer::dataClass($grant['data_class'] ?? null, true),
+                'quota_policy' => ServiceGrantConstraintNormalizer::quota($grant['quota_policy'] ?? null, true),
+            ];
+        }
+        return $result;
+    }
+
+    private function validServiceCode(string $value): bool { return preg_match('/^[a-z0-9][a-z0-9_-]{1,63}$/', $value) === 1; }
+
+    /** @param mixed $payloadGrantIds @param list<array<string,mixed>> $grants */
+    private function sameGrantIds(mixed $payloadGrantIds, array $grants): bool
+    {
+        if (!is_array($payloadGrantIds) || $payloadGrantIds === []) {
+            return false;
+        }
+        $expected = [];
+        foreach ($payloadGrantIds as $grantId) {
+            if (!is_int($grantId) && !(is_string($grantId) && ctype_digit($grantId))) {
+                return false;
+            }
+            $grantId = (int) $grantId;
+            if ($grantId <= 0 || isset($expected[$grantId])) {
+                return false;
+            }
+            $expected[$grantId] = true;
+        }
+        $actual = [];
+        foreach ($grants as $grant) {
+            $grantId = (int) ($grant['id'] ?? 0);
+            if ($grantId <= 0 || isset($actual[$grantId])) {
+                return false;
+            }
+            $actual[$grantId] = true;
+        }
+        $expectedIds = array_keys($expected);
+        $actualIds = array_keys($actual);
+        sort($expectedIds, SORT_NUMERIC);
+        sort($actualIds, SORT_NUMERIC);
+        return $expectedIds === $actualIds;
     }
 
     private function sign(array $payload): string
@@ -168,7 +307,7 @@ final class IdentityContextProvider
 
     private function signingKey(): string { return (string) config('plugin.sand-iam.app.context_signing_key', ''); }
     private function expired(mixed $value): bool { return $value !== null && $value !== '' && strtotime((string) $value) <= time(); }
-    private function requestId(string $requestId): string { return $requestId !== '' ? substr($requestId, 0, 96) : bin2hex(random_bytes(16)); }
+    private function requestId(string $requestId): string { return RequestId::normalize($requestId); }
     private function base64Url(string $value): string { return rtrim(strtr(base64_encode($value), '+/', '-_'), '='); }
     private function base64UrlDecode(string $value): string { return base64_decode(strtr($value, '-_', '+/'), true) ?: ''; }
 

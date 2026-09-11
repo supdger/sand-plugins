@@ -7,4 +7,5 @@ namespace plugin\SandIam\app\model;
 final class Identity extends AbstractSandIamModel
 {
     protected $table = 'sand_iam_identity';
+    protected $hidden = ['external_guest_ref_hash'];
 }

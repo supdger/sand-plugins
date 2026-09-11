@@ -16,8 +16,11 @@ function compactParams(params: SandIamListParams): Record<string, string | numbe
   if (params.workload_client_id !== undefined) query.workload_client_id = params.workload_client_id
   if (params.identity_id !== undefined) query.identity_id = params.identity_id
   if (params.service_id !== undefined) query.service_id = params.service_id
-  if (params.actor_type !== undefined && params.actor_type !== '') query.actor_type = params.actor_type
+  if (params.actor_type !== undefined && params.actor_type !== '')
+    query.actor_type = params.actor_type
   if (params.outcome !== undefined && params.outcome !== '') query.outcome = params.outcome
+  if (params.scope_type !== undefined && params.scope_type !== '')
+    query.scope_type = params.scope_type
   return query
 }
 

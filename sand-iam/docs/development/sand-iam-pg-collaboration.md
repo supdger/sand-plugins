@@ -22,7 +22,7 @@ Codex 与 Cursor 都可以改前后端，但默认不跨越上述主责边界；
 - Codex 独占：`sand-iam/plugin/sand-iam/` 的 PHP、SQL、迁移、`config/menu.php`、`config/route.php`，以及 API / Adapter 契约文档。
 - Cursor 独占：`sand-iam/sandadmin-artd/src/views/plugin/sand-iam/` 的 Vue / TypeScript / 样式。
 - 共享前先冻结：路由、Request/Response DTO、错误码、权限标识、页面字段字典。
-- 不允许：新增 MySQL 兼容分支；`sa_*` 业务表；前端根据猜测的字段反向定义后端；把律序律师/客户规则写进 SandIAM。
+- 不允许：新增 MySQL 兼容分支；`sa_*` 业务表；前端根据猜测的字段反向定义后端；把任何接入应用的用户类型或业务规则写进 SandIAM。
 
 ## 3. 并行规则（对齐 SandAI）
 
@@ -30,7 +30,7 @@ Codex 与 Cursor 都可以改前后端，但默认不跨越上述主责边界；
 2. **契约是交接物。** Codex 先发布增量版本并标注「可消费」；Cursor 只消费已冻结版本。向后兼容的新增字段不要求 Cursor 同步等待。
 3. **每个任务只依赖可验证物。** U-01 不依赖 IAM-01；U-03 依赖已冻结管理 API，而不是「Codex 做完宿主验收」。IAM-01 的 Adapter 契约一旦冻结，SandAI `SAND-113C` 即可继续，不必等管理页。
 4. **交接不靠口头提醒。** 完成者补四项：变更路径、契约版本、验证命令/真实路径、已解锁任务。
-5. **合并只在验收点发生。** 日常开发互不等待；真实联调在 `/Users/code/project/sandadmin`。
+5. **合并只在验收点发生。** 日常开发互不等待；真实联调在 `/Users/code/project/sand_plugins/sandadmin-demo-host`。`/Users/code/project/sandadmin` 保持纯净通用宿主，不用于插件演示。
 
 未冻结的接口不得被视为前端阻塞。页面壳、加载/空/失败状态可以先做；禁止发明未冻结 DTO 字段或假 CRUD。
 
@@ -40,7 +40,8 @@ Codex 与 Cursor 都可以改前后端，但默认不跨越上述主责边界；
 | --- | --- |
 | SandIAM 插件源码（本仓库） | `/Users/code/project/sand_plugins/sand-iam` |
 | 插件集合仓（Cursor / Codex Autopilot 根） | `/Users/code/project/sand_plugins` |
-| 安装、演示与功能验收宿主 | `/Users/code/project/sandadmin` |
+| 安装、演示与功能验收宿主 | `/Users/code/project/sand_plugins/sandadmin-demo-host`（服务端为其 `server/` 子目录） |
+| 纯净通用 SandAdmin 宿主 | `/Users/code/project/sandadmin`（不用于插件演示） |
 | SandAI 消费方（Adapter 实现落点） | `/Users/code/project/sand_ai` |
 
 Codex `SAND-113C` 此前在 `/Users/code/project` 与 `/Users/supdger/Documents/plugins` 未找到 SandIAM。以上路径即为权威源码位置；Adapter 协议仍须由本仓 IAM-01 冻结，不得凭路径猜测关闭 SandAI 的 fail-closed。
@@ -57,3 +58,8 @@ Codex `SAND-113C` 此前在 `/Users/code/project` 与 `/Users/supdger/Documents/
 | --- | --- | --- | --- | --- |
 | 2026-08-13 | 协作启动 | 确认 PostgreSQL-only、目录独占、与 SandAI 相同的并行规则；向 Codex 交付源码路径与 Cursor 开工输入 | 已冻结 | 本文档、任务看板 |
 | 2026-08-14 | SandAdmin 宿主更名 | 用户授权 Cursor 执行 Codex 变更通知：源码 `plugin\\saiadmin` → `plugin\\sandadmin`，前端载荷目录 `saiadmin-artd` → `sandadmin-artd`；过渡期保留双向类别名。跨界原因：通知覆盖 PHP 引用且用户指定本 Agent 执行。 | 已执行 | [更名通知](sandadmin-rename-notice.md)、`plugin/sand-iam/`、`sandadmin-artd/` |
+| 2026-08-21 | UX-01 第二轮 | 用户明确要求不等待宿主验证、继续真人体验改造；Codex 主代理委派 Terra/high 实现代理修改管理端，并由主代理复核前端、菜单和后端契约。未修改验收宿主、数据库或运行服务。 | 权威源码和隔离自动检查已完成；正式验收未完成 | [三角色验收契约](sand-iam-human-usability-acceptance.md)、[UX-01 执行记录](../../../.codex/autopilot/executions/UX-01.md) |
+| 2026-08-28 | Autopilot 恢复 | 用户授权 Cursor 执行 `start_goal.sh`；清除 HARD_STOP、启用 `state.json`、恢复 hooks `loop_limit=40`、启动 DETECT watcher；`cursor agent` 已登录。 | Autopilot 运行中；浏览器验收仍待宿主登录 | `.cursor/autopilot/executions/AUTOPILOT-RESUME-20260828.md`、`detect-status.md` |
+| 2026-08-30 | 协作通道恢复 | 用户要求恢复与 Codex 通信；重跑 `start_goal.sh`、拉起已退出的 DETECT watcher；向 Codex 交付 U-05B/UX-01B/UX-02 Cursor 证据与权威包回同步缺口。 | 交互 Agent 与 Autopilot 通道在线；FLOW 计数不上调 | `.cursor/autopilot/executions/CURSOR-PING-20260830.md`、任务看板 |
+| 2026-08-31 | 协作通道开启 | 用户确认 Codex 已恢复并要求开启协作；重拉 DETECT watcher（pid 14997）；向 Codex 重投 U-05B/UX-01B/UX-02 证据与权威包回同步缺口。 | 交互 Agent 与 Autopilot 通道在线；FLOW 计数不上调 | `.cursor/autopilot/executions/CURSOR-PING-20260831.md`、任务看板 |
+| 2026-08-31 | DETECT 去重 | 用户授权清除重复 watcher：`SIGTERM` 仍存活的 14997，保留值班 99262。未关 Autopilot、未改 backoff、未重拉、未改 Codex 队列。 | 通道仍在线；仅单实例值班 | `.cursor/autopilot/executions/DETECT-01.md`、任务看板 |

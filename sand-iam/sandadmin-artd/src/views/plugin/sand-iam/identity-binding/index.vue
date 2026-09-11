@@ -4,9 +4,8 @@
   import type { SandIamFilterKey, SandIamResourceColumn } from '../api/types'
 
   const columns: SandIamResourceColumn[] = [
-    { key: 'id', label: 'ID', minWidth: 80 },
-    { key: 'identity_id', label: 'identity_id' },
-    { key: 'provider_code', label: 'provider_code' },
+    { key: 'identity_id', label: '应用身份' },
+    { key: 'identity_provider_id', label: '身份源' },
     { key: 'subject', label: 'subject', minWidth: 180 },
     { key: 'status', label: '状态' }
   ]
@@ -16,7 +15,7 @@
 <template>
   <ResourceListPage
     title="身份绑定"
-    description="外部身份源绑定。不接收 token；更新只允许改 status。"
+    description="把应用身份关联到该应用下的身份源账号。新建时选择身份源，不再手填旧版身份源代码；这里不保存登录凭证。"
     endpoint="identity-binding"
     index-permission="sand_iam:identity_binding:index"
     permission-prefix="sand_iam:identity_binding"

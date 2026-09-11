@@ -1,12 +1,14 @@
 # SandIAM 开发入口
 
-> 状态：P0 契约已由 Codex IAM-01 于 2026-08-13 冻结为可消费 v0.1；插件骨架与 Cursor/Codex 协作约定已创建。
+> 状态：P0 契约已由 Codex IAM-01 于 2026-08-13 冻结；2026-08-21 已增加[终极产品目标](../product/sand-iam-terminal-product-goal.md)与[终极验收矩阵](sand-iam-terminal-acceptance.md)。P0 是已实现基础，不是最终产品范围。
 >
 > 实时状态见 [任务看板](sand-iam-task-board.md)；责任边界见 [协作约定](sand-iam-pg-collaboration.md)；冻结内容见 [P0 契约](sand-iam-p0-contract.md)。
+>
+> IAM-T05 的稳定接口代码、路由绑定、Webman 中间件和 SDK 约定见[接口治理与业务接入契约](sand-iam-api-governance-v0.1.md)。
 
 ## 已冻结
 
-- 源码路径：`/Users/code/project/sand_plugins/sand-iam`；验收宿主：`/Users/code/project/sandadmin`；
+- 源码路径：`/Users/code/project/sand_plugins/sand-iam`；演示与验收宿主：`/Users/code/project/sand_plugins/sandadmin-demo-host`（服务端为其 `server/` 子目录）；`/Users/code/project/sandadmin` 保持纯净通用宿主，不用于插件演示；
 - 插件根目录：`sand-iam`；插件后端目录：`plugin/sand-iam`；
 - Codex / Cursor 目录独占与并行规则（见协作约定）；
 - 显示名：`SandIAM`；PHP 命名空间：`plugin\\SandIam`；
@@ -25,4 +27,4 @@
 4. SandAI Adapter：调用方、环境、audience、service action、有效期与拒绝行为；
 5. 最小验收：安装、升级、卸载；独立应用用户不使用宿主后台账号；策略和数据范围在读取与写入操作上均生效。
 
-律序的律师/客户具体业务规则不属于该门槛；它们只是在 P0 能力完成后配置为用户类型与策略。
+接入应用的具体用户类型和业务规则不属于该门槛；它们只是在 P0 能力完成后配置为用户类型与策略。

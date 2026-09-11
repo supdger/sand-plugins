@@ -1,0 +1,12 @@
+{
+  "name": "sand/sand-iam",
+  "description": "SandIAM plugin-local audited federation dependencies",
+  "require": {
+    "php": ">=8.2",
+    "onelogin/php-saml": "^4.3.2"
+  },
+  "config": {
+    "optimize-autoloader": true,
+    "sort-packages": true
+  }
+}

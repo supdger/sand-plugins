@@ -1,20 +1,24 @@
-# SandIAM P0 契约（v0.1，可消费）
+# SandIAM P0 契约（v0.2，可消费）
 
-> 状态：**已冻结、可消费**。冻结日期：2026-08-13。本文是 IAM-02 迁移与后端、Cursor U-02/U-03 管理端、以及 SandAI `SAND-113C` 的唯一交接输入。变更必须先更新本文并声明兼容性，不能由任一消费方猜测字段。
+> 状态：**已冻结、可消费**。初版冻结日期：2026-08-13；身份源作用域修订日期：2026-08-21。本文是迁移与后端、管理端以及 SandAI Adapter 的交接输入。变更必须先更新本文并声明兼容性，不能由任一消费方猜测字段。
+>
+> v0.2 兼容说明：应用身份仍不跨应用合并；身份源采用显式作用域，而非旧的全局 `provider_code + subject` 唯一边界。`scope_type=application` 表示应用私有实例；`scope_type=organization` 表示组织持有实例，必须经显式 application mount 才能在应用中使用。无论哪种作用域，`subject` 的唯一边界固定为 `identity_provider_id + subject`。旧管理端仍可提交 `provider_code`，但后端只能在身份所属组织且已挂载的既有身份源中解析，绝不隐式创建或猜测作用域。
 
 ## 1. 权威边界与交付面
 
 - 包标识固定为 `sand-iam`，PHP 命名空间 `plugin\\SandIam`，路由段 `sand-iam`，PostgreSQL 表前缀、配置与权限码干 `sand_iam`。只使用 PostgreSQL。
-- 本仓 `sand-iam/` 是源码；`/Users/code/project/sandadmin` 是唯一插件安装、演示与功能验收宿主。该宿主的后台账号只管理插件，绝不作为业务应用的人类用户账号。
+- 本仓 `sand-iam/` 是源码；`/Users/code/project/sand_plugins/sandadmin-demo-host` 是插件安装、演示与功能验收宿主（服务端为其 `server/` 子目录）。`/Users/code/project/sandadmin` 是纯净通用 SandAdmin 宿主，不用于插件演示。演示宿主的后台账号只管理插件，绝不作为业务应用的人类用户账号。
 - SandIAM 是 organization、application、environment、workload client、credential、service/action/grant、应用身份、用户类型、角色、策略、数据范围和访问审计的唯一权威。
 - SandAI 只拥有 provider、model、AI 路由、文件、任务、用量和 AI 执行审计；它只调用本契约的 Adapter，禁止跨库读 `sand_iam_*`，也不得继续维护 application、environment、credential 或 grant 的平行权威表。
-- 业务应用保留案件、订单、文件和业务状态。它向 SandIAM 注册资源与策略，在每次操作提供业务属性事实并保留最终业务校验；不复制或迁移业务实体到 SandIAM。
+- 业务应用保留业务实体、文件和业务状态。它向 SandIAM 注册资源与策略，在每次操作提供业务属性事实并保留最终业务校验；不复制或迁移业务实体到 SandIAM。
 
 ## 2. 领域层级与通用字段
 
 ```text
 organization -> application -> environment -> workload_client -> credential
                                                    -> service_grant -> service_action -> service
+organization -> identity_provider -> identity_provider_application -> application
+application -> identity -> identity_binding <- identity_provider
 application -> identity -> identity_role -> role
 application -> identity -> identity_user_type -> user_type
 application -> resource -> policy <- role / identity
@@ -37,8 +41,10 @@ all security-sensitive operations -> audit_log
 | `sand_iam_service` | `code varchar(64)`、`name varchar(128)` | `uk_sand_iam_service_code(code)`；SandAI 服务固定代码 `sand_ai`。 |
 | `sand_iam_service_action` | `service_id bigint`、`code varchar(96)`、`name varchar(128)` | FK service RESTRICT；`uk_sand_iam_service_action_service_code(service_id,code)`。动作是 `sand_ai.document_parse` 等语义代码，禁止使用 HTTP URL。 |
 | `sand_iam_service_grant` | `workload_client_id bigint`、`service_action_id bigint`、`audience varchar(128)`、`quota_policy jsonb`、`data_class varchar(32)`、`network_policy jsonb`、`expire_time`、`revoked_time` | 两列 FK RESTRICT；`uk_sand_iam_service_grant_client_action_audience(workload_client_id,service_action_id,audience)`；有效期索引。 |
-| `sand_iam_identity` | `application_id bigint`、`code varchar(64)`、`display_name varchar(128)` | FK application RESTRICT；`uk_sand_iam_identity_application_code(application_id,code)`。应用人类用户身份不引用 `sa_system_user`。 |
-| `sand_iam_identity_binding` | `identity_id bigint`、`provider_code varchar(64)`、`subject varchar(191)` | FK identity RESTRICT；`uk_sand_iam_identity_binding_provider_subject(provider_code,subject)`；不存第三方访问令牌。 |
+| `sand_iam_identity` | `application_id bigint`、`code varchar(64)`、`display_name varchar(128)` | FK application RESTRICT；`uk_sand_iam_identity_application_code(application_id,code)`；`uk_sand_iam_identity_id_application(id,application_id)` 为绑定复合外键提供应用边界。应用人类用户身份不引用 `sa_system_user`。 |
+| `sand_iam_identity_provider` | `organization_id bigint`、`application_id bigint NULL`、`scope_type`、`code varchar(64)`、`name varchar(128)` | 所属组织不可变。`scope_type=application` 时必须指定 `application_id`，是应用私有实例；`scope_type=organization` 时不指定 `application_id`，由组织持有。两种实例都不得因同手机号或上游主体而合并产品账号。 |
+| `sand_iam_identity_provider_application` | `identity_provider_id bigint`、`application_id bigint`、`organization_id bigint` | 显式挂载关系；只能把组织持有实例挂到同组织应用，应用私有实例只允许其所属应用的挂载。身份源在某应用可用的唯一依据是有效挂载，不能由代码、手机号或请求参数推断。 |
+| `sand_iam_identity_binding` | `application_id bigint`、`identity_id bigint`、`identity_provider_id bigint`、`subject varchar(191)` | identity 与 provider 必须同组织，且 provider 必须有效挂载到 identity 所属 application；应用私有实例还必须与其 `application_id` 一致。`uk_sand_iam_identity_binding_provider_subject(identity_provider_id,subject)`；不存第三方访问令牌，也不以 `provider_code + subject` 作为全局唯一键。 |
 | `sand_iam_user_type` | `application_id bigint`、`code varchar(64)`、`name varchar(128)` | FK application RESTRICT；`uk_sand_iam_user_type_application_code(application_id,code)`。 |
 | `sand_iam_identity_user_type` | `identity_id bigint`、`user_type_id bigint` | 两列 FK RESTRICT；`uk_sand_iam_identity_user_type_identity_type(identity_id,user_type_id)`。 |
 | `sand_iam_role` | `application_id bigint`、`code varchar(64)`、`name varchar(128)` | FK application RESTRICT；`uk_sand_iam_role_application_code(application_id,code)`。 |
@@ -53,6 +59,8 @@ all security-sensitive operations -> audit_log
 
 管理 API 前缀固定为 `/app/sand-iam/admin`，全部使用宿主 `CheckLogin`、`CheckAuth`、`SystemLog`。以下 CRUD 统一命名：`index`、`read`、`save`、`update`、`disable`；删除仅允许未被引用的草稿配置，凭证/授权/策略均使用 revoke/disable 保留证据。
 
+客户主体、接入应用、应用环境和服务调用身份在管理端显示 `code` 时，标签固定为“系统代码（用于接口配置）”，创建后不可修改；格式为 2–64 位小写字母、数字、`-` 或 `_`，首位为字母或数字。`code` 是稳定机器引用，`name` 才是操作者识别对象的名称；服务动作等语义资源沿用各自的代码契约。完整对象用语和示例见 [管理台对象与显示用语](../product/sand-iam-control-plane-language.md)。
+
 | API 资源组 | 额外操作 | DTO 必填字段 | 权限码 |
 | --- | --- | --- | --- |
 | `organization` | — | `code,name,status` | `sand_iam.organization` |
@@ -62,7 +70,7 @@ all security-sensitive operations -> audit_log
 | `credential` | `issue`,`rotate`,`revoke` | issue: `workload_client_id,name,expire_time`；revoke: `id` | `sand_iam.credential` |
 | `service` / `action` | — | service: `code,name,status`；action: `service_id,code,name,status` | `sand_iam.service` |
 | `grant` | `revoke` | `workload_client_id,service_action_id,audience,quota_policy,data_class,network_policy,expire_time` | `sand_iam.grant` |
-| `identity` / `user-type` / `role` | assign/unassign | identity: `application_id,code,display_name,status`；type/role: `application_id,code,name,status` | `sand_iam.identity` / `sand_iam.role` |
+| `identity` / `identity-provider` / `user-type` / `role` | assign/unassign | identity: `application_id,code,display_name,status`；provider: `organization_id,scope_type,application_id?,code,name,status`；type/role: `application_id,code,name,status`。provider 创建后 `organization_id,scope_type,application_id,code` 不可修改；挂载是独立操作。 | `sand_iam.identity` / `sand_iam.identity_provider` / `sand_iam.role` |
 | `resource` / `policy` | `publish`,`revoke`,`authorize/check` | resource: `application_id,code,name,owner_field,organization_field`；policy: `application_id,resource_id,(role_id xor identity_id),action,effect,condition,scope,priority` | `sand_iam.resource` / `sand_iam.policy` |
 | `audit` | `index`,`read` | 仅筛选：`organization_id,application_id,action,outcome,from_time,to_time` | `sand_iam.audit` |
 
@@ -82,7 +90,19 @@ all security-sensitive operations -> audit_log
 | `SAND_IAM_POLICY_DENIED` | 403 | 身份/角色策略拒绝。 |
 | `SAND_IAM_RESOURCE_SCOPE_DENIED` | 403 | 数据范围/属性约束拒绝。 |
 | `SAND_IAM_ORGANIZATION_ACCESS_DENIED` | 403 | 跨 organization 管理或读取被拒绝。 |
-| `SAND_IAM_IDEMPOTENCY_CONFLICT` | 400 | 同 request_id 与请求语义不一致。 |
+| `SAND_IAM_IDEMPOTENCY_CONFLICT` | 409 | 同 request_id 与请求语义不一致。 |
+| `SAND_IAM_SERVICE_GRANT_CONSTRAINT_UNSUPPORTED` | 403 | 服务授权声明了当前运行时无法可靠执行的额度或数据分级约束。 |
+| `SAND_IAM_SERVICE_GRANT_CONSTRAINT_INVALID` | 400/403 | 管理面提交或运行时读到无法安全执行的服务授权约束；历史非法配置按 403 关闭失败。 |
+| `SAND_IAM_SERVICE_GRANT_IMMUTABLE` | 409 | 已创建授权的 client/action/audience 三元组不可修改。 |
+| `SAND_IAM_INVOCATION_FACTS_UNVERIFIED` | 403 | 服务未从已加载的服务端资源解析真实调用事实。 |
+| `SAND_IAM_INVOCATION_SCOPE_FORBIDDEN` | 403 | resolver 读取的真实资源所属组织、应用、环境或调用身份与已验签 context 不一致。 |
+| `SAND_IAM_SERVICE_NETWORK_FORBIDDEN` | 403 | 宿主传入的可信源 IP 无效，或当前服务授权网络规则拒绝该来源。 |
+| `SAND_IAM_DATA_CLASS_FORBIDDEN` | 403 | 调用的数据分级代码与授权不完全一致。 |
+| `SAND_IAM_SERVICE_QUOTA_EXCEEDED` | 429 | 当前固定 UTC 窗口的调用尝试额度已用完。 |
+
+运行时与授权入口从 `X-Request-Id` 读取 8–96 位字母、数字、`.`、`_`、`:` 或 `-` 的请求标识；缺失或不合规时由 SandIAM 生成 `req_` 前缀的随机标识。安全状态变更按操作者、操作名和请求标识绑定请求指纹：同一指纹重复提交不会再次签发、轮换或撤销，指纹不同返回 `SAND_IAM_IDEMPOTENCY_CONFLICT`。调用凭证明文绝不持久化；首次响应后重试仅返回已处理的凭证元数据和 `secret_available=false`，调用方必须按凭证遗失流程轮换，而不能要求系统重放秘密。
+
+`X-Request-Id` 只标识一个 HTTP 请求，allow 与 deny 必须使用不同值。验收或压测的一轮聚合使用调用方自管的 `acceptance_run_id`（例如报告字段或 `X-Acceptance-Run-Id`），它不是 SandIAM 授权输入、不会替代 request_id，也不会写成安全操作幂等键。
 
 业务拒绝统一使用 `plugin\\sandadmin\\exception\\ApiException`，显式传 `400`、`401` 或 `403`；不把拒绝吞成空列表或 500。
 
@@ -106,12 +126,35 @@ authorize(subject, resource, action, attributes)
 - `context` 是短期签名 compact token，包含 `context_id`、稳定 ID、audience、授予 action、过期时间、策略摘要和可选的业务 `subject_scope`；部署期签名密钥不入库、不写文档/日志/版本库。
 - `verify` 必须校验签名、过期、当前 credential/client/environment/grant 状态以及 expected audience/action。无 Provider/Adapter 时 SandAI 必须 fail-closed 为 `SAND_AI_IDENTITY_CONTEXT_UNAVAILABLE`；无 grant 使用 `SAND_IAM_SERVICE_ACTION_FORBIDDEN`；不得回退匿名或旧 API Key。
 - `verifyEnvironmentReference` 仅验证层级与启用状态，不泄露其它 application 的数据；它为 SandAI 既有 `application_id`/`environment_id` 引用的迁移提供受控校验。
-- `authorize` 对列表、详情、创建/更新、删除、导出和批量操作统一执行；业务应用仍对案件成员关系、状态机等业务事实做最终检查。
+- `authorize` 对列表、详情、创建/更新、删除、导出和批量操作统一执行；业务应用仍对成员关系、状态机等业务事实做最终检查。
 - issue、verify 成功/拒绝、authorize 拒绝、凭证签发/轮换/撤销必须写 audit，`request_id` 用于追踪和幂等。
+
+### 5.1 服务授权执行约束（v0.5）
+
+- `data_class` 是 `NULL` 或匹配 `^[a-z0-9][a-z0-9._-]{1,31}$` 的不透明代码。首版不定义公开、内部、秘密等等级，也不做上下级推断；运行调用事实必须与 grant 值完全相等，`NULL` 也只能匹配 `NULL`。多等级、等级继承和集合授权不在本版猜测。
+- 调用事实只能由宿主注入 `ServiceInvocationFactResolverRegistry` 的命名 resolver 在加载真实服务端资源后构造。resolver 返回值必须同时携带从该资源记录读取的 `organization_id`、`application_id`、`environment_id`、`workload_client_id`、`data_class`、resource type/ref；四级所属 ID 都是正整数，不能由 HTTP DTO、context 原样回填或调用方提示推导。授权入口只接收 resolver code 与服务端 resource key，禁止接收 `ResolvedInvocationFacts`。事实缺失、resolver 未注册、来源不可信、所属范围与已验签 context 不完全一致或多个资源出现不同代码时，以 `SAND_IAM_INVOCATION_FACTS_UNVERIFIED` / `SAND_IAM_INVOCATION_SCOPE_FORBIDDEN` 关闭失败。
+- `quota_policy` 首版只接受空对象或 `{"max_invocation_attempts":正整数,"window_seconds":正整数}`，拒绝未知字段。它按 PostgreSQL 时间划分固定 UTC 窗口，统计已经通过 SandIAM 调用授权的执行尝试；Provider 成败均不退款。
+- 同一 `operation_id` 与相同指纹只计一次；指纹固定包含 `context_id`、`credential_id`、规范化排序后的完整 context grant ID 集合、organization/application/environment/workload client、service、action、audience、data class 和资源事实。同一 workload client 使用新 context、新 credential、新 grant 集合或其它不同调用语义复用 `operation_id` 时，必须返回 `409 SAND_IAM_IDEMPOTENCY_CONFLICT`，不得返回旧 authorization。`operation_id` 是调用幂等键，不得替代每个 HTTP 请求唯一的 `request_id`。
+- context 必须绑定 `service_code`。调用方未显式提供 service 时，仅当全部 action 的有效 grant 可唯一解析到同一 service 才兼容签发；跨 service 同名 action 或多 service 歧义一律拒绝。
+- context 中只签稳定 ID、service、audience、actions 与 grant IDs；quota/data-class 约束必须在 verify/真实 invocation 时从当前 grant 重读。`subject_scope` 的信任标记固定为 `caller_asserted`，不得作为授权事实。
+- `authorizeInvocation` 与 `revalidateInvocation` 必须接收宿主 transport 解析出的可信源 IP；context verify 与最终 live grant 均按当前 `network_policy` 重查，策略更新立即生效，拒绝码固定为 `SAND_IAM_SERVICE_NETWORK_FORBIDDEN`。业务请求体或转发头不能直接充当可信源 IP。
+- worker 复验必须携带当前签名 context、expected audience、可信源 IP、resolver code 与 resource key：先完成 `verifyForService`，再逐项比对历史 operation 的 organization/application/environment/client/context/credential/grant/audience/action，最后重载当前资源事实。当前 `context_id` 必须与原 operation 完全一致；resolver 读取的四级所属范围必须与当前 context 完全一致；resource type/ref 必须与原 operation 相同。data class 允许因资源升级而变化，但必须用当前 grant 重新做 exact-match。
+- 宿主内真实调用通过 `ServiceInvocationAuthorizer` 执行。公共 context verify 不消费 quota，也不能替代真实 invocation 授权。远程部署在服务身份认证契约冻结前保持 unavailable/fail-closed。
+- 同步调用在 Provider 前授权；异步调用提交时形成授权记录并计一次，worker 在 Provider 前再次复核 credential/client/environment/service/action/grant 的实时状态，不重复计量。
+
+### 5.2 服务目录注册端口
+
+插件安装器需要登记某个服务插件提供的可授权能力时，只能调用
+`plugin\\SandIam\\app\\runtime\\ServiceCatalog::registerServiceActions(service, actions)`。
+它以 service code 与 `(service_id, action code)` 唯一键幂等补齐目录记录；若既有 service/action
+已禁用则返回冲突，绝不重新启用、修改名称或触碰任何已配置授权。该端口只可创建
+`sand_iam_service` 与 `sand_iam_service_action` 目录记录，禁止创建 organization、application、
+environment、workload client、credential、service grant、identity、role 或 policy。后者必须由实际
+业务接入时按其主体、环境和最小授权原则配置。
 
 ## 6. 迁移与验收责任
 
-1. 包根 `install.sql`、`update.sql`、`uninstall.sql` 是 SaiPackage 执行的唯一 DDL 权威；`plugin/sand-iam/` 内的同名文件是与宿主插件源码一致的生命周期扩展点，不能添加相互冲突的 DDL。`plugin/sand-iam/app/functions.php` 必须保留包内 `plugin\\SandIam` 自动加载器：SaiPackage 复制插件目录但不会更新宿主 Composer PSR-4 映射，加载器必须在路由读取前使控制器可解析。P0 是首个含 schema 的包版本，因此 `update.sql` 对已安装 P0 是无 DDL 的安全验证；每个后续已发布 schema 变更必须先追加不可变 `migrations/*.pgsql`，再写对应升级 DDL。
+1. 包根 `install.sql`、`update.sql`、`uninstall.sql` 是 SaiPackage 执行的唯一 DDL 权威；`plugin/sand-iam/` 内的同名文件是与宿主插件源码一致的生命周期扩展点，不能添加相互冲突的 DDL。`plugin/sand-iam/app/functions.php` 必须保留包内 `plugin\\SandIam` 自动加载器：SaiPackage 复制插件目录但不会更新宿主 Composer PSR-4 映射，加载器必须在路由读取前使控制器可解析。v0.2 的不可变迁移为 `migrations/002_identity_provider_scope.pgsql`：按旧身份所属应用与 `provider_code` 建立兼容身份源，回填应用和身份源引用，再移除旧全局唯一边界。每个后续已发布 schema 变更仍须先追加不可变迁移，再写对应升级 DDL。
 2. 先在 SandAdmin 的隔离验收数据库盘点版本、已有 `sand_iam_*`、工作区状态和回滚路径，再验证安装、升级、卸载；之后才可在演示库安装。不得删除或覆盖非 SandIAM 对象。
-3. 验收必须证明：双 organization 隔离；应用 identity 不复用宿主账号；凭证一次展示/轮换/撤销；context 的成功、无 grant、过期、audience/action 不匹配；读/详情/写/删/导出/批量的策略覆盖；所有允许和拒绝均有 audit。
+3. 验收必须证明：双 organization 隔离；应用 identity 不复用宿主账号；同一身份源内的相同 `subject` 不能绑定给两个身份；相同上游标识可在不同应用的身份源实例中独立存在；数据库拒绝 identity/provider 跨应用错绑；凭证一次展示/轮换/撤销；context 的成功、无 grant、过期、audience/action 不匹配；读/详情/写/删/导出/批量的策略覆盖；所有允许和拒绝均有 audit。
 4. Cursor 可消费的页面字段仅为本文件第 4 节 DTO。Cursor 不修改 PHP、SQL、路由、DTO、错误码或权限码；发现缺项按契约变更提交给 Codex。

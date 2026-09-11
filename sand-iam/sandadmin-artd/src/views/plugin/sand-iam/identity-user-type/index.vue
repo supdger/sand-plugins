@@ -3,8 +3,7 @@
   import type { SandIamFilterKey, SandIamResourceColumn } from '../api/types'
 
   const columns: SandIamResourceColumn[] = [
-    { key: 'id', label: 'ID', minWidth: 80 },
-    { key: 'identity_id', label: 'identity_id' },
+    { key: 'identity_id', label: '应用身份' },
     { key: 'user_type_id', label: 'user_type_id' },
     { key: 'status', label: '状态' }
   ]
@@ -14,7 +13,7 @@
 <template>
   <ResourceListPage
     title="身份用户类型关系"
-    description="必须提供 identity_id。授予/撤销走真实接口。"
+    description="为指定应用身份标记用户类型。先选择应用身份，系统会只列出其所属应用中的用户类型。"
     endpoint="identity-user-type"
     index-permission="sand_iam:identity_user_type:index"
     permission-prefix="sand_iam:identity_user_type"

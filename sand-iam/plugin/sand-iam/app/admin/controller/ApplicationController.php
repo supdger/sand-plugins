@@ -18,10 +18,103 @@ final class ApplicationController extends AdminResourceController
     protected array $writeFields = ['organization_id', 'code', 'name', 'status'];
     protected array $requiredFields = ['organization_id', 'code', 'name'];
     protected string $resourceType = 'application';
-    #[Permission('SandIAM 应用列表', 'sand_iam:application:index')] public function index(Request $request): Response { return parent::index($request); }
-    #[Permission('SandIAM 应用读取', 'sand_iam:application:read')] public function read(Request $request): Response { return parent::read($request); }
-    #[Permission('SandIAM 应用保存', 'sand_iam:application:save')] public function save(Request $request): Response { return parent::save($request); }
-    #[Permission('SandIAM 应用更新', 'sand_iam:application:update')] public function update(Request $request): Response { return parent::update($request); }
-    #[Permission('SandIAM 应用停用', 'sand_iam:application:disable')] public function disable(Request $request): Response { return parent::disable($request); }
-    protected function assertReferences(array $payload, ?object $existing = null): void { if (isset($payload['organization_id']) && !Organization::where('id', (int) $payload['organization_id'])->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: organization', 400); }
+    #[Permission('SandIAM 接入应用列表', 'sand_iam:application:index')]
+    public function index(Request $request): Response
+    {
+        $page = max(1, (int) $request->input('page', 1));
+        $limit = min(100, max(1, (int) $request->input('limit', 20)));
+        $query = Application::alias('application')
+            ->leftJoin('sand_iam_organization organization', 'organization.id = application.organization_id')
+            ->field('application.*, organization.name AS organization_name')
+            ->order('application.id', 'desc');
+        $this->scopeIndexToOrganizations($query);
+        foreach (['organization_id', 'status'] as $field) {
+            $value = $request->input($field, '');
+            if ($value !== '') {
+                $query->where('application.' . $field, (int) $value);
+            }
+        }
+        $keyword = trim((string) $request->input('keywords', ''));
+        if ($keyword !== '') {
+            $query->whereLike('application.name', '%' . $keyword . '%');
+        }
+        return $this->success($this->withOrganizationContext(
+            $query->paginate(['page' => $page, 'list_rows' => $limit])->toArray(),
+        ));
+    }
+
+    #[Permission('SandIAM 接入应用读取', 'sand_iam:application:read')]
+    public function read(Request $request): Response
+    {
+        $model = $this->find($request);
+        $application = Application::alias('application')
+            ->leftJoin('sand_iam_organization organization', 'organization.id = application.organization_id')
+            ->field('application.*, organization.name AS organization_name')
+            ->where('application.id', (int) $model->id)
+            ->find();
+        return $this->success($this->withOrganizationContext($application?->toArray() ?? []));
+    }
+    #[Permission('SandIAM 接入应用保存', 'sand_iam:application:save')] public function save(Request $request): Response { return parent::save($request); }
+    #[Permission('SandIAM 接入应用更新', 'sand_iam:application:update')] public function update(Request $request): Response { return parent::update($request); }
+    #[Permission('SandIAM 接入应用停用', 'sand_iam:application:disable')] public function disable(Request $request): Response { return parent::disable($request); }
+    protected function assertReferences(array $payload, ?object $existing = null): void { if (isset($payload['organization_id']) && !Organization::where('id', (int) $payload['organization_id'])->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所属客户主体不存在或已停用', 400); }
+
+    protected function scopeIndexToOrganizations(object $query): void
+    {
+        if ($this->access()->isSuperAdmin()) return;
+        $applicationIds = $this->access()->applicationIds();
+        if ($applicationIds === []) {
+            $query->whereRaw('1 = 0');
+            return;
+        }
+        $query->whereIn('application.id', $applicationIds);
+    }
+
+    protected function assertModelAccess(object $model): void
+    {
+        $this->access()->assertApplication((int) $model->id);
+    }
+
+    protected function assertPayloadAccess(array $payload, ?object $existing = null): void
+    {
+        if ($existing === null) {
+            $this->access()->assertOrganization((int) ($payload['organization_id'] ?? 0));
+            return;
+        }
+
+        $this->access()->assertApplication((int) $existing->id);
+        $organizationId = (int) ($payload['organization_id'] ?? $existing->organization_id);
+        if ($organizationId !== (int) $existing->organization_id) {
+            $this->access()->assertOrganization((int) $existing->organization_id);
+            $this->access()->assertOrganization($organizationId);
+        }
+    }
+
+    /**
+     * Application-level delegates receive the parent organization as display
+     * context only. They cannot change it without an organization grant.
+     *
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function withOrganizationContext(array $payload): array
+    {
+        $access = $this->access();
+        $organizationIds = $access->organizationIds();
+        $isEditable = static function (array $row) use ($access, $organizationIds): bool {
+            return $access->isSuperAdmin()
+                || in_array((int) ($row['organization_id'] ?? 0), $organizationIds, true);
+        };
+        if (isset($payload['data']) && is_array($payload['data'])) {
+            foreach ($payload['data'] as $index => $row) {
+                if (is_array($row)) {
+                    $row['organization_editable'] = $isEditable($row);
+                    $payload['data'][$index] = $row;
+                }
+            }
+            return $payload;
+        }
+        $payload['organization_editable'] = $isEditable($payload);
+        return $payload;
+    }
 }

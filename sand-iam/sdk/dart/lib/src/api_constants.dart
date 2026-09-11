@@ -1,0 +1,26 @@
+abstract final class SandIamApi {
+  static const authorizationDecision = '/api/sand-iam/v1/authorization/decide';
+  static const runtimeContextIssue = '/app/sand-iam/runtime/context/issue';
+  static const runtimeContextVerify = '/app/sand-iam/runtime/context/verify';
+  static const register = '/api/sand-iam/v1/auth/register';
+  static const login = '/api/sand-iam/v1/auth/login';
+  static const refresh = '/api/sand-iam/v1/auth/refresh';
+  static const logout = '/api/sand-iam/v1/auth/logout';
+  static const sessions = '/api/sand-iam/v1/auth/sessions';
+  static const revokeSession = '/api/sand-iam/v1/auth/sessions/revoke';
+  static const changePassword = '/api/sand-iam/v1/auth/password/change';
+  static const profile = '/api/sand-iam/v1/me/profile';
+  static const connections = '/api/sand-iam/v1/me/connections';
+  static const security = '/api/sand-iam/v1/me/security';
+  static const experience = '/api/sand-iam/v1/experience';
+  static const discovery = '/api/sand-iam/v1/.well-known/openid-configuration';
+  static const onboardingPreview = '/app/sand-iam/admin/developer/onboarding/preview';
+  static const onboardingApply = '/app/sand-iam/admin/developer/onboarding/apply';
+  static const policySimulate = '/app/sand-iam/admin/policy/simulate';
+  static const policyRollback = '/app/sand-iam/admin/policy/rollback';
+  static const credentialIssue = '/app/sand-iam/admin/credential/issue';
+  static const credentialRotate = '/app/sand-iam/admin/credential/rotate';
+  static const credentialRevoke = '/app/sand-iam/admin/credential/revoke';
+  static const providerPresetList = '/app/sand-iam/admin/identity-provider-preset/index';
+  static const providerPresetDraft = '/app/sand-iam/admin/identity-provider-preset/draft';
+}

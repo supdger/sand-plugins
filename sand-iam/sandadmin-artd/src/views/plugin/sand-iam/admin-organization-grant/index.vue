@@ -4,9 +4,8 @@
   import type { SandIamFilterKey, SandIamResourceColumn } from '../api/types'
 
   const columns: SandIamResourceColumn[] = [
-    { key: 'id', label: 'ID', minWidth: 80 },
-    { key: 'admin_user_id', label: 'admin_user_id' },
-    { key: 'organization_id', label: 'organization_id' },
+    { key: 'admin_user_name', label: '后台管理员', minWidth: 180 },
+    { key: 'organization_id', label: '客户主体', minWidth: 180 },
     { key: 'status', label: '状态' }
   ]
   const filters: SandIamFilterKey[] = ['status', 'organization_id']
@@ -14,8 +13,8 @@
 
 <template>
   <ResourceListPage
-    title="管理员组织委派"
-    description="仅宿主超级管理员可管理。非超管会得到组织访问拒绝，而不是空成功。"
+    title="客户主体管理委派"
+    description="指定哪些后台管理员可管理某个客户主体。默认列表显示管理员名称、客户主体和状态；请选择已有管理员和客户主体后保存。"
     endpoint="admin-organization-grant"
     index-permission="sand_iam:admin_organization_grant:index"
     permission-prefix="sand_iam:admin_organization_grant"

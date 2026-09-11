@@ -4,10 +4,9 @@
   import type { SandIamFilterKey, SandIamResourceColumn } from '../api/types'
 
   const columns: SandIamResourceColumn[] = [
-    { key: 'id', label: 'ID', minWidth: 80 },
-    { key: 'code', label: 'code' },
     { key: 'name', label: '名称', minWidth: 180 },
-    { key: 'status', label: '状态' }
+    { key: 'status', label: '状态' },
+    { key: 'code', label: 'code' }
   ]
   const filters: SandIamFilterKey[] = ['keywords', 'status']
 </script>
@@ -15,7 +14,7 @@
 <template>
   <ResourceListPage
     title="平台服务"
-    description="全局服务目录；仅超级管理员可改。委派管理员越权会 403。"
+    description="平台可对外提供的服务目录，仅平台超级管理员维护。服务下需要继续登记可授权的服务动作。"
     endpoint="service"
     index-permission="sand_iam:service:index"
     permission-prefix="sand_iam:service"

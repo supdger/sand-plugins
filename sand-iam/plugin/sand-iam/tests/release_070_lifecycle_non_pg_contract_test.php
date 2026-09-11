@@ -1,0 +1,296 @@
+<?php
+
+declare(strict_types=1);
+
+// behavior-test-gate: static-rule
+
+$root = dirname(__DIR__, 3);
+$package = $root . '/plugin/sand-iam';
+$migrations = $root . '/migrations';
+$packageMigrations = $package . '/migrations';
+
+/** @param bool $ok */
+function release070Assert(string $label, bool $ok): void
+{
+    static $passed = 0;
+    static $total = 0;
+    ++$total;
+    echo ($ok ? '[PASS] ' : '[FAIL] ') . $label . PHP_EOL;
+    if (!$ok) {
+        throw new RuntimeException("release 0.7.0 contract failed: {$label}");
+    }
+    ++$passed;
+}
+
+function release070NormalizeCheckDefinition(string $definition): string
+{
+    $normalized = strtolower($definition);
+    $normalized = preg_replace('/::[a-z_][a-z0-9_]*(?:\s+varying)?(?:\[\])?/', '', $normalized);
+    $normalized = is_string($normalized) ? preg_replace('/\s+/', '', $normalized) : null;
+    $normalized = is_string($normalized) ? preg_replace('/[()]/', '', $normalized) : null;
+    if (!is_string($normalized)) {
+        throw new RuntimeException('could not normalize CHECK definition fixture');
+    }
+    return $normalized;
+}
+
+/** @return list<string> */
+function release070PayloadSources(string $sql): array
+{
+    preg_match_all('/^-- lifecycle source: migrations\/([^\r\n]+)$/m', $sql, $matches);
+    return $matches[1] ?? [];
+}
+
+$published021 = 'f263ec1450bbd15d883c1d5b0f3a0fcfd15db602df9d120b1049a0c4cc428db9';
+$migration021 = $migrations . '/021_admin_permission_catalog.pgsql';
+$package021 = $packageMigrations . '/021_admin_permission_catalog.pgsql';
+release070Assert('published 0.6.0 migration 021 hash is immutable in root and package',
+    hash_file('sha256', $migration021) === $published021 && hash_file('sha256', $package021) === $published021);
+
+$migration034 = (string) file_get_contents($migrations . '/034_identity_group_role_permission_catalog.pgsql');
+$package034 = (string) file_get_contents($packageMigrations . '/034_identity_group_role_permission_catalog.pgsql');
+$permissionCodes = [
+    'sand_iam:identity_group_role:index',
+    'sand_iam:identity_group_role:grant',
+    'sand_iam:identity_group_role:revoke',
+];
+release070Assert('034 is byte-identical in root and package', hash('sha256', $migration034) === hash('sha256', $package034));
+release070Assert('034 is transactional idempotent and fails explicitly without its parent menu',
+    str_contains($migration034, 'BEGIN;')
+    && str_contains($migration034, 'COMMIT;')
+    && str_contains($migration034, 'RAISE EXCEPTION')
+    && str_contains($migration034, 'SandIAMPeopleAccess is missing')
+    && str_contains($migration034, 'WHERE NOT EXISTS ('));
+release070Assert('034 creates only the three group-role permission nodes and never assigns them to roles',
+    array_reduce($permissionCodes, static fn (bool $ok, string $code): bool => $ok && substr_count($migration034, $code) >= 1, true)
+    && substr_count($migration034, "('sand_iam:identity_group_role:") === 3
+    && !str_contains($migration034, 'sand_system_role_menu'));
+
+$migration036 = (string) file_get_contents($migrations . '/036_acceptance_fixture_support.pgsql');
+$package036 = (string) file_get_contents($packageMigrations . '/036_acceptance_fixture_support.pgsql');
+$acceptancePermissions = [
+    'sand_iam:acceptance_fixture:cleanup',
+    'sand_iam:acceptance_fixture:read',
+];
+preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $migration036, $migration036Checksum);
+$canonical036 = isset($migration036Checksum[1]) ? str_replace($migration036Checksum[1], '__SELF_SHA256__', $migration036) : null;
+release070Assert('036 is byte-identical, transactional and has a stable canonical self-checksum',
+    hash('sha256', $migration036) === hash('sha256', $package036)
+    && isset($migration036Checksum[1])
+    && is_string($canonical036)
+    && hash('sha256', $canonical036) === $migration036Checksum[1]
+    && str_contains($migration036, 'BEGIN;')
+    && str_contains($migration036, 'COMMIT;'));
+release070Assert('036 exposes only two hidden developer permissions and never grants a role',
+    array_reduce($acceptancePermissions, static fn (bool $ok, string $code): bool => $ok && substr_count($migration036, $code) >= 1, true)
+    && str_contains($migration036, "code = 'SandIAMDeveloperDocs'")
+    && str_contains($migration036, 'matched_permissions <> 2')
+    && !str_contains($migration036, 'sand_system_role_menu'));
+release070Assert('036 changes only the two nullable audit ownership links to SET NULL and registers itself last',
+    str_contains($migration036, "column_name IN ('organization_id', 'application_id')")
+    && substr_count($migration036, 'ON DELETE SET NULL') >= 4
+    && str_contains($migration036, '036_acceptance_fixture_support.pgsql')
+    && str_contains($migration036, '(SELECT count(*) FROM sand_iam_schema_migration) <> 37'));
+
+$ledger = (string) file_get_contents($migrations . '/035_schema_migration_ledger.pgsql');
+$packageLedger = (string) file_get_contents($packageMigrations . '/035_schema_migration_ledger.pgsql');
+preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $ledger, $selfChecksum);
+$canonicalLedger = preg_replace("/(WITH self_checksum\\(checksum\\) AS \\(VALUES \\(')[^']+/", '${1}__SELF_SHA256__', $ledger, 1);
+release070Assert('035 ledger is byte-identical and has a stable canonical self-checksum',
+    hash('sha256', $ledger) === hash('sha256', $packageLedger)
+    && isset($selfChecksum[1])
+    && is_string($canonicalLedger)
+    && hash('sha256', $canonicalLedger) === $selfChecksum[1]);
+release070Assert('035 records the required migration identity fields and guards 0.6 baseline adoption',
+    str_contains($ledger, 'migration_file varchar(160) PRIMARY KEY')
+    && str_contains($ledger, 'revision smallint NOT NULL')
+    && str_contains($ledger, 'checksum char(64) NOT NULL')
+    && str_contains($ledger, 'package_version varchar(32) NOT NULL')
+    && str_contains($ledger, 'executed_time timestamp(0) without time zone NOT NULL')
+    && str_contains($ledger, 'exact 0.6.0 82-table or post-033 83-table relation set is incompatible')
+    && str_contains($ledger, 'migration ledger checksum or package-version conflict; refusing to continue')
+    && str_contains($ledger, 'migration ledger is partial; refusing to adopt or overwrite missing baseline records')
+    && str_contains($ledger, 'migration ledger contains an unknown migration filename; refusing to continue')
+    && str_contains($ledger, "WHERE revision <= 35")
+    && str_contains($ledger, 'recorded_rows = expected_rows - 1')
+    && str_contains($ledger, "('036_acceptance_fixture_support.pgsql', 36,"));
+$sourceMigrationNames = array_map('basename', glob($migrations . '/*.pgsql') ?: []);
+sort($sourceMigrationNames, SORT_STRING);
+$historicalLedgerMigrationNames = array_values(array_filter(
+    $sourceMigrationNames,
+    static fn (string $name): bool => $name !== '037_initialization_draft.pgsql'
+));
+preg_match_all("/^\\s*\\('([0-9]{3}_[^']+\\.pgsql)',\\s*\\d+,\\s*'[0-9a-f]{64}'/m", $ledger, $ledgerMigrationMatches);
+$ledgerMigrationNames = $ledgerMigrationMatches[1] ?? [];
+$ledgerMigrationNames[] = '035_schema_migration_ledger.pgsql';
+sort($ledgerMigrationNames, SORT_STRING);
+release070Assert('035 preserves its frozen historical filename set instead of rewriting a shipped ledger', $ledgerMigrationNames === $historicalLedgerMigrationNames);
+$draftMigration = (string) file_get_contents($migrations . '/037_initialization_draft.pgsql');
+$packageDraftMigration = (string) file_get_contents($packageMigrations . '/037_initialization_draft.pgsql');
+preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $draftMigration, $draftChecksum);
+release070Assert('037 is root/package-identical, self-checksummed, append-only in the ledger, and declares draft ownership',
+    hash('sha256', $draftMigration) === hash('sha256', $packageDraftMigration)
+    && isset($draftChecksum[1])
+    && hash('sha256', str_replace($draftChecksum[1], '__SELF_SHA256__', $draftMigration)) === $draftChecksum[1]
+    && str_contains($draftMigration, "SELECT '037_initialization_draft.pgsql', 37")
+    && str_contains($draftMigration, '(SELECT count(*) FROM sand_iam_schema_migration) <> 38')
+    && str_contains($draftMigration, 'sand_iam_initialization_draft')
+    && str_contains($draftMigration, 'sand_iam_initialization_draft_revision')
+    && str_contains($draftMigration, 'FOREIGN KEY (application_id, organization_id)')
+    && str_contains($draftMigration, "constraint_row.conname = 'uk_sand_iam_application_id_organization'")
+    && str_contains($draftMigration, "application_ownership_key IS DISTINCT FROM 'UNIQUE (id, organization_id)'")
+    && !str_contains($draftMigration, 'ADD CONSTRAINT uk_sand_iam_application_id_organization')
+    && str_contains($draftMigration, 'sand_iam:initialization:save')
+    && str_contains($draftMigration, 'sand_iam:initialization:update')
+    && str_contains($draftMigration, 'sand_iam:initialization:disable')
+    && str_contains($draftMigration, 'parent menu SandIAMConnection is missing')
+    && str_contains($draftMigration, 'initialization-draft permission fingerprint is incompatible')
+    && !str_contains($draftMigration, 'sand_system_role_menu'));
+preg_match('/base_tables text\[\] := ARRAY\[([^;]+)\];/', $ledger, $baseTableMatch);
+preg_match_all("/'(sand_iam_[a-z0-9_]+)'/", $baseTableMatch[1] ?? '', $baseTableMatches);
+$ledgerBaseTables = array_values(array_unique($baseTableMatches[1] ?? []));
+sort($ledgerBaseTables, SORT_STRING);
+$baselineSchema = (string) file_get_contents($root . '/lifecycle/base.pgsql');
+foreach (glob($migrations . '/*.pgsql') ?: [] as $migration) {
+    if (substr(basename($migration), 0, 3) <= '032') {
+        $baselineSchema .= "\n" . (string) file_get_contents($migration);
+    }
+}
+preg_match_all('/\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+(sand_iam_[a-z0-9_]+)/i', $baselineSchema, $baselineTableMatches);
+$sourceBaselineTables = array_values(array_unique($baselineTableMatches[1] ?? []));
+sort($sourceBaselineTables, SORT_STRING);
+release070Assert('035 freezes the complete programmatic 0.6 82-table relation baseline and the post-033 83-table set',
+    count($ledgerBaseTables) === 82
+    && $ledgerBaseTables === $sourceBaselineTables
+    && str_contains($ledger, '<> 83')
+    && str_contains($ledger, "UNION SELECT 'sand_iam_identity_group_role'"));
+release070Assert('035 scopes constraint and index checks by schema/table OID, type, definition and valid unique key order',
+    str_contains($ledger, 'actual_table.oid = actual_constraint.conrelid')
+    && str_contains($ledger, 'actual_constraint.contype = expected.constraint_type')
+    && str_contains($ledger, 'pg_get_constraintdef(actual_constraint.oid, true)')
+    && str_contains($ledger, 'indexed_table.oid = baseline_index.indrelid')
+    && str_contains($ledger, 'baseline_index.indisunique AND baseline_index.indisvalid AND baseline_index.indisready')
+    && str_contains($ledger, "pg_get_indexdef(baseline_index.indexrelid, 1, true) = 'id'")
+    && str_contains($ledger, "pg_get_indexdef(baseline_index.indexrelid, 2, true) = 'application_id'"));
+release070Assert('035 accepts the known pre-036 NOT VALID checks only at their frozen validation state',
+    str_contains($ledger, "ck_sand_iam_service_grant_data_class', 'ck_sand_iam_service_grant_quota_object') THEN false")
+    && str_contains($ledger, 'actual_constraint.convalidated = CASE')
+    && str_contains($ledger, 'ledger_revision.convalidated')
+    && str_contains($ledger, 'ledger_checksum.convalidated'));
+release070Assert('035 locks all twelve critical CHECK expressions after stable PostgreSQL definition normalization',
+    str_contains($ledger, "expected.constraint_type = 'c' AND regexp_replace(")
+    && str_contains($ledger, "'checksource_state=anyarray[''active'',''disabled'',''deleted'']'")
+    && str_contains($ledger, "'checkprovider_type=anyarray[''local'',''oidc'',''oauth2'',''saml'',''ldap'',''scim'',''kerberos'']'")
+    && str_contains($ledger, "'checkscope_type=''application''andapplication_idisnotnullorscope_type=''organization''andapplication_idisnull'")
+    && str_contains($ledger, "'checkauth_method=''local_password''andidentity_binding_idisnullorauth_method=''federation''andidentity_binding_idisnotnull'")
+    && str_contains($ledger, "'checkrequest_fingerprint~''^[0-9a-f]{64}$'''")
+    && str_contains($ledger, "'checkobject_type=anyarray[''application'',''role''"));
+release070Assert('CHECK definition normalization removes scalar and array casts without a database',
+    release070NormalizeCheckDefinition("CHECK ((value::text = ANY (ARRAY['a'::text, 'b'::text]::text[])))") === "checkvalue=anyarray['a','b']"
+    && release070NormalizeCheckDefinition("CHECK ((provider_type::character varying = ANY (ARRAY['oidc'::character varying, 'saml'::character varying]::character varying[])))") === "checkprovider_type=anyarray['oidc','saml']"
+    && release070NormalizeCheckDefinition("CHECK (((scope_type = 'application') AND (application_id IS NOT NULL)) OR ((scope_type = 'organization') AND (application_id IS NULL)))") === "checkscope_type='application'andapplication_idisnotnullorscope_type='organization'andapplication_idisnull");
+release070Assert('035 keeps independent field, 021 permission, 034 catalog and ledger-schema adoption fingerprints',
+    str_contains($ledger, 'required_baseline_column')
+    && str_contains($ledger, "('sand_iam_identity_provider', 'application_id', 'bigint', 'YES', false)")
+    && str_contains($ledger, "('sand_iam_sync_run', 'delete_time'")
+    && str_contains($ledger, 'frozen_permission_group')
+    && str_contains($ledger, 'immutable 021 permission code set is absent or not unique')
+    && str_contains($ledger, "'sand_iam:identity_group_role:revoke'")
+    && str_contains($ledger, 'GROUP BY required.code')
+    && str_contains($ledger, 'count(permission_menu.id) <> 1')
+    && str_contains($ledger, 'required_ledger_column'));
+release070Assert('035 validates ledger columns, default and primary-key definition before adoption',
+    str_contains($ledger, 'required_ledger_column')
+    && str_contains($ledger, 'column_info.character_maximum_length IS NOT DISTINCT FROM expected.character_maximum_length')
+    && str_contains($ledger, 'column_info.column_default IS NOT NULL')
+    && str_contains($ledger, "pg_get_constraintdef(ledger_pk.oid, true) = 'PRIMARY KEY (migration_file)'")
+    && str_contains($ledger, 'ck_sand_iam_schema_migration_revision')
+    && str_contains($ledger, 'checkrevision>=1andrevision<=999')
+    && str_contains($ledger, 'ck_sand_iam_schema_migration_checksum')
+    && str_contains($ledger, "checkchecksum~''^[0-9a-f]{64}$''")
+    && str_contains($ledger, 'SandIAM migration ledger table definition is incompatible'));
+
+$install = (string) file_get_contents($root . '/install.sql');
+$packageInstall = (string) file_get_contents($package . '/install.sql');
+$update = (string) file_get_contents($root . '/update.sql');
+$packageUpdate = (string) file_get_contents($package . '/update.sql');
+$uninstall = (string) file_get_contents($root . '/uninstall.sql');
+$packageUninstall = (string) file_get_contents($package . '/uninstall.sql');
+$expectedUpdate = [
+    '033_identity_group_role.pgsql',
+    '034_identity_group_role_permission_catalog.pgsql',
+    '035_schema_migration_ledger.pgsql',
+    '036_acceptance_fixture_support.pgsql',
+    '037_initialization_draft.pgsql',
+];
+release070Assert('fresh-install lifecycle is root/package identical and contains the 035 ledger, 036 support, and 037 drafts',
+    hash('sha256', $install) === hash('sha256', $packageInstall)
+    && str_contains($install, '-- lifecycle source: migrations/035_schema_migration_ledger.pgsql')
+    && str_contains($install, '-- lifecycle source: migrations/036_acceptance_fixture_support.pgsql')
+    && str_contains($install, '-- lifecycle source: migrations/037_initialization_draft.pgsql'));
+release070Assert('0.6.0 to 0.7.0 update lifecycle is root/package identical and contains exactly 033-037',
+    hash('sha256', $update) === hash('sha256', $packageUpdate)
+    && release070PayloadSources($update) === $expectedUpdate
+    && !str_contains($update, '-- lifecycle source: migrations/021_admin_permission_catalog.pgsql'));
+release070Assert('uninstall removes the ledger in root and package payloads',
+    hash('sha256', $uninstall) === hash('sha256', $packageUninstall)
+    && str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_schema_migration;'));
+
+$rootInfo = parse_ini_file($root . '/info.ini');
+$packageInfo = parse_ini_file($package . '/info.ini');
+$appConfig = (string) file_get_contents($package . '/config/app.php');
+$portal = json_decode((string) file_get_contents($root . '/portal/package.json'), true);
+$managementCatalog = (string) file_get_contents($package . '/app/developer/ManagementApiCatalog.php');
+release070Assert('0.7.0 release metadata declares matching SandAdmin 6.x support while OpenAPI stays 0.12.0-candidate',
+    ($rootInfo['version'] ?? null) === '0.7.0'
+    && ($packageInfo['version'] ?? null) === '0.7.0'
+    && ($rootInfo['support'] ?? null) === '6.x'
+    && ($packageInfo['support'] ?? null) === '6.x'
+    && str_contains($appConfig, "'version' => '0.7.0'")
+    && is_array($portal) && ($portal['version'] ?? null) === '0.7.0'
+    && str_contains($managementCatalog, "'version' => '0.12.0-candidate'"));
+
+$rootRecovery = (string) file_get_contents($root . '/recovery/failed-upgrade.v2.json');
+$packageRecovery = (string) file_get_contents($package . '/recovery/failed-upgrade.v2.json');
+$recovery = json_decode($rootRecovery, true);
+$recoveryManifestCommand = [PHP_BINARY, $root . '/tools/check-package-integrity.php', '--print-normalized-recovery-payload-manifest'];
+$recoveryPipes = [];
+$recoveryProcess = proc_open($recoveryManifestCommand, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $recoveryPipes);
+$recoveryManifestOutput = is_resource($recoveryProcess) ? stream_get_contents($recoveryPipes[1]) : false;
+if (is_resource($recoveryProcess)) {
+    fclose($recoveryPipes[1]);
+    fclose($recoveryPipes[2]);
+    $recoveryManifestStatus = proc_close($recoveryProcess);
+} else {
+    $recoveryManifestStatus = 127;
+}
+$recoveryManifest = is_string($recoveryManifestOutput) ? json_decode($recoveryManifestOutput, true) : null;
+release070Assert('0.7.0 recovery descriptor is root/plugin-identical, canonical, descriptor-excluded, and binds update.sql',
+    $rootRecovery !== ''
+    && $rootRecovery === $packageRecovery
+    && is_array($recovery)
+    && $rootRecovery === json_encode($recovery, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)
+    && array_keys($recovery) === ['app', 'candidate_payload', 'from_version', 'profile', 'schema', 'to_version', 'update_lifecycle']
+    && ($recovery['schema'] ?? null) === 'sandpackage.failed-upgrade-recovery/v2'
+    && ($recovery['profile']['schema'] ?? null) === 'sandpackage.failed-upgrade-recovery-profile/v2'
+    && ($recovery['profile']['state'] ?? null) === 'prefix_033_034'
+    && $recoveryManifestStatus === 0
+    && is_array($recoveryManifest)
+    && ($recovery['candidate_payload']['algorithm'] ?? null) === 'sandpackage-normalized-package-manifest/v1'
+    && ($recovery['candidate_payload']['digest'] ?? null) === ($recoveryManifest['digest'] ?? null)
+    && ($recovery['update_lifecycle']['path'] ?? null) === 'update.sql'
+    && ($recovery['update_lifecycle']['sha256'] ?? null) === hash_file('sha256', $root . '/update.sql'));
+
+$schema = (string) file_get_contents($root . '/lifecycle/base.pgsql');
+foreach (glob($migrations . '/*.pgsql') ?: [] as $migration) {
+    $schema .= "\n" . (string) file_get_contents($migration);
+}
+preg_match_all('/\\bCREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+(sand_iam_[a-z0-9_]+)/i', $schema, $tableMatches);
+$tables = array_values(array_unique($tableMatches[1] ?? []));
+release070Assert('0.7.0 schema source has exactly 86 SandIAM tables including editable initialization drafts',
+    count($tables) === 86
+    && in_array('sand_iam_schema_migration', $tables, true)
+    && in_array('sand_iam_initialization_draft', $tables, true)
+    && in_array('sand_iam_initialization_draft_revision', $tables, true));
+
+echo 'SandIAM 0.7.0 lifecycle non-PG contract passed' . PHP_EOL;

@@ -23,5 +23,5 @@ final class RoleController extends ApplicationResourceController
     #[Permission('SandIAM 角色保存', 'sand_iam:role:save')] public function save(Request $request): Response { return parent::save($request); }
     #[Permission('SandIAM 角色更新', 'sand_iam:role:update')] public function update(Request $request): Response { return parent::update($request); }
     #[Permission('SandIAM 角色停用', 'sand_iam:role:disable')] public function disable(Request $request): Response { return parent::disable($request); }
-    protected function assertReferences(array $payload, ?object $existing = null): void { if (isset($payload['application_id']) && !Application::where('id', (int) $payload['application_id'])->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: application', 400); }
+    protected function assertReferences(array $payload, ?object $existing = null): void { if (isset($payload['application_id']) && !Application::where('id', (int) $payload['application_id'])->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所属应用不存在或已停用', 400); }
 }

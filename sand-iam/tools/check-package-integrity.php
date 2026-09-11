@@ -1,0 +1,925 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * behavior-test-gate: static-rule
+ *
+ * Validate the source package without modifying it or touching a database.
+ *
+ * Usage:
+ *   php sand-iam/tools/check-package-integrity.php
+ *   php sand-iam/tools/check-package-integrity.php --print-candidate-manifest
+ *   php sand-iam/tools/check-package-integrity.php --print-normalized-recovery-payload-manifest
+ *   php sand-iam/tools/check-package-integrity.php --release --trusted-manifest=/controlled/path/sand-iam-release.json --trusted-public-key=/controlled/keys/sand-iam-ed25519.pub
+ *
+ * The default mode validates package-internal consistency only. Candidate
+ * manifests are review inputs, never release provenance. --release additionally
+ * needs a clean worktree and an independently controlled manifest outside this
+ * package root; this tool never generates or promotes that trusted manifest.
+ */
+
+$root = dirname(__DIR__);
+$package = $root . '/plugin/sand-iam';
+require_once $root . '/tools/package-payload-policy.php';
+require_once $root . '/tools/failed-upgrade-recovery-profile-v2.php';
+$arguments = array_slice($argv, 1);
+$releaseMode = in_array('--release', $arguments, true);
+$printCandidateManifest = in_array('--print-candidate-manifest', $arguments, true);
+$printNormalizedRecoveryPayloadManifest = in_array('--print-normalized-recovery-payload-manifest', $arguments, true);
+$trustedManifestPath = null;
+$trustedPublicKeyPath = null;
+foreach ($arguments as $argument) {
+    if (str_starts_with($argument, '--trusted-manifest=')) {
+        $trustedManifestPath = substr($argument, strlen('--trusted-manifest='));
+    }
+    if (str_starts_with($argument, '--trusted-public-key=')) {
+        $trustedPublicKeyPath = substr($argument, strlen('--trusted-public-key='));
+    }
+}
+if (($printCandidateManifest || $printNormalizedRecoveryPayloadManifest)
+    && ($releaseMode || $trustedManifestPath !== null || $trustedPublicKeyPath !== null || $printCandidateManifest === $printNormalizedRecoveryPayloadManifest)) {
+    fwrite(STDERR, "manifest print modes cannot be combined with each other or release verification\n");
+    exit(2);
+}
+if (($trustedManifestPath !== null || $trustedPublicKeyPath !== null) && !$releaseMode) {
+    fwrite(STDERR, "--trusted-manifest and --trusted-public-key are only valid with --release\n");
+    exit(2);
+}
+$passed = 0;
+$total = 0;
+$failures = [];
+
+/** @param callable(): bool $check */
+$assert = static function (string $label, callable $check) use (&$passed, &$total, &$failures): void {
+    ++$total;
+    try {
+        $ok = $check() === true;
+    } catch (Throwable $exception) {
+        $ok = false;
+        $failures[] = $label . ': ' . $exception->getMessage();
+    }
+
+    if ($ok) {
+        ++$passed;
+        echo "[PASS] {$label}\n";
+        return;
+    }
+
+    if (!isset($failures[array_key_last($failures)]) || !str_starts_with((string) $failures[array_key_last($failures)], $label . ':')) {
+        $failures[] = $label;
+    }
+    echo "[FAIL] {$label}\n";
+};
+
+/** @return list<string> */
+$migrationNames = static function (string $directory): array {
+    $files = glob($directory . '/*.pgsql');
+    if (!is_array($files)) {
+        return [];
+    }
+
+    $names = array_map('basename', $files);
+    sort($names, SORT_STRING);
+    return $names;
+};
+
+/** @return array<string, string> */
+$fileHashes = static function (string $directory, array $names): array {
+    $hashes = [];
+    foreach ($names as $name) {
+        $hash = hash_file('sha256', $directory . '/' . $name);
+        if (!is_string($hash)) {
+            throw new RuntimeException('cannot hash ' . $directory . '/' . $name);
+        }
+        $hashes[$name] = $hash;
+    }
+    return $hashes;
+};
+
+/** @return list<string> */
+$releaseArtifactFiles = static function () use ($root): array {
+    return sandIamPayloadFilePaths($root, true);
+};
+
+/**
+ * The recovery descriptor binds this digest, so the two mirrored descriptor
+ * copies are the only excluded payload files. Optional .sha256 companions are
+ * deliberately named here too: if a release adds either companion, it cannot
+ * create a descriptor/manifest cycle.
+ *
+ * @return array{schema:string,algorithm:string,files:array<string,string>,digest:string}
+ */
+$normalizedRecoveryPayloadManifest = static function () use ($releaseArtifactFiles): array {
+    $files = $releaseArtifactFiles();
+    foreach (sandIamGeneratedDescriptorPaths() as $excluded) {
+        unset($files[$excluded]);
+    }
+    $hashes = [];
+    foreach ($files as $relative => $file) {
+        $hash = hash_file('sha256', $file);
+        if (!is_string($hash)) {
+            throw new RuntimeException('cannot hash normalized recovery payload artifact: ' . $relative);
+        }
+        $hashes[$relative] = $hash;
+    }
+    ksort($hashes, SORT_STRING);
+    $manifest = [
+        'algorithm' => 'sandpackage-normalized-package-manifest/v1',
+        'files' => $hashes,
+        'schema' => 'sandpackage.normalized-package-manifest/v1',
+    ];
+    $canonical = json_encode($manifest, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    if (!is_string($canonical)) {
+        throw new RuntimeException('cannot canonicalize normalized recovery payload manifest');
+    }
+    $manifest['digest'] = hash('sha256', $canonical);
+    return $manifest;
+};
+
+/** @return array{schema:string,kind:string,version:string,migration_file_count:int,migrations:list<string>,key_file_hashes:array<string,string>,package_sha256:string} */
+$candidateManifest = static function () use ($root, $package, $migrationNames, $releaseArtifactFiles): array {
+    $files = $releaseArtifactFiles();
+    $tree = [];
+    foreach ($files as $relative => $file) {
+        $hash = hash_file('sha256', $file);
+        if (!is_string($hash)) {
+            throw new RuntimeException('cannot hash release artifact: ' . $relative);
+        }
+        $tree[$relative] = $hash;
+    }
+    $keyFileHashes = [];
+    foreach (['info.ini', 'plugin/sand-iam/info.ini', 'plugin/sand-iam/composer.lock', 'plugin/sand-iam/config/route.php', 'install.sql', 'update.sql', 'uninstall.sql'] as $relative) {
+        if (!isset($tree[$relative])) {
+            throw new RuntimeException('key release artifact is missing: ' . $relative);
+        }
+        $keyFileHashes[$relative] = $tree[$relative];
+    }
+    $appSource = file_get_contents($package . '/config/app.php');
+    preg_match("/'version'\\s*=>\\s*'([^']+)'/", is_string($appSource) ? $appSource : '', $match);
+    if (!isset($match[1])) {
+        throw new RuntimeException('cannot read package version');
+    }
+    $migrations = $migrationNames($root . '/migrations');
+    return [
+        'schema' => 'sand-iam.candidate-manifest/v1',
+        'kind' => 'candidate-review-only',
+        'version' => $match[1],
+        'migration_file_count' => count($migrations),
+        'migrations' => $migrations,
+        'key_file_hashes' => $keyFileHashes,
+        'package_sha256' => hash('sha256', implode("\n", array_map(static fn (string $path, string $hash): string => $path . ':' . $hash, array_keys($tree), $tree))),
+    ];
+};
+
+if ($printCandidateManifest) {
+    try {
+        echo json_encode($candidateManifest(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
+        exit(0);
+    } catch (Throwable $exception) {
+        fwrite(STDERR, "[FAIL] candidate manifest cannot enumerate package artifacts: {$exception->getMessage()}\n");
+        exit(1);
+    }
+}
+
+if ($printNormalizedRecoveryPayloadManifest) {
+    try {
+        echo json_encode($normalizedRecoveryPayloadManifest(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
+        exit(0);
+    } catch (Throwable $exception) {
+        fwrite(STDERR, "[FAIL] normalized recovery payload manifest cannot enumerate package artifacts: {$exception->getMessage()}\n");
+        exit(1);
+    }
+}
+
+$assert('release artifact payload contains no symbolic links', static function () use ($releaseArtifactFiles): bool {
+    $releaseArtifactFiles();
+    return true;
+});
+
+$assert('failed-upgrade recovery descriptor is canonical, root/plugin-identical, and binds the descriptor-excluded payload', static function () use ($root, $package, $normalizedRecoveryPayloadManifest): bool {
+    $canonicalize = null;
+    $canonicalize = static function (mixed $value) use (&$canonicalize): mixed {
+        if (is_float($value)) {
+            throw new RuntimeException('canonical recovery descriptor forbids floating-point values');
+        }
+        if (!is_array($value)) {
+            return $value;
+        }
+        if (array_is_list($value)) {
+            return array_map($canonicalize, $value);
+        }
+        ksort($value, SORT_STRING);
+        foreach ($value as $key => $item) {
+            $value[$key] = $canonicalize($item);
+        }
+        return $value;
+    };
+    $canonicalJson = static function (array $value) use ($canonicalize): string {
+        $canonical = json_encode($canonicalize($value), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        if (!is_string($canonical)) {
+            throw new RuntimeException('cannot canonicalize recovery descriptor');
+        }
+        return $canonical;
+    };
+    $validate = static function (string $raw) use ($canonicalJson, $normalizedRecoveryPayloadManifest, $root): array {
+        try {
+            $descriptor = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw new RuntimeException('recovery descriptor is not valid JSON', 0, $exception);
+        }
+        if (!is_array($descriptor) || array_is_list($descriptor) || $raw !== $canonicalJson($descriptor)) {
+            throw new RuntimeException('recovery descriptor is not canonical JSON');
+        }
+        $expectedKeys = ['app', 'candidate_payload', 'from_version', 'profile', 'schema', 'to_version', 'update_lifecycle'];
+        $keys = array_keys($descriptor);
+        sort($keys, SORT_STRING);
+        if ($keys !== $expectedKeys
+            || ($descriptor['schema'] ?? null) !== 'sandpackage.failed-upgrade-recovery/v2'
+            || ($descriptor['app'] ?? null) !== 'sand-iam'
+            || ($descriptor['from_version'] ?? null) !== '0.6.0'
+            || ($descriptor['to_version'] ?? null) !== '0.7.0'
+            || ($descriptor['profile'] ?? null) !== sandIamFailedUpgradeRecoveryProfileV2($root)) {
+            throw new RuntimeException('recovery descriptor has an unknown key or incompatible SandIAM recovery profile');
+        }
+        $candidate = $descriptor['candidate_payload'] ?? null;
+        $lifecycle = $descriptor['update_lifecycle'] ?? null;
+        if (!is_array($candidate) || !is_array($lifecycle)
+            || array_keys($candidate) !== ['algorithm', 'digest']
+            || array_keys($lifecycle) !== ['path', 'sha256']
+            || ($candidate['algorithm'] ?? null) !== 'sandpackage-normalized-package-manifest/v1'
+            || !is_string($candidate['digest'] ?? null)
+            || !preg_match('/^[0-9a-f]{64}$/', $candidate['digest'])
+            || ($candidate['digest'] ?? null) !== $normalizedRecoveryPayloadManifest()['digest']
+            || ($lifecycle['path'] ?? null) !== 'update.sql'
+            || !is_string($lifecycle['sha256'] ?? null)
+            || !preg_match('/^[0-9a-f]{64}$/', $lifecycle['sha256'])
+            || ($lifecycle['sha256'] ?? null) !== hash_file('sha256', $root . '/update.sql')) {
+            throw new RuntimeException('recovery descriptor payload or update lifecycle binding is invalid');
+        }
+        return $descriptor;
+    };
+    $rootPath = $root . '/recovery/failed-upgrade.v2.json';
+    $packagePath = $package . '/recovery/failed-upgrade.v2.json';
+    $rootRaw = is_file($rootPath) ? file_get_contents($rootPath) : false;
+    $packageRaw = is_file($packagePath) ? file_get_contents($packagePath) : false;
+    if (!is_string($rootRaw) || !is_string($packageRaw) || $rootRaw !== $packageRaw) {
+        return false;
+    }
+    $validate($rootRaw);
+    $validate($packageRaw);
+    return true;
+});
+
+$builderSource = file_get_contents($root . '/tools/build-lifecycle.php');
+$manifestSource = '';
+if (is_string($builderSource)
+    && preg_match('/\\$migrations\\s*=\\s*\\[(.*?)\\];/s', $builderSource, $manifestMatch) === 1) {
+    $manifestSource = $manifestMatch[1];
+}
+preg_match_all("/^\\s*'([0-9]{3}_[^']+\\.pgsql)',$/m", $manifestSource, $builderMatches);
+$manifestMigrationNames = $builderMatches[1] ?? [];
+$updateSource = '';
+if (is_string($builderSource)
+    && preg_match('/\\$updateNames\\s*=\\s*\\[(.*?)\\];/s', $builderSource, $updateMatch) === 1) {
+    $updateSource = $updateMatch[1];
+}
+preg_match_all("/^\\s*'([0-9]{3}_[^']+\\.pgsql)',$/m", $updateSource, $updateMatches);
+$updateMigrationNames = $updateMatches[1] ?? [];
+
+$assert('migration revisions are contiguous and begin at 001', static function () use ($migrationNames, $root): bool {
+    $names = $migrationNames($root . '/migrations');
+    $revisions = [];
+    foreach ($names as $name) {
+        if (preg_match('/^(\d{3})_.*\.pgsql$/', $name, $matches) !== 1) {
+            return false;
+        }
+        $revisions[(int) $matches[1]] = true;
+    }
+    $revisionNumbers = array_keys($revisions);
+    sort($revisionNumbers, SORT_NUMERIC);
+    return $revisionNumbers !== [] && $revisionNumbers === range(1, max($revisionNumbers));
+});
+
+$assert('lifecycle builder manifest declares every root migration', static function () use ($migrationNames, $root, $manifestMigrationNames): bool {
+    return $manifestMigrationNames !== [] && $migrationNames($root . '/migrations') === $manifestMigrationNames;
+});
+
+$assert('root and plugin migration payloads have matching names and hashes', static function () use ($migrationNames, $fileHashes, $root, $package): bool {
+    $names = $migrationNames($root . '/migrations');
+    return $names !== []
+        && $names === $migrationNames($package . '/migrations')
+        && $fileHashes($root . '/migrations', $names) === $fileHashes($package . '/migrations', $names);
+});
+
+$assert('root and plugin lifecycle payloads have matching hashes', static function () use ($root, $package): bool {
+    foreach (['install.sql', 'update.sql', 'uninstall.sql'] as $file) {
+        if (!is_file($root . '/' . $file) || !is_file($package . '/' . $file)
+            || hash_file('sha256', $root . '/' . $file) !== hash_file('sha256', $package . '/' . $file)) {
+            return false;
+        }
+    }
+    return true;
+});
+
+$assert('generated lifecycle separates full install from 0.6.0 to 0.7.0 update and safe cleanup payload', static function () use ($root, $manifestMigrationNames, $updateMigrationNames): bool {
+    $install = file_get_contents($root . '/install.sql');
+    $update = file_get_contents($root . '/update.sql');
+    $uninstall = file_get_contents($root . '/uninstall.sql');
+    if (!is_string($install) || !is_string($update) || !is_string($uninstall)) {
+        return false;
+    }
+
+    $collapse = static function (string $sql): string {
+        $lines = preg_split('/\\R/u', $sql);
+        if (!is_array($lines)) {
+            throw new RuntimeException('cannot split migration SQL');
+        }
+        $result = [];
+        $block = [];
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+            if ($block === [] && str_starts_with($trimmed, 'DO $$')) {
+                if (str_contains($trimmed, '$$;')) {
+                    $result[] = $line;
+                    continue;
+                }
+                $block[] = $trimmed;
+                continue;
+            }
+            if ($block !== []) {
+                if ($trimmed !== '') {
+                    $block[] = $trimmed;
+                }
+                if (str_ends_with($trimmed, '$$;')) {
+                    $result[] = implode(' ', $block);
+                    $block = [];
+                }
+                continue;
+            }
+            $result[] = $line;
+        }
+        return rtrim(implode("\n", $result));
+    };
+
+    foreach ($manifestMigrationNames as $offset => $name) {
+        $source = file_get_contents($root . '/migrations/' . $name);
+        $payload = is_string($source) ? $collapse($source) : '';
+        if ($offset >= 4 && !str_contains($install, $payload)) {
+            throw new RuntimeException('install is missing migration payload ' . $name);
+        }
+        if (!in_array($name, $updateMigrationNames, true) && str_contains($update, '-- lifecycle source: migrations/' . $name)) {
+            throw new RuntimeException('update replays historical migration ' . $name);
+        }
+    }
+    if ($updateMigrationNames !== [
+        '033_identity_group_role.pgsql',
+        '034_identity_group_role_permission_catalog.pgsql',
+        '035_schema_migration_ledger.pgsql',
+        '036_acceptance_fixture_support.pgsql',
+        '037_initialization_draft.pgsql',
+    ]) {
+        throw new RuntimeException('0.7.0 update manifest must contain exactly 033-037');
+    }
+    foreach ($updateMigrationNames as $name) {
+        $source = file_get_contents($root . '/migrations/' . $name);
+        $payload = is_string($source) ? $collapse($source) : '';
+        if ($payload === '' || !str_contains($update, $payload)) {
+            throw new RuntimeException('update is missing release migration payload ' . $name);
+        }
+    }
+    if (!str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_security_operation')
+        || !str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_application_business_action')) {
+        throw new RuntimeException('uninstall does not remove every generated migration table');
+    }
+
+    // These links point from an otherwise earlier principal table to a table
+    // scheduled for deletion first. They must be detached explicitly: CASCADE
+    // would hide lifecycle omissions and could reach host-owned objects.
+    $reverseForeignKeys = [
+        'sand_iam_oauth_client:sand_iam_oauth_registration_token' => [
+            'ALTER TABLE IF EXISTS sand_iam_oauth_client DROP CONSTRAINT IF EXISTS fk_sand_iam_oauth_client_dcr_token;',
+        ],
+        'sand_iam_auth_session:sand_iam_identity_binding' => [
+            'ALTER TABLE IF EXISTS sand_iam_auth_session DROP CONSTRAINT IF EXISTS fk_sand_iam_auth_session_federation_binding;',
+            'ALTER TABLE IF EXISTS sand_iam_auth_session DROP CONSTRAINT IF EXISTS fk_sand_iam_auth_session_identity_binding;',
+        ],
+        'sand_iam_policy:sand_iam_policy_version' => [
+            'ALTER TABLE IF EXISTS sand_iam_policy DROP CONSTRAINT IF EXISTS fk_sand_iam_policy_published_version;',
+        ],
+    ];
+    foreach ($reverseForeignKeys as $constraints) {
+        foreach ($constraints as $constraint) {
+            if (!str_contains($uninstall, $constraint)) {
+                throw new RuntimeException('uninstall does not detach reverse foreign key: ' . $constraint);
+            }
+        }
+    }
+    if (preg_match('/DROP\\s+TABLE[^;]*\\s+CASCADE\\b/i', $uninstall) === 1
+        || preg_match('/DROP\\s+SCHEMA[^;]*\\s+CASCADE\\b/i', $uninstall) === 1) {
+        throw new RuntimeException('uninstall must not use CASCADE');
+    }
+    if (preg_match('/DROP\\s+TABLE[^;]*\\bsand_system_/i', $uninstall) === 1
+        || preg_match('/\\bTRUNCATE\\s+(?:TABLE\\s+)?sand_system_/i', $uninstall) === 1) {
+        throw new RuntimeException('uninstall must not remove or truncate host-owned system tables');
+    }
+    foreach (['DELETE FROM sand_system_role_menu', 'DELETE FROM sand_system_menu'] as $hostCleanup) {
+        if (substr_count($uninstall, $hostCleanup) !== 1) {
+            throw new RuntimeException('uninstall host cleanup must remain limited to SandIAM menu bindings');
+        }
+    }
+
+    $schema = (string) file_get_contents($root . '/lifecycle/base.pgsql');
+    foreach ($manifestMigrationNames as $name) {
+        $schema .= "\n" . (string) file_get_contents($root . '/migrations/' . $name);
+    }
+    $foreignKeyPairs = [];
+    preg_match_all('/CREATE TABLE(?: IF NOT EXISTS)?\\s+(sand_iam_[a-z0-9_]+)\\s*\\((.*?)\\);/si', $schema, $tables, PREG_SET_ORDER);
+    foreach ($tables as $table) {
+        preg_match_all('/REFERENCES\\s+(sand_iam_[a-z0-9_]+)/i', (string) $table[2], $targets);
+        foreach ($targets[1] ?? [] as $target) {
+            if ($table[1] !== $target) {
+                $foreignKeyPairs[$table[1] . ':' . $target] = true;
+            }
+        }
+    }
+    $statements = preg_split('/;\\s*(?:\\R|$)/u', $schema);
+    if (!is_array($statements)) {
+        throw new RuntimeException('cannot inspect lifecycle foreign keys');
+    }
+    foreach ($statements as $statement) {
+        if (preg_match('/\\bALTER\\s+TABLE(?:\\s+IF\\s+EXISTS)?(?:\\s+ONLY)?\\s+(sand_iam_[a-z0-9_]+)\\b/is', $statement, $tableMatch) !== 1) {
+            continue;
+        }
+        preg_match_all('/\\bREFERENCES\\s+(sand_iam_[a-z0-9_]+)/i', $statement, $referenceMatches);
+        foreach ($referenceMatches[1] ?? [] as $target) {
+            if ($tableMatch[1] !== $target) {
+                $foreignKeyPairs[$tableMatch[1] . ':' . $target] = true;
+            }
+        }
+    }
+    preg_match_all('/\\bCREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+(sand_iam_[a-z0-9_]+)\\b/i', $schema, $createdTables);
+    preg_match_all('/DROP TABLE IF EXISTS\\s+(sand_iam_[a-z0-9_]+);/i', $uninstall, $droppedTables);
+    $createdTableSet = array_fill_keys($createdTables[1] ?? [], true);
+    $droppedTableSet = array_fill_keys($droppedTables[1] ?? [], true);
+    $missingDroppedTables = array_keys(array_diff_key($createdTableSet, $droppedTableSet));
+    sort($missingDroppedTables, SORT_STRING);
+    if ($missingDroppedTables !== []) {
+        throw new RuntimeException('uninstall is missing owned table cleanup: ' . implode(', ', $missingDroppedTables));
+    }
+    $dropPositions = [];
+    foreach ($droppedTables[1] ?? [] as $position => $table) {
+        $dropPositions[$table] ??= $position;
+    }
+    foreach ($foreignKeyPairs as $pair => $_) {
+        [$dependent, $principal] = explode(':', $pair, 2);
+        if (!isset($dropPositions[$dependent], $dropPositions[$principal])) {
+            throw new RuntimeException('uninstall is missing owned foreign-key table: ' . $pair);
+        }
+        if ($dropPositions[$dependent] > $dropPositions[$principal] && !isset($reverseForeignKeys[$pair])) {
+            throw new RuntimeException('uninstall drops principal before dependent without an explicit detached foreign key: ' . $pair);
+        }
+    }
+    foreach (array_keys($reverseForeignKeys) as $pair) {
+        if (!isset($foreignKeyPairs[$pair])) {
+            throw new RuntimeException('reverse foreign-key contract no longer matches schema: ' . $pair);
+        }
+    }
+    return true;
+});
+
+$assert('published 0.6.0 migration 021 remains byte-immutable in root and package payloads', static function () use ($root, $package): bool {
+    $expected = 'f263ec1450bbd15d883c1d5b0f3a0fcfd15db602df9d120b1049a0c4cc428db9';
+    foreach ([$root . '/migrations/021_admin_permission_catalog.pgsql', $package . '/migrations/021_admin_permission_catalog.pgsql'] as $file) {
+        if (!is_file($file) || hash_file('sha256', $file) !== $expected) {
+            return false;
+        }
+    }
+    return true;
+});
+
+$assert('migration ledgers preserve the frozen 035 catalog and register the 037 draft checksum', static function () use ($root, $manifestMigrationNames): bool {
+    $ledger = (string) file_get_contents($root . '/migrations/035_schema_migration_ledger.pgsql');
+    if ($ledger === '' || !str_contains($ledger, 'CREATE TABLE IF NOT EXISTS sand_iam_schema_migration')
+        || !str_contains($ledger, 'migration_file varchar(160) PRIMARY KEY')
+        || !str_contains($ledger, 'checksum char(64) NOT NULL')
+        || !str_contains($ledger, 'package_version varchar(32) NOT NULL')
+        || !str_contains($ledger, 'executed_time timestamp(0) without time zone NOT NULL')) {
+        return false;
+    }
+    if (preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $ledger, $self) !== 1) {
+        return false;
+    }
+    $canonical = preg_replace("/(WITH self_checksum\\(checksum\\) AS \\(VALUES \\(')[^']+/", '${1}__SELF_SHA256__', $ledger, 1);
+    if (!is_string($canonical) || hash('sha256', $canonical) !== $self[1]) {
+        return false;
+    }
+    foreach (array_filter($manifestMigrationNames, static fn (string $name): bool => $name !== '037_initialization_draft.pgsql') as $name) {
+        if (!str_contains($ledger, "'{$name}'")) {
+            return false;
+        }
+    }
+    $draft = (string) file_get_contents($root . '/migrations/037_initialization_draft.pgsql');
+    if ($draft === ''
+        || preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $draft, $draftChecksum) !== 1
+        || hash('sha256', str_replace($draftChecksum[1], '__SELF_SHA256__', $draft)) !== $draftChecksum[1]
+        || !str_contains($draft, "INSERT INTO sand_iam_schema_migration (migration_file, revision, checksum, package_version, executed_time)")
+        || !str_contains($draft, "SELECT '037_initialization_draft.pgsql', 37")
+        || !str_contains($draft, '(SELECT count(*) FROM sand_iam_schema_migration) <> 38')
+        || !str_contains($draft, 'sand_iam_initialization_draft')
+        || !str_contains($draft, 'sand_iam_initialization_draft_revision')
+        || !str_contains($draft, 'sand_iam:initialization:save')
+        || !str_contains($draft, 'sand_iam:initialization:update')
+        || !str_contains($draft, 'sand_iam:initialization:disable')) {
+        return false;
+    }
+    return str_contains($ledger, 'migration ledger checksum or package-version conflict; refusing to continue')
+        && str_contains($ledger, 'exact 0.6.0 82-table or post-033 83-table relation set is incompatible')
+        && str_contains($ledger, 'migration ledger contains an unknown migration filename; refusing to continue')
+        && str_contains($ledger, "('sand_iam_identity_provider', 'application_id', 'bigint', 'YES', false)")
+        && str_contains($ledger, "'ck_sand_iam_identity_provider_scope', 'c', NULL, 'checkscope_type=''application''andapplication_idisnotnullorscope_type=''organization''andapplication_idisnull'")
+        && str_contains($ledger, 'IF matched_columns <> 30 THEN');
+});
+
+$assert('composer declares locked SAML runtime dependency', static function () use ($package): bool {
+    $manifest = json_decode((string) file_get_contents($package . '/composer.json'), true);
+    $lock = json_decode((string) file_get_contents($package . '/composer.lock'), true);
+    if (!is_array($manifest) || !is_array($lock)
+        || ($manifest['require']['php'] ?? null) !== '>=8.2'
+        || ($manifest['require']['onelogin/php-saml'] ?? null) !== '^4.3.2') {
+        return false;
+    }
+    foreach ($lock['packages'] ?? [] as $dependency) {
+        if (($dependency['name'] ?? null) === 'onelogin/php-saml' && ($dependency['version'] ?? null) === '4.3.2') {
+            return true;
+        }
+    }
+    return false;
+});
+
+$assert('SAML dependency resolves through composer autoload', static function () use ($package): bool {
+    $autoload = $package . '/vendor/autoload.php';
+    if (!is_file($autoload)) {
+        throw new RuntimeException('vendor/autoload.php missing; run composer install before runtime validation');
+    }
+    require_once $autoload;
+    foreach (['OneLogin\\Saml2\\Auth', 'OneLogin\\Saml2\\Settings', 'OneLogin\\Saml2\\Response'] as $class) {
+        if (!class_exists($class)) {
+            throw new RuntimeException($class . ' is not resolvable');
+        }
+    }
+    return true;
+});
+
+$assert('protocol adapter guards and references the declared SAML runtime', static function () use ($package): bool {
+    $source = file_get_contents($package . '/app/federation/OneLoginSamlAssertionVerifier.php');
+    return is_string($source)
+        && str_contains($source, "class_exists('OneLogin\\\\Saml2\\\\Auth')")
+        && str_contains($source, '\\OneLogin\\Saml2\\Response');
+});
+
+$requiredFiles = [
+    'model' => ['app/model/Application.php', 'app/model/SecurityOperation.php'],
+    'validation and authorization runtime' => ['app/runtime/ScopeMatcher.php', 'app/runtime/PolicyAuthorizer.php', 'app/runtime/IdentityContextProvider.php', 'app/runtime/ServiceInvocationFactResolver.php', 'app/runtime/ServiceInvocationFactResolverRegistry.php', 'app/runtime/ResolvedInvocationFacts.php', 'app/runtime/ServiceInvocationAuthorizer.php'],
+    'logic services' => ['app/service/HumanAuthService.php', 'app/service/IdempotencyService.php', 'app/service/AuditWriter.php'],
+    'API and admin controllers' => ['app/api/controller/AuthController.php', 'app/api/controller/RuntimeContextController.php', 'app/admin/controller/ApplicationController.php'],
+    'route and configuration' => ['config/route.php', 'config/app.php', 'config/process.php', 'config/menu.php'],
+    'account portal runtime source and packaged assets' => ['../../portal/package.json', '../../portal/pnpm-lock.yaml', '../../portal/scripts/build.mjs', '../../portal/src/app.ts', 'public/account/index.html', 'public/account/account.js'],
+    'admin UI payload' => ['../../sandadmin-artd/src/views/plugin/sand-iam/index/index.vue', '../../sandadmin-artd/src/views/plugin/sand-iam/api/types.ts'],
+    'SDK and user-facing documentation' => ['../../sdk/dart/README.md', '../../sdk/php/composer.json', '../../sdk/typescript/package.json', '../../docs/user-guide/sand-iam-operator-guide.md'],
+];
+foreach ($requiredFiles as $area => $files) {
+    $assert($area . ' required payload exists', static function () use ($package, $files): bool {
+        foreach ($files as $file) {
+            if (!is_file($package . '/' . $file)) {
+                return false;
+            }
+        }
+        return true;
+    });
+}
+
+$assert('TypeScript SDK exports resolve to packaged ESM and declaration files only', static function () use ($root, $releaseArtifactFiles): bool {
+    $sdkRoot = $root . '/sdk/typescript';
+    $packageJson = file_get_contents($sdkRoot . '/package.json');
+    try {
+        $manifest = is_string($packageJson) ? json_decode($packageJson, true, 512, JSON_THROW_ON_ERROR) : null;
+    } catch (JsonException $exception) {
+        throw new RuntimeException('TypeScript SDK package.json is invalid JSON', 0, $exception);
+    }
+    if (!is_array($manifest) || !is_array($manifest['exports'] ?? null) || !isset($manifest['exports']['.'])) {
+        throw new RuntimeException('TypeScript SDK must declare a root export');
+    }
+
+    /** @return list<string> */
+    $exportTargets = static function (mixed $value) use (&$exportTargets): array {
+        if (is_string($value)) {
+            return [$value];
+        }
+        if (!is_array($value)) {
+            return [];
+        }
+        $targets = [];
+        foreach ($value as $nested) {
+            array_push($targets, ...$exportTargets($nested));
+        }
+        return $targets;
+    };
+
+    $targets = $exportTargets($manifest['exports']);
+    if (is_string($manifest['types'] ?? null)) {
+        $targets[] = $manifest['types'];
+    }
+    $targets = array_values(array_unique($targets));
+    if ($targets === []) {
+        throw new RuntimeException('TypeScript SDK exports declare no runtime or declaration target');
+    }
+
+    $safeTarget = static function (string $target): string {
+        if (!str_starts_with($target, './dist/')
+            || str_contains($target, '\\')
+            || str_contains($target, '..')
+            || !preg_match('#^\./dist/[A-Za-z0-9._/-]+\.(?:js|d\.ts)$#', $target)) {
+            throw new RuntimeException('TypeScript SDK export escapes the approved dist boundary: ' . $target);
+        }
+        return 'sdk/typescript/' . substr($target, 2);
+    };
+
+    /** @var array<string,true> $expected */
+    $expected = [];
+    $pending = [];
+    foreach ($targets as $target) {
+        $pending[] = $safeTarget($target);
+    }
+
+    // ESM imports and declaration re-exports are part of the public runtime
+    // closure even when package.json only exposes the root entrypoint.
+    while ($pending !== []) {
+        $relative = array_pop($pending);
+        if (!is_string($relative) || isset($expected[$relative])) {
+            continue;
+        }
+        $expected[$relative] = true;
+        $absolute = $root . '/' . $relative;
+        if (!is_file($absolute)) {
+            throw new RuntimeException('TypeScript SDK export target is missing: ' . $relative);
+        }
+        $source = file_get_contents($absolute);
+        if (!is_string($source)) {
+            throw new RuntimeException('cannot read TypeScript SDK export target: ' . $relative);
+        }
+        if (preg_match_all("#(?:from\\s*|export\\s*\\*\\s*from\\s*)['\"](\\./[^'\"]+)['\"]#", $source, $matches) !== false) {
+            foreach ($matches[1] as $import) {
+                if (!is_string($import)) {
+                    continue;
+                }
+                $resolved = dirname($relative) . '/' . substr($import, 2);
+                if (str_ends_with($relative, '.d.ts') && str_ends_with($resolved, '.js')) {
+                    $resolved = substr($resolved, 0, -3) . '.d.ts';
+                }
+                if (!str_starts_with($resolved, 'sdk/typescript/dist/') || str_contains($resolved, '..')) {
+                    throw new RuntimeException('TypeScript SDK runtime import escapes the approved dist boundary: ' . $import);
+                }
+                $pending[] = $resolved;
+            }
+        }
+    }
+
+    $payload = $releaseArtifactFiles();
+    foreach (array_keys($expected) as $relative) {
+        if (!isset($payload[$relative])) {
+            throw new RuntimeException('TypeScript SDK export target is absent from candidate payload: ' . $relative);
+        }
+    }
+    foreach (array_keys($payload) as $relative) {
+        if (preg_match('#(?:^|/)dist/#', $relative) === 1 && !str_starts_with($relative, 'sdk/typescript/dist/')) {
+            throw new RuntimeException('candidate payload contains a dist artifact outside the TypeScript SDK allowlist: ' . $relative);
+        }
+    }
+    return isset($expected['sdk/typescript/dist/index.js'], $expected['sdk/typescript/dist/index.d.ts'], $expected['sdk/typescript/dist/management.js'], $expected['sdk/typescript/dist/management.d.ts']);
+});
+
+/** @return list<string> */
+$textFiles = static function (array $directories, array $extensions): array {
+    $result = [];
+    foreach ($directories as $directory) {
+        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS));
+        foreach ($iterator as $file) {
+            if (!$file->isFile() || !in_array(strtolower($file->getExtension()), $extensions, true)) {
+                continue;
+            }
+            $result[] = $file->getPathname();
+        }
+    }
+    return $result;
+};
+
+$assert('PostgreSQL SQL has no sa_* business table or MySQL dialect', static function () use ($textFiles, $root, $package): bool {
+    $patterns = [
+        '/\\b(?:create|alter|drop)\\s+table(?:\\s+if\\s+(?:not\\s+)?exists)?\\s+sa_[a-z0-9_]+/i',
+        '/\\b(?:insert\\s+into|update|delete\\s+from)\\s+sa_[a-z0-9_]+/i',
+        '/\\b(?:auto_increment|unsigned|engine\\s*=|charset\\s*=|collate\\s*=)\\b/i',
+    ];
+    $files = $textFiles([$root . '/migrations', $root . '/lifecycle', $package . '/migrations'], ['sql', 'pgsql']);
+    foreach ([$root . '/install.sql', $root . '/update.sql', $root . '/uninstall.sql', $package . '/install.sql', $package . '/update.sql', $package . '/uninstall.sql'] as $file) {
+        if (!is_file($file)) {
+            return false;
+        }
+        $files[] = $file;
+    }
+    foreach ($files as $file) {
+        $content = file_get_contents($file);
+        if (!is_string($content)) {
+            return false;
+        }
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $content) === 1) {
+                return false;
+            }
+        }
+    }
+    return true;
+});
+
+$assert('release metadata versions and host support are consistent', static function () use ($root, $package): bool {
+    $readIni = static function (string $file): ?array {
+        $ini = parse_ini_file($file);
+        return is_array($ini) ? $ini : null;
+    };
+    $rootInfo = $readIni($root . '/info.ini');
+    $packageInfo = $readIni($package . '/info.ini');
+    if (!is_array($rootInfo) || !is_array($packageInfo)
+        || !is_string($rootInfo['version'] ?? null)
+        || !is_string($packageInfo['version'] ?? null)
+        || !is_string($rootInfo['support'] ?? null)
+        || !is_string($packageInfo['support'] ?? null)
+        || !is_string($rootInfo['website'] ?? null)
+        || !is_string($packageInfo['website'] ?? null)
+        || $rootInfo['support'] !== $packageInfo['support']
+        || $rootInfo['website'] !== $packageInfo['website']
+        || preg_match('/^\d+\.x(?:\|\d+\.x)*$/', $rootInfo['support']) !== 1) {
+        return false;
+    }
+    $supportsHostVersion = static function (string $support, string $hostVersion): bool {
+        if (preg_match('/^(\d+)\./', $hostVersion, $match) !== 1) {
+            return false;
+        }
+        return in_array($match[1] . '.x', explode('|', $support), true);
+    };
+    if (!$supportsHostVersion($rootInfo['support'], '6.0.11')) {
+        return false;
+    }
+    $appSource = file_get_contents($package . '/config/app.php');
+    preg_match("/'version'\\s*=>\\s*'([^']+)'/", is_string($appSource) ? $appSource : '', $match);
+    $version = isset($match[1]) ? $match[1] : null;
+    return $version !== null && $version === $rootInfo['version'] && $version === $packageInfo['version'];
+});
+
+/** @return non-empty-string */
+$externalRegularFile = static function (?string $path, string $label) use ($root): string {
+    if (!is_string($path) || $path === '') {
+        throw new RuntimeException('missing ' . $label);
+    }
+    if (!str_starts_with($path, '/') || preg_match('#/(?:\.{1,2})(?:/|$)#', $path) === 1) {
+        throw new RuntimeException($label . ' must use an absolute canonical path outside the sand-iam package root');
+    }
+    $rootPath = realpath($root);
+    if ($rootPath === false) {
+        throw new RuntimeException('cannot resolve sand-iam package root');
+    }
+    if ($path === $rootPath || str_starts_with($path, $rootPath . DIRECTORY_SEPARATOR)) {
+        throw new RuntimeException($label . ' must be stored outside the sand-iam package root');
+    }
+    $parts = array_values(array_filter(explode('/', $path), static fn (string $part): bool => $part !== ''));
+    $current = '';
+    foreach ($parts as $offset => $part) {
+        $current .= '/' . $part;
+        $stat = lstat($current);
+        if ($stat === false) {
+            throw new RuntimeException($label . ' path does not exist');
+        }
+        if (($stat['mode'] & 0170000) === 0120000) {
+            throw new RuntimeException($label . ' path must not contain symbolic links');
+        }
+        if ($offset < count($parts) - 1 && (($stat['mode'] & 0170000) !== 0040000)) {
+            throw new RuntimeException($label . ' parent is not a directory');
+        }
+    }
+    $finalStat = lstat($path);
+    if ($finalStat === false || (($finalStat['mode'] & 0170000) !== 0100000) || !is_file($path)) {
+        throw new RuntimeException($label . ' must be a regular file');
+    }
+    return $path;
+};
+
+/** @return string */
+$strictBase64 = static function (string $encoded, int $expectedLength, string $label): string {
+    $decoded = base64_decode($encoded, true);
+    if (!is_string($decoded) || base64_encode($decoded) !== $encoded || strlen($decoded) !== $expectedLength) {
+        throw new RuntimeException($label . ' must be strict base64 for exactly ' . $expectedLength . ' bytes');
+    }
+    return $decoded;
+};
+
+$canonicalize = null;
+$canonicalize = static function (mixed $value) use (&$canonicalize): mixed {
+    if (!is_array($value)) {
+        return $value;
+    }
+    if (array_is_list($value)) {
+        return array_map($canonicalize, $value);
+    }
+    ksort($value, SORT_STRING);
+    foreach ($value as $key => $item) {
+        $value[$key] = $canonicalize($item);
+    }
+    return $value;
+};
+
+$verifiedTrustedManifest = null;
+$validateTrustedManifest = static function () use (&$verifiedTrustedManifest, $trustedManifestPath, $externalRegularFile, $candidateManifest, $strictBase64): bool {
+    $manifestPath = $externalRegularFile($trustedManifestPath, '--trusted-manifest=/path/outside/sand-iam');
+    try {
+        $trusted = json_decode((string) file_get_contents($manifestPath), true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        throw new RuntimeException('trusted manifest is not valid JSON', 0, $exception);
+    }
+    if (!is_array($trusted)) {
+        throw new RuntimeException('trusted manifest must be a JSON object');
+    }
+    $candidate = $candidateManifest();
+    if (($trusted['schema'] ?? null) !== 'sand-iam.release-provenance/v1'
+        || ($trusted['kind'] ?? null) !== 'external-reviewed-release') {
+        throw new RuntimeException('trusted manifest has no external-reviewed release schema');
+    }
+    foreach (['version', 'migration_file_count', 'migrations', 'package_sha256'] as $field) {
+        if (($trusted[$field] ?? null) !== $candidate[$field]) {
+            throw new RuntimeException('trusted manifest ' . $field . ' differs from the candidate package');
+        }
+    }
+    if (!is_array($trusted['key_file_hashes'] ?? null) || $trusted['key_file_hashes'] !== $candidate['key_file_hashes']) {
+        throw new RuntimeException('trusted manifest key_file_hashes differ from the candidate package');
+    }
+    $provenance = $trusted['provenance'] ?? null;
+    $signature = is_array($provenance) ? ($provenance['signature'] ?? null) : null;
+    foreach (['source', 'reference', 'approved_by', 'approved_at'] as $field) {
+        if (!is_array($provenance) || !is_string($provenance[$field] ?? null) || trim($provenance[$field]) === '') {
+            throw new RuntimeException('trusted manifest provenance.' . $field . ' is required');
+        }
+    }
+    if (!is_array($signature) || ($signature['algorithm'] ?? null) !== 'ed25519' || !is_string($signature['value'] ?? null)) {
+        throw new RuntimeException('trusted manifest provenance.signature must use ed25519');
+    }
+    $strictBase64($signature['value'], 64, 'trusted manifest provenance.signature.value');
+    $verifiedTrustedManifest = $trusted;
+    return true;
+};
+
+$statusOutput = [];
+$statusCode = 1;
+exec('git -C ' . escapeshellarg($root) . ' status --porcelain', $statusOutput, $statusCode);
+$dirty = $statusCode !== 0 || $statusOutput !== [];
+if ($dirty) {
+    echo "[CANDIDATE] working tree is dirty; package checks prove internal consistency only, not release provenance\n";
+} else {
+    echo "[CANDIDATE] working tree is clean; package checks still do not certify release provenance\n";
+}
+if ($releaseMode) {
+    $assert('release mode requires a clean working tree', static fn (): bool => !$dirty);
+    $assert('release mode requires an external trusted provenance manifest', $validateTrustedManifest);
+    $assert('release mode requires an external Ed25519 public key and valid signature', static function () use ($trustedPublicKeyPath, $externalRegularFile, $strictBase64, &$verifiedTrustedManifest, $canonicalize): bool {
+        if (!function_exists('sodium_crypto_sign_verify_detached')) {
+            throw new RuntimeException('sodium Ed25519 verification is unavailable');
+        }
+        $keyPath = $externalRegularFile($trustedPublicKeyPath, '--trusted-public-key=/path/outside/sand-iam');
+        $encodedKey = trim((string) file_get_contents($keyPath));
+        $publicKey = $strictBase64($encodedKey, 32, 'trusted Ed25519 public key');
+        if (!is_array($verifiedTrustedManifest)) {
+            throw new RuntimeException('trusted manifest must pass content validation before signature verification');
+        }
+        $signature = $verifiedTrustedManifest['provenance']['signature']['value'];
+        $detachedSignature = $strictBase64($signature, 64, 'trusted manifest provenance.signature.value');
+        $unsigned = $verifiedTrustedManifest;
+        unset($unsigned['provenance']['signature']);
+        try {
+            $payload = json_encode($canonicalize($unsigned), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw new RuntimeException('cannot canonicalize unsigned trusted manifest payload', 0, $exception);
+        }
+        if (!is_string($payload) || !sodium_crypto_sign_verify_detached($detachedSignature, $payload, $publicKey)) {
+            throw new RuntimeException('trusted manifest Ed25519 detached signature verification failed');
+        }
+        return true;
+    });
+}
+
+$failed = $total - $passed;
+echo "Package integrity: passed={$passed}/{$total}; failed={$failed}\n";
+if ($failures !== []) {
+    echo "Failed items:\n";
+    foreach (array_values(array_unique($failures)) as $failure) {
+        echo "- {$failure}\n";
+    }
+}
+
+exit($failed === 0 ? 0 : 1);

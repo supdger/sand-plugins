@@ -4,20 +4,24 @@
   import type { SandIamFilterKey, SandIamResourceColumn } from '../api/types'
 
   const columns: SandIamResourceColumn[] = [
-    { key: 'id', label: 'ID', minWidth: 80 },
-    { key: 'workload_client_id', label: 'workload_client_id' },
     { key: 'name', label: 'name' },
+    { key: 'workload_client_id', label: 'workload_client_id' },
+    { key: 'status', label: '状态' },
     { key: 'key_prefix', label: 'key_prefix' },
-    { key: 'expire_time', label: 'expire_time', minWidth: 180 },
-    { key: 'status', label: '状态' }
+    { key: 'expire_time', label: 'expire_time', minWidth: 180 }
   ]
-  const filters: SandIamFilterKey[] = ['workload_client_id']
+  const filters: SandIamFilterKey[] = [
+    'organization_id',
+    'application_id',
+    'environment_id',
+    'workload_client_id'
+  ]
 </script>
 
 <template>
   <ResourceListPage
     title="调用凭证"
-    description="列表不返回明文。签发/轮换只展示一次 credential，随后不再回显。"
+    description="服务调用身份使用的访问凭证。签发或轮换后的明文仅显示一次，请立即交给应用安全保存。"
     endpoint="credential"
     index-permission="sand_iam:credential:index"
     permission-prefix="sand_iam:credential"

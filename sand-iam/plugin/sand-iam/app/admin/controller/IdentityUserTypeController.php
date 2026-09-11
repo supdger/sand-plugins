@@ -30,7 +30,7 @@ final class IdentityUserTypeController extends BaseController
     {
         $identity = $this->identity((int) $request->post('identity_id', 0));
         $userType = UserType::where('id', (int) $request->post('user_type_id', 0))->where('application_id', $identity->application_id)->where('status', 1)->find();
-        if (!$userType) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: user type', 400); }
+        if (!$userType) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所选用户类型不存在、已停用，或不属于该身份所在的接入应用', 400); }
         $binding = IdentityUserType::where('identity_id', $identity->id)->where('user_type_id', $userType->id)->find();
         if ($binding) { $binding->save(['status' => 1]); } else { $binding = IdentityUserType::create(['identity_id' => $identity->id, 'user_type_id' => $userType->id, 'status' => 1]); }
         $this->audit('identity_user_type.grant', (int) $binding->id, $identity, $request);
@@ -41,7 +41,7 @@ final class IdentityUserTypeController extends BaseController
     public function revoke(Request $request): Response
     {
         $binding = IdentityUserType::findOrEmpty((int) $request->post('id', 0));
-        if ($binding->isEmpty()) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: identity user type', 400); }
+        if ($binding->isEmpty()) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 未找到这条身份用户类型关系，请刷新列表后重试', 400); }
         $identity = $this->identity((int) $binding->identity_id);
         $binding->save(['status' => 2]);
         $this->audit('identity_user_type.revoke', (int) $binding->id, $identity, $request);
@@ -52,7 +52,7 @@ final class IdentityUserTypeController extends BaseController
     {
         $identity = Identity::where('id', $identityId)->where('status', 1)->find();
         $application = $identity ? Application::find($identity->application_id) : null;
-        if (!$identity || !$application) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: identity', 400); }
+        if (!$identity || !$application) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所选应用用户身份不存在、已停用，或所属接入应用不可用', 400); }
         $this->access()->assertOrganization((int) $application->organization_id);
         return $identity;
     }

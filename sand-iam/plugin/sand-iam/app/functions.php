@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+$sandIamVendorAutoload = dirname(__DIR__) . '/vendor/autoload.php';
+if (is_file($sandIamVendorAutoload)) {
+    require_once $sandIamVendorAutoload;
+}
+
 /**
  * SaiPackage copies application plugins into plugin/<app>, but it does not
  * regenerate the host Composer PSR-4 map. Register this package-local loader
@@ -19,7 +24,7 @@ spl_autoload_register(static function (string $class): void {
     if (is_file($file)) {
         require_once $file;
     }
-});
+}, true, true);
 
 /**
  * 过渡期双向类别名：源码已改为 plugin\sandadmin。

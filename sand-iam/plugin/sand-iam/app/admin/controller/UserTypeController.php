@@ -23,5 +23,5 @@ final class UserTypeController extends ApplicationResourceController
     #[Permission('SandIAM 用户类型保存', 'sand_iam:user_type:save')] public function save(Request $request): Response { return parent::save($request); }
     #[Permission('SandIAM 用户类型更新', 'sand_iam:user_type:update')] public function update(Request $request): Response { return parent::update($request); }
     #[Permission('SandIAM 用户类型停用', 'sand_iam:user_type:disable')] public function disable(Request $request): Response { return parent::disable($request); }
-    protected function assertReferences(array $payload, ?object $existing = null): void { if (isset($payload['application_id']) && !Application::where('id', (int) $payload['application_id'])->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: application', 400); }
+    protected function assertReferences(array $payload, ?object $existing = null): void { if (isset($payload['application_id']) && !Application::where('id', (int) $payload['application_id'])->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所属应用不存在或已停用', 400); }
 }
