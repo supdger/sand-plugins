@@ -1,0 +1,7 @@
+format=1
+consumer=sand_plugins
+source_revision=558d92959947230ee562f29e015c62566be58c8e
+source_ref=commit:558d92959947230ee562f29e015c62566be58c8e
+source_state=clean
+synced_at_utc=2026-09-11T14:03:35Z
+target=sandadmin-demo-host
