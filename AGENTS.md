@@ -27,7 +27,7 @@
 - 所有 Sand 插件的演示与验收宿主：`/Users/code/project/sand_plugins/sandadmin-demo-host`（调用服务端时使用其 `server/` 子目录）。`/Users/code/project/sandadmin` 是纯净通用 SandAdmin 宿主，不用于插件演示。
 - 宿主同步采用“SandAdmin 发布/通知，`sand_plugins` 主动拉取”；先读 [宿主消费与同步](docs/host-consumer-sync.md)，默认只运行 `scripts/sync-sandadmin-host.sh --dry-run`，明确执行时才使用 `--apply`。
 - 禁止 SandAdmin 通过 post-commit hook 主动改写本工作区，禁止把 demo 宿主的修改反向同步到 SandAdmin。正式验收必须锁定 clean SandAdmin revision；`dirty-local` 只能用于本地探索。
-- 插件候选只通过 `scripts/sync-plugin-to-demo.sh` 导出到 demo，禁止直接编辑 demo 副本。跨宿主/插件故障按 `docs/host-requests/` 冻结版本并单变量诊断；同一现象三轮不能缩小范围时停止修改并标记阻塞。
+- 插件候选只通过 `scripts/sync-plugin-to-demo.sh` 导出到 demo，禁止直接编辑 demo 副本。跨宿主/插件故障按 `docs/host-requests/` 冻结版本并单变量诊断；单插件问题优先在插件侧修，只有零插件、中立扩展或多个独立插件复现的通用缺陷才提交宿主，并要求宿主尽量贴近 SaiAdmin 上游。前两轮未收敛时，第 3 轮使用 `gpt-6-astra/high`；仍无可区分结论则停止并标记阻塞。
 
 ## 必读 skill
 

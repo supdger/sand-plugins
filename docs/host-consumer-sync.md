@@ -24,4 +24,6 @@
 
 问题复现后先冻结宿主 revision、插件 revision、候选包 SHA、数据库/生命周期状态和复现证据。每轮只改变宿主或插件之一；禁止在 demo 中直接修复，也禁止由插件任务直接修改 SandAdmin。
 
-疑似宿主问题按 [HOST/COMPAT 请求模板](host-requests/TEMPLATE.md)记录，并交由 SandAdmin 接受。连续三轮有效诊断不能缩小范围时标记 `BLOCKED_ROOT_CAUSE_UNKNOWN` 并停止修改，不能用继续往返改两个仓库代替根因证据。
+单插件或插件特有组合的复现默认在插件权威源码解决。只有零插件基线、中立扩展或多个独立插件复现的通用缺陷，才按 [HOST/COMPAT 请求模板](host-requests/TEMPLATE.md)交由 SandAdmin；宿主方案必须说明如何尽量保持 SaiAdmin 上游结构和升级路径，优先公开扩展契约、适配器或兼容层。
+
+第 1、2 轮单变量诊断仍不能缩小范围时，第 3 轮使用 `gpt-6-astra/high` 做有界根因审查，并记录请求配置、实际任务模型证据和新增信息。第 3 轮仍无根因或下一项可区分实验时标记 `BLOCKED_ROOT_CAUSE_UNKNOWN` 并停止修改，不自动开始第 4 轮。
