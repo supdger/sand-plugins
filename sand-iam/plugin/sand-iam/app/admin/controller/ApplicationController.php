@@ -64,9 +64,14 @@ final class ApplicationController extends AdminResourceController
             throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 未找到目标记录，可能已被删除或当前账号无权访问，请刷新列表后重试', 400);
         }
 
+        /** @var array<string,mixed> $posted */
+        $posted = $request->post();
         $payload = $this->payload($request, true);
         unset($payload['code']);
         $recovering = (int) $model->status === 2 && array_key_exists('status', $payload) && (int) $payload['status'] === 1;
+        if ($recovering) {
+            $this->assertRecoveryPayload($posted);
+        }
         if ((int) $model->status === 2 && array_key_exists('status', $payload) && !$recovering) {
             throw new ApiException('SAND_IAM_APPLICATION_RECOVERY_STATUS_INVALID: 停用接入应用只能恢复为已启用状态', 400);
         }
@@ -126,6 +131,18 @@ final class ApplicationController extends AdminResourceController
             throw new ApiException('SAND_IAM_APPLICATION_RECOVERY_OWNERSHIP_IMMUTABLE: 恢复停用接入应用时不得变更所属客户主体', 400);
         }
         $this->access()->assertApplicationRecovery((int) $model->id);
+    }
+
+    /** @param array<string,mixed> $posted */
+    private function assertRecoveryPayload(array $posted): void
+    {
+        // `id` selects the immutable target; `status` is the sole writable
+        // recovery field. The controller has no additional framework payload
+        // fields, so recovery must not carry any business-field mutation.
+        $unsupportedFields = array_diff(array_keys($posted), ['id', 'status']);
+        if ($unsupportedFields !== []) {
+            throw new ApiException('SAND_IAM_APPLICATION_RECOVERY_PAYLOAD_INVALID: 恢复停用接入应用时仅允许提交 id 与 status', 400);
+        }
     }
 
     /**

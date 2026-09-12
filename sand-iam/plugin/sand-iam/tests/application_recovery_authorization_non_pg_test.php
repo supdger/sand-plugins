@@ -152,7 +152,12 @@ namespace {
     applicationRecoveryExpect(static fn () => $controller->update(applicationRecoveryRequest(5, ['id' => 101, 'status' => 1])), 403, 'application delegate controller recovery must be denied');
     applicationRecoveryExpect(static fn () => $controller->update(applicationRecoveryRequest(2, ['id' => 201, 'status' => 1])), 403, 'cross-organization controller recovery must be denied');
     applicationRecoveryExpect(static fn () => $controller->update(applicationRecoveryRequest(1, ['id' => 301, 'status' => 1])), 403, 'controller recovery must reject inactive parent organization');
+    applicationRecoveryExpect(static fn () => $controller->update(applicationRecoveryRequest(1, ['id' => 101, 'status' => 1, 'name' => 'Mutated while recovering'])), 400, 'recovery must reject name mutation payloads');
+    applicationRecoveryAssert((int) Application::$rows[101]->status === 2 && Application::$rows[101]->name === 'Recoverable' && (int) Application::$rows[101]->organization_id === 10, 'rejected recovery name mutation must leave application unchanged');
     applicationRecoveryExpect(static fn () => $controller->update(applicationRecoveryRequest(1, ['id' => 101, 'status' => 1, 'organization_id' => 20])), 400, 'recovery must reject ownership migration payloads');
+    applicationRecoveryAssert((int) Application::$rows[101]->status === 2 && Application::$rows[101]->name === 'Recoverable' && (int) Application::$rows[101]->organization_id === 10, 'rejected recovery ownership mutation must leave application unchanged');
+    applicationRecoveryExpect(static fn () => $controller->update(applicationRecoveryRequest(1, ['id' => 101, 'status' => 1, 'code' => 'mutated-code'])), 400, 'recovery must reject every other writable field');
+    applicationRecoveryAssert((int) Application::$rows[101]->status === 2 && Application::$rows[101]->name === 'Recoverable' && (int) Application::$rows[101]->organization_id === 10, 'rejected recovery code mutation must leave application unchanged');
     applicationRecoveryExpect(static fn () => $controller->update(applicationRecoveryRequest(1, ['id' => 101, 'status' => 0])), 400, 'recovery must reject illegal target status');
 
     $result = $controller->update(applicationRecoveryRequest(1, ['id' => 101, 'status' => 1]));
