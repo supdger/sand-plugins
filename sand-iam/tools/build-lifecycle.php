@@ -134,6 +134,29 @@ function migrationPayload(string $directory, array $names): string
     return $payload;
 }
 
+/**
+ * Reuse a published migration body inside a lifecycle-owned transaction.
+ *
+ * The migration source remains byte-for-byte immutable. Only its outer
+ * transaction delimiters are omitted from the generated lifecycle so a
+ * preceding admission preflight and the migration body share one executor
+ * visible transaction.
+ */
+function withoutOuterTransaction(string $sql, string $name): string
+{
+    $beginOffset = strpos($sql, "\nBEGIN;");
+    $commitOffset = strrpos($sql, "\nCOMMIT;");
+    if ($beginOffset === false || $commitOffset === false || $beginOffset >= $commitOffset
+        || trim(substr($sql, $commitOffset + strlen("\nCOMMIT;"))) !== '') {
+        throw new RuntimeException("Migration {$name} must own one terminal explicit transaction");
+    }
+
+    return rtrim(
+        substr($sql, 0, $beginOffset + 1)
+        . substr($sql, $beginOffset + strlen("\nBEGIN;"), $commitOffset - ($beginOffset + strlen("\nBEGIN;")))
+    ) . "\n";
+}
+
 /** @return list<string> */
 function controllerPermissions(string $package): array
 {
@@ -213,9 +236,13 @@ $updateNames = [
     '038_auth_rate_limit_retention.pgsql',
 ];
 $updatePreflight = readRequired($root . '/lifecycle/update-070-to-071-preflight.pgsql');
-$updateSource = "-- lifecycle source: lifecycle/update-070-to-071-preflight.pgsql\n"
+$updateMigration = readRequired($sourceDirectory . '/038_auth_rate_limit_retention.pgsql');
+$updateSource = "BEGIN;\n"
+    . "-- lifecycle source: lifecycle/update-070-to-071-preflight.pgsql\n"
     . rtrim($updatePreflight) . "\n"
-    . migrationPayload($sourceDirectory, $updateNames);
+    . "-- lifecycle source: migrations/038_auth_rate_limit_retention.pgsql\n"
+    . withoutOuterTransaction($updateMigration, $updateNames[0])
+    . "COMMIT;\n";
 $permissions = controllerPermissions($package);
 $catalog = generatedPermissionCatalog(readRequired($sourceDirectory . '/021_admin_permission_catalog.pgsql'));
 foreach ($permissions as $permission) {

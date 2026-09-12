@@ -141,6 +141,7 @@ $checks = [
             && in_array('plugin/sand-iam/bin/check-runtime-requirements.php', $payload, true)
             && in_array('plugin/sand-iam/bin/RuntimeRequirementsPreflight.php', $payload, true)
             && in_array('docs/user-guide/configuration-reference.md', $payload, true)
+            && in_array('release-build-contract.json', $payload, true)
             && !in_array('docs/development/sand-iam-task-board.md', $payload, true)
             && !in_array('plugin/sand-iam/tests/package_integrity_contract_non_pg_test.php', $payload, true)
             && !in_array('sdk/dart/test/client_test.dart', $payload, true)
@@ -156,6 +157,35 @@ $checks = [
             && str_contains($source, 'release metadata versions and host support are consistent')
             && str_contains($source, "'/^\\d+\\.x(?:\\|\\d+\\.x)*$/'")
             && str_contains($source, "'6.0.11'");
+    },
+    'release build contract rejects incomplete, unknown, or malformed generated payload declarations' => static function () use ($root, $runToolAt, $withTemporarilyReplacedFixtureFile): bool {
+        return sandIamWithIsolatedFixture($root, static function (string $fixtureRoot) use ($runToolAt, $withTemporarilyReplacedFixtureFile): bool {
+            $path = $fixtureRoot . '/release-build-contract.json';
+            $original = file_get_contents($path);
+            if (!is_string($original)) return false;
+            try {
+                $contract = json_decode($original, true, 512, JSON_THROW_ON_ERROR);
+            } catch (JsonException) {
+                return false;
+            }
+            if (!is_array($contract)) return false;
+            $expectFailure = static function (array $replacement) use ($path, $runToolAt, $fixtureRoot, $withTemporarilyReplacedFixtureFile): bool {
+                $encoded = json_encode($replacement, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+                return $withTemporarilyReplacedFixtureFile($path, $encoded, static function () use ($runToolAt, $fixtureRoot): bool {
+                    [$status, $output] = $runToolAt($fixtureRoot, []);
+                    return $status !== 0 && str_contains($output, 'release build contract locks toolchain and reviewed runtime payloads');
+                });
+            };
+            $missing = $contract;
+            unset($missing['generated_payloads']['sdk/typescript/dist']);
+            $unknown = $contract;
+            $unknown['generated_payloads']['unknown/runtime'] = ['file_count' => 1, 'tree_sha256' => str_repeat('0', 64)];
+            $wrongCount = $contract;
+            $wrongCount['generated_payloads']['plugin/sand-iam/vendor']['file_count'] = '58';
+            $wrongShape = $contract;
+            $wrongShape['generated_payloads']['sdk/typescript/dist']['extra'] = true;
+            return $expectFailure($missing) && $expectFailure($unknown) && $expectFailure($wrongCount) && $expectFailure($wrongShape);
+        });
     },
     'tool fails closed for missing, malformed, mismatched, or host-incompatible support metadata' => static function () use ($root, $runToolAt, $withTemporarilyReplacedFixtureFile): bool {
         return sandIamWithIsolatedFixture($root, static function (string $fixtureRoot) use ($runToolAt, $withTemporarilyReplacedFixtureFile): bool {

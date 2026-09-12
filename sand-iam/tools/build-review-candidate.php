@@ -11,6 +11,8 @@ declare(strict_types=1);
  * Usage:
  *   php sand-iam/tools/build-review-candidate.php
  *   php sand-iam/tools/build-review-candidate.php --release-unsigned
+ *   php sand-iam/tools/build-review-candidate.php --release-unsigned --source-commit=<commit>
+ *   php sand-iam/tools/build-review-candidate.php --verify-git-stage=/absolute/stage --source-commit=<commit>
  *   php sand-iam/tools/build-review-candidate.php --artifact-root=/absolute/path
  *   php sand-iam/tools/build-review-candidate.php --rebuild-from=/absolute/artifact/snapshot/package --output=/absolute/rebuild
  */
@@ -30,6 +32,8 @@ $artifactRoot = $workspace . '/.artifacts';
 $rebuildFrom = null;
 $output = null;
 $releaseUnsigned = false;
+$sourceCommit = null;
+$verifyGitStage = null;
 foreach ($arguments as $argument) {
     if (str_starts_with($argument, '--artifact-root=')) {
         $artifactRoot = substr($argument, strlen('--artifact-root='));
@@ -39,6 +43,10 @@ foreach ($arguments as $argument) {
         $output = substr($argument, strlen('--output='));
     } elseif ($argument === '--release-unsigned') {
         $releaseUnsigned = true;
+    } elseif (str_starts_with($argument, '--source-commit=')) {
+        $sourceCommit = substr($argument, strlen('--source-commit='));
+    } elseif (str_starts_with($argument, '--verify-git-stage=')) {
+        $verifyGitStage = substr($argument, strlen('--verify-git-stage='));
     } else {
         throw new InvalidArgumentException('Unsupported argument: ' . $argument);
     }
@@ -46,6 +54,12 @@ foreach ($arguments as $argument) {
 
 if ($releaseUnsigned && ($rebuildFrom !== null || $output !== null)) {
     throw new InvalidArgumentException('--release-unsigned cannot be combined with rebuild arguments');
+}
+if ($sourceCommit !== null && !$releaseUnsigned && $verifyGitStage === null) {
+    throw new InvalidArgumentException('--source-commit is only valid with --release-unsigned or --verify-git-stage');
+}
+if ($verifyGitStage !== null && ($releaseUnsigned || $rebuildFrom !== null || $output !== null || $sourceCommit === null || $sourceCommit === '')) {
+    throw new InvalidArgumentException('--verify-git-stage requires only --source-commit=<commit>');
 }
 
 /** @return string */
@@ -74,9 +88,6 @@ function assertUnsignedReleasePrerequisites(string $workspace, string $source): 
     if ($status !== '') {
         throw new RuntimeException('unsigned release candidate requires a clean committed sand-iam/ source subtree');
     }
-    checkedCommand([PHP_BINARY, $source . '/tools/generate-sbom.php', '--check'], 'unsigned release candidate SBOM gate failed');
-    checkedCommand([PHP_BINARY, $source . '/tools/check-release-payload.php'], 'unsigned release candidate payload hygiene gate failed');
-    checkedCommand([PHP_BINARY, $source . '/tools/check-package-integrity.php'], 'unsigned release candidate package integrity gate failed');
     $revision = checkedCommand(['git', '-C', $workspace, 'rev-parse', 'HEAD'], 'cannot resolve SandIAM source revision');
     if (preg_match('/^[0-9a-f]{40,64}$/', $revision) !== 1) {
         throw new RuntimeException('resolved SandIAM source revision is invalid');
@@ -85,7 +96,229 @@ function assertUnsignedReleasePrerequisites(string $workspace, string $source): 
     if (preg_match('/^[0-9a-f]{40,64}$/', $tree) !== 1) {
         throw new RuntimeException('resolved SandIAM source tree is invalid');
     }
+    // Parse the committed tree before policy tools traverse the worktree. This
+    // makes malformed or unsupported Git names fail at the authoritative
+    // source boundary rather than being hidden by filesystem enumeration.
+    gitBlobMap($workspace, $revision);
+    checkedCommand([PHP_BINARY, $source . '/tools/generate-sbom.php', '--check'], 'unsigned release candidate SBOM gate failed');
+    checkedCommand([PHP_BINARY, $source . '/tools/check-release-payload.php'], 'unsigned release candidate payload hygiene gate failed');
+    checkedCommand([PHP_BINARY, $source . '/tools/check-package-integrity.php'], 'unsigned release candidate package integrity gate failed');
     return ['commit' => $revision, 'tree' => $tree];
+}
+
+/** @return array{commit:string,tree:string} */
+function resolveSourceRevision(string $workspace, ?string $requestedCommit, array $headRevision): array
+{
+    $commit = $requestedCommit === null || $requestedCommit === '' ? $headRevision['commit'] : $requestedCommit;
+    if (preg_match('/^[0-9a-f]{40,64}$/', $commit) !== 1) {
+        throw new InvalidArgumentException('--source-commit must be a full Git object id');
+    }
+    $resolved = checkedCommand(['git', '-C', $workspace, 'rev-parse', $commit . '^{commit}'], 'cannot resolve requested source commit');
+    if (!hash_equals($headRevision['commit'], $resolved)) {
+        throw new RuntimeException('unsigned release candidate only accepts the clean current HEAD commit');
+    }
+    $tree = checkedCommand(['git', '-C', $workspace, 'rev-parse', $resolved . ':sand-iam'], 'cannot resolve requested SandIAM tree');
+    return ['commit' => $resolved, 'tree' => $tree];
+}
+
+function materializeGitSubtree(string $workspace, string $commit, string $destination): string
+{
+    // Do not use `git archive` here.  Its export-ignore attributes can remove
+    // an otherwise eligible controller or runtime file before the candidate
+    // checker sees it.  Materialize each eligible Git blob directly instead.
+    materializeGitBlobMap($workspace, gitEligibleBlobMap($workspace, $commit), $destination);
+    $source = $destination . '/sand-iam';
+    if (!is_dir($source) || is_link($source)) {
+        throw new RuntimeException('Git source subtree was not materialized as a regular directory');
+    }
+    return $source;
+}
+
+/** @return array<string,string> */
+function gitBlobMap(string $workspace, string $commit): array
+{
+    $process = proc_open(
+        ['git', '-C', $workspace, 'ls-tree', '-r', '-z', '--full-tree', $commit, '--', 'sand-iam'],
+        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+    );
+    if (!is_resource($process)) throw new RuntimeException('cannot enumerate Git tree');
+    fclose($pipes[0]);
+    $output = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    if (proc_close($process) !== 0 || !is_string($output)) {
+        throw new RuntimeException('cannot enumerate Git tree' . ($stderr === '' ? '' : ': ' . trim($stderr)));
+    }
+    if ($output === '' || !str_ends_with($output, "\0")) {
+        throw new RuntimeException('malformed Git tree listing');
+    }
+    $map = [];
+    foreach (explode("\0", substr($output, 0, -1)) as $entry) {
+        $separator = strpos($entry, "\t");
+        if ($separator === false) throw new RuntimeException('malformed Git tree entry: missing tab separator');
+        $metadata = substr($entry, 0, $separator);
+        $path = substr($entry, $separator + 1);
+        if (preg_match('/^([0-7]{6}) ([a-z]+) ([0-9a-f]{40,64})$/', $metadata, $match) !== 1) {
+            throw new RuntimeException('malformed Git tree entry metadata');
+        }
+        if (!in_array($match[1], ['100644', '100755'], true)) {
+            throw new RuntimeException('unsupported Git tree mode: ' . $match[1]);
+        }
+        if ($match[2] !== 'blob') {
+            throw new RuntimeException('unsupported Git tree type: ' . $match[2]);
+        }
+        if (!str_starts_with($path, 'sand-iam/') || !sandIamPayloadPathSupported($path)) {
+            throw new RuntimeException('unsupported Git tree path characters');
+        }
+        if (isset($map[$path])) {
+            throw new RuntimeException('malformed Git tree listing: duplicate path');
+        }
+        $map[$path] = $match[3];
+    }
+    if ($map === []) throw new RuntimeException('Git source tree has no SandIAM blobs');
+    return $map;
+}
+
+/** @return array<string,string> Git path => blob object id for the complete eligible package set. */
+function gitEligibleBlobMap(string $workspace, string $commit): array
+{
+    $eligible = [];
+    foreach (gitBlobMap($workspace, $commit) as $path => $blob) {
+        $relative = substr($path, strlen('sand-iam/'));
+        $underPayloadRoot = false;
+        foreach (sandIamPayloadRoots() as $root) {
+            if ($relative === $root || str_starts_with($relative, $root . '/')) {
+                $underPayloadRoot = true;
+                break;
+            }
+        }
+        if ($underPayloadRoot && !sandIamPayloadExcluded($relative)) {
+            $eligible[$path] = $blob;
+        }
+    }
+    ksort($eligible, SORT_STRING);
+    if ($eligible === []) {
+        throw new RuntimeException('Git source tree has no eligible SandIAM payload blobs');
+    }
+    return $eligible;
+}
+
+/** @param array<string,string> $blobs Git path => blob object id */
+function materializeGitBlobMap(string $workspace, array $blobs, string $destination): void
+{
+    foreach ($blobs as $path => $blob) {
+        $relative = substr($path, strlen('sand-iam/'));
+        $target = $destination . '/sand-iam/' . $relative;
+        if (!str_starts_with($path, 'sand-iam/') || preg_match('/^[0-9a-f]{40,64}$/', $blob) !== 1
+            || file_exists($target) || is_link($target)) {
+            throw new RuntimeException('cannot materialize an invalid or existing Git blob destination');
+        }
+        createDirectory(dirname($target));
+    }
+    $process = proc_open(
+        ['git', '-C', $workspace, 'cat-file', '--batch'],
+        [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+    );
+    if (!is_resource($process)) {
+        throw new RuntimeException('cannot start Git blob materialization');
+    }
+    try {
+        foreach ($blobs as $path => $blob) {
+            if (fwrite($pipes[0], $blob . "\n") === false || !fflush($pipes[0])) {
+                throw new RuntimeException('cannot request Git blob');
+            }
+            $header = fgets($pipes[1]);
+            if (!is_string($header) || preg_match('/^([0-9a-f]{40,64}) blob (\d+)$/', rtrim($header, "\n"), $match) !== 1
+                || !hash_equals($blob, $match[1])) {
+                throw new RuntimeException('cannot read requested Git blob');
+            }
+            $target = $destination . '/sand-iam/' . substr($path, strlen('sand-iam/'));
+            $handle = fopen($target, 'wb');
+            if (!is_resource($handle)) throw new RuntimeException('cannot create Git blob destination');
+            try {
+                $remaining = (int) $match[2];
+                while ($remaining > 0) {
+                    $chunk = fread($pipes[1], min(8192, $remaining));
+                    if (!is_string($chunk) || $chunk === '') throw new RuntimeException('cannot read Git blob content');
+                    if (fwrite($handle, $chunk) !== strlen($chunk)) throw new RuntimeException('cannot write Git blob content');
+                    $remaining -= strlen($chunk);
+                }
+            } finally {
+                fclose($handle);
+            }
+            if (fread($pipes[1], 1) !== "\n" || !chmod($target, 0644) || !touch($target, SAND_IAM_REVIEW_EPOCH)) {
+                throw new RuntimeException('cannot finalize Git blob destination');
+            }
+        }
+        fclose($pipes[0]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[2]);
+        fclose($pipes[1]);
+        if (proc_close($process) !== 0) throw new RuntimeException('cannot materialize Git blobs' . ($stderr === '' ? '' : ': ' . trim($stderr)));
+    } catch (Throwable $exception) {
+        foreach ([0, 1, 2] as $index) {
+            if (isset($pipes[$index]) && is_resource($pipes[$index])) fclose($pipes[$index]);
+        }
+        proc_terminate($process);
+        proc_close($process);
+        throw $exception;
+    }
+}
+
+function gitObjectHash(string $path, string $algorithm): string
+{
+    $bytes = filesize($path);
+    if (!is_int($bytes)) throw new RuntimeException('cannot size source stage file');
+    $hash = hash_init($algorithm);
+    hash_update($hash, 'blob ' . $bytes . "\0");
+    $handle = fopen($path, 'rb');
+    if (!is_resource($handle)) throw new RuntimeException('cannot read source stage file');
+    try {
+        hash_update_stream($hash, $handle);
+    } finally {
+        fclose($handle);
+    }
+    return hash_final($hash);
+}
+
+function assertStageMatchesGitBlobs(string $workspace, string $commit, string $stage): void
+{
+    $algorithm = checkedCommand(['git', '-C', $workspace, 'rev-parse', '--show-object-format'], 'cannot resolve Git object format');
+    if (!in_array($algorithm, hash_algos(), true)) throw new RuntimeException('unsupported Git object format');
+    $blobs = gitEligibleBlobMap($workspace, $commit);
+    $expected = array_map(static fn (string $path): string => substr($path, strlen('sand-iam/')), array_keys($blobs));
+    $actual = payloadFiles($stage, true);
+    $missing = array_values(array_diff($expected, $actual));
+    $unexpected = array_values(array_diff($actual, $expected));
+    if ($missing !== [] || $unexpected !== []) {
+        throw new RuntimeException(
+            'Git blob/source stage file-set mismatch: missing=' . implode(',', $missing)
+            . '; unexpected=' . implode(',', $unexpected),
+        );
+    }
+    foreach ($expected as $relative) {
+        $path = 'sand-iam/' . $relative;
+        if (!isset($blobs[$path]) || !hash_equals($blobs[$path], gitObjectHash($stage . '/' . $relative, $algorithm))) {
+            throw new RuntimeException('Git blob/source stage mismatch: ' . $relative);
+        }
+    }
+}
+
+if ($verifyGitStage !== null) {
+    if (preg_match('/^[0-9a-f]{40,64}$/', $sourceCommit) !== 1) {
+        throw new InvalidArgumentException('--source-commit must be a full Git object id');
+    }
+    $commit = checkedCommand(['git', '-C', $workspace, 'rev-parse', $sourceCommit . '^{commit}'], 'cannot resolve Git stage source commit');
+    $stage = realpath($verifyGitStage);
+    if (!is_string($stage) || !is_dir($stage) || is_link($stage)) {
+        throw new RuntimeException('--verify-git-stage must be an existing regular directory');
+    }
+    assertStageMatchesGitBlobs($workspace, $commit, $stage);
+    echo canonicalJson(['kind' => 'git-stage-verification', 'commit' => $commit, 'stage_matches_git_blobs' => true]) . PHP_EOL;
+    exit(0);
 }
 
 function assertExternalArtifactRoot(string $artifactRoot, string $source): void
@@ -295,7 +528,7 @@ if ($rebuildFrom !== null) {
     exit(0);
 }
 
-$sourceRevision = $releaseUnsigned ? assertUnsignedReleasePrerequisites($workspace, $source) : null;
+$sourceRevision = $releaseUnsigned ? resolveSourceRevision($workspace, $sourceCommit, assertUnsignedReleasePrerequisites($workspace, $source)) : null;
 if ($releaseUnsigned) assertExternalArtifactRoot($artifactRoot, $source);
 
 createDirectory($artifactRoot);
@@ -312,14 +545,23 @@ if (file_exists($artifact)) {
     throw new RuntimeException('Refusing to overwrite artifact: ' . $artifact);
 }
 createDirectory($artifact);
+$sourceMaterial = $source;
+if ($sourceRevision !== null) {
+    $sourceMaterial = materializeGitSubtree($workspace, $sourceRevision['commit'], $artifact . '/source-git/primary');
+    assertStageMatchesGitBlobs($workspace, $sourceRevision['commit'], $sourceMaterial);
+}
 $snapshot = $artifact . '/snapshot/package';
 createDirectory($snapshot);
-$sourceSnapshot = snapshotSource($source, $snapshot);
+$sourceSnapshot = snapshotSource($sourceMaterial, $snapshot);
+$gitBlobParity = $sourceRevision !== null;
+if ($sourceRevision !== null) {
+    assertStageMatchesGitBlobs($workspace, $sourceRevision['commit'], $snapshot);
+}
 $baseFiles = fileMap($snapshot, payloadFiles($snapshot, false));
 $snapshotRecord = [
-    'schema' => 'sand-iam.source-snapshot/v1',
-    'kind' => 'immutable-local-snapshot',
-    'source_root' => $source,
+    'schema' => 'sand-iam.source-snapshot/v2',
+    'kind' => $sourceRevision === null ? 'immutable-local-snapshot' : 'git-blob-materialized-snapshot',
+    'source_root' => $sourceRevision === null ? $source : 'git:' . $sourceRevision['commit'] . ':sand-iam/',
     'file_count' => count($sourceSnapshot['files']),
     'source_snapshot_sha256' => $sourceSnapshot['digest'],
     'files' => $sourceSnapshot['files'],
@@ -330,7 +572,19 @@ $result = buildFromSnapshot($snapshot, $artifact, $artifactName . $archiveSuffix
 
 $repeat = $artifact . '/reproducibility/rebuild';
 createDirectory($repeat);
-$repeatResult = buildFromSnapshot($snapshot, $repeat, 'sand-iam-rebuild.zip', $baseFiles);
+$repeatSnapshot = $snapshot;
+if ($sourceRevision !== null) {
+    $repeatSource = materializeGitSubtree($workspace, $sourceRevision['commit'], $artifact . '/source-git/repeat');
+    assertStageMatchesGitBlobs($workspace, $sourceRevision['commit'], $repeatSource);
+    $repeatSnapshot = $repeat . '/snapshot/package';
+    createDirectory($repeatSnapshot);
+    $repeatSourceSnapshot = snapshotSource($repeatSource, $repeatSnapshot);
+    if ($repeatSourceSnapshot['files'] !== $sourceSnapshot['files']) {
+        throw new RuntimeException('Independent Git source stages do not have identical payload maps');
+    }
+    assertStageMatchesGitBlobs($workspace, $sourceRevision['commit'], $repeatSnapshot);
+}
+$repeatResult = buildFromSnapshot($repeatSnapshot, $repeat, 'sand-iam-rebuild.zip', $baseFiles);
 $repeatOk = $repeatResult['archive_sha256'] === $result['archive_sha256']
     && $repeatResult['entry_files'] === $result['entry_files'];
 if (!$repeatOk) {
@@ -338,7 +592,7 @@ if (!$repeatOk) {
 }
 
 $manifest = [
-    'schema' => 'sand-iam.artifact-manifest/v7',
+    'schema' => 'sand-iam.artifact-manifest/v8',
     'kind' => $releaseUnsigned ? 'release-candidate-unsigned' : 'candidate-review-only',
     'release_state' => $releaseUnsigned ? 'release/unsigned' : 'candidate/dirty-not-release',
     'package' => ['app' => 'sand-iam', 'version' => $version, 'archive' => basename($result['archive']), 'sha256' => $result['archive_sha256'], 'bytes' => $result['archive_bytes'], 'entry_count' => count($result['entry_files'])],
@@ -351,6 +605,18 @@ if ($sourceRevision !== null) {
     $manifest['source_revision'] = [
         'vcs' => 'git', 'commit' => $sourceRevision['commit'], 'tree' => $sourceRevision['tree'],
         'subtree' => 'sand-iam/', 'clean' => true,
+    ];
+    $contractHash = hash_file('sha256', $snapshot . '/release-build-contract.json');
+    if (!is_string($contractHash)) {
+        throw new RuntimeException('cannot hash release build contract');
+    }
+    $manifest['source_provenance'] = [
+        'mode' => 'git-blob-only',
+        'commit' => $sourceRevision['commit'],
+        'tree' => $sourceRevision['tree'],
+        'stage_matches_git_blobs' => $gitBlobParity,
+        'independent_git_stage_rebuild' => true,
+        'build_contract_sha256' => $contractHash,
     ];
 }
 file_put_contents($artifact . '/manifest.json', json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . PHP_EOL);

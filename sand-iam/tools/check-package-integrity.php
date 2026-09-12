@@ -272,9 +272,24 @@ $assert('generated lifecycle separates full install from guarded 0.7.0 to 0.7.1 
     foreach ($updateMigrationNames as $name) {
         $source = file_get_contents($root . '/migrations/' . $name);
         $payload = is_string($source) ? $collapse($source) : '';
+        if ($name === '038_auth_rate_limit_retention.pgsql') {
+            $beginOffset = strpos($payload, "\nBEGIN;");
+            $commitOffset = strrpos($payload, "\nCOMMIT;");
+            if ($beginOffset === false || $commitOffset === false || $beginOffset >= $commitOffset) {
+                throw new RuntimeException('published 038 has no composable outer transaction');
+            }
+            $payload = rtrim(
+                substr($payload, 0, $beginOffset + 1)
+                . substr($payload, $beginOffset + strlen("\nBEGIN;"), $commitOffset - ($beginOffset + strlen("\nBEGIN;")))
+            );
+        }
         if ($payload === '' || !str_contains($update, $payload)) {
             throw new RuntimeException('update is missing release migration payload ' . $name);
         }
+    }
+    if (!str_contains($update, "\nBEGIN;\n-- lifecycle source: lifecycle/update-070-to-071-preflight.pgsql")
+        || !str_ends_with($update, "COMMIT;\n")) {
+        throw new RuntimeException('0.7.1 update must compose preflight and 038 under one explicit transaction');
     }
     if (!str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_security_operation')
         || !str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_application_business_action')) {
@@ -495,7 +510,7 @@ $requiredFiles = [
     'admin UI payload' => ['../../sandadmin-artd/src/views/plugin/sand-iam/index/index.vue', '../../sandadmin-artd/src/views/plugin/sand-iam/api/types.ts'],
     'SDK and user-facing documentation' => [
         '../../sdk/dart/README.md', '../../sdk/php/composer.json', '../../sdk/typescript/package.json',
-        '../../README.md', '../../CONTRIBUTING.md', '../../SECURITY.md', '../../LICENSE', '../../NOTICE', '../../THIRD_PARTY_NOTICES.md',
+        '../../README.md', '../../CONTRIBUTING.md', '../../SECURITY.md', '../../LICENSE', '../../NOTICE', '../../THIRD_PARTY_NOTICES.md', '../../release-build-contract.json',
         '../../docs/user-guide/sand-iam-first-connection.md',
         '../../docs/user-guide/sand-iam-operator-guide.md',
         '../../docs/user-guide/installation-and-upgrade.md',
@@ -632,6 +647,114 @@ $assert('TypeScript SDK exports resolve to packaged ESM and declaration files on
         }
     }
     return isset($expected['sdk/typescript/dist/index.js'], $expected['sdk/typescript/dist/index.d.ts'], $expected['sdk/typescript/dist/management.js'], $expected['sdk/typescript/dist/management.d.ts']);
+});
+
+$assert('release build contract locks toolchain and reviewed runtime payloads', static function () use ($root, $releaseArtifactFiles): bool {
+    $contractPath = $root . '/release-build-contract.json';
+    $contract = json_decode((string) file_get_contents($contractPath), true, 512, JSON_THROW_ON_ERROR);
+    if (!is_array($contract)
+        || ($contract['schema'] ?? null) !== 'sand-iam.release-build-contract/v1'
+        || ($contract['kind'] ?? null) !== 'reviewed-runtime-payload-inputs'
+        || ($contract['source']['formal_builder'] ?? null) !== 'git-blob-only'
+        || ($contract['source']['repeat_build'] ?? null) !== 'independent-git-stage') {
+        return false;
+    }
+    $toolchain = $contract['toolchain'] ?? null;
+    if (!is_array($toolchain)
+        || ($toolchain['php'] ?? null) !== PHP_VERSION
+        || ($toolchain['zip_extension'] ?? null) !== phpversion('zip')
+        || ($toolchain['libzip'] ?? null) !== (defined('ZipArchive::LIBZIP_VERSION') ? ZipArchive::LIBZIP_VERSION : null)) {
+        return false;
+    }
+    $commandVersion = static function (array $command): string {
+        $output = [];
+        exec(implode(' ', array_map('escapeshellarg', $command)) . ' 2>&1', $output, $status);
+        if ($status !== 0) throw new RuntimeException('cannot read fixed build toolchain version');
+        return trim(implode("\n", $output));
+    };
+    $composerVersion = $commandVersion(['composer', '--version']);
+    $nodeVersion = $commandVersion(['node', '--version']);
+    $pnpmVersion = $commandVersion(['pnpm', '--version']);
+    if (preg_match('/Composer version ([0-9]+\.[0-9]+\.[0-9]+)/', $composerVersion, $composerMatch) !== 1
+        || ($toolchain['composer'] ?? null) !== $composerMatch[1]
+        || ($toolchain['node'] ?? null) !== $nodeVersion
+        || ($toolchain['pnpm'] ?? null) !== $pnpmVersion
+        || ($toolchain['typescript'] ?? null) !== '5.9.3') {
+        return false;
+    }
+    $composer = $contract['composer'] ?? null;
+    $typescript = $contract['typescript'] ?? null;
+    if (!is_array($composer) || !is_array($typescript)
+        || ($composer['lock_sha256'] ?? null) !== hash_file('sha256', $root . '/plugin/sand-iam/composer.lock')
+        || ($typescript['lock_sha256'] ?? null) !== hash_file('sha256', $root . '/sdk/typescript/pnpm-lock.yaml')
+        || ($typescript['package_integrity'] ?? null) !== 'sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==') {
+        return false;
+    }
+    $payload = $releaseArtifactFiles();
+    $generatedPayloads = $contract['generated_payloads'] ?? null;
+    $requiredGeneratedPayloads = ['plugin/sand-iam/vendor', 'sdk/typescript/dist'];
+    if (!is_array($generatedPayloads)) {
+        return false;
+    }
+    $declaredGeneratedPayloads = array_keys($generatedPayloads);
+    sort($declaredGeneratedPayloads, SORT_STRING);
+    if ($declaredGeneratedPayloads !== $requiredGeneratedPayloads) {
+        return false;
+    }
+    foreach ($requiredGeneratedPayloads as $directory) {
+        $expected = $generatedPayloads[$directory] ?? null;
+        if (!is_array($expected)) {
+            return false;
+        }
+        $expectedFields = array_keys($expected);
+        sort($expectedFields, SORT_STRING);
+        if ($expectedFields !== ['file_count', 'tree_sha256']
+            || !is_int($expected['file_count']) || $expected['file_count'] < 1
+            || !is_string($expected['tree_sha256']) || preg_match('/^[0-9a-f]{64}$/', $expected['tree_sha256']) !== 1) {
+            return false;
+        }
+        $absolute = $root . '/' . $directory;
+        if (!is_dir($absolute) || is_link($absolute)) return false;
+        $map = [];
+        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($absolute, FilesystemIterator::SKIP_DOTS));
+        foreach ($iterator as $file) {
+            if (!$file instanceof SplFileInfo || !$file->isFile() || $file->isLink()) continue;
+            $relative = substr($file->getPathname(), strlen($absolute) + 1);
+            $map[$relative] = hash_file('sha256', $file->getPathname());
+        }
+        ksort($map, SORT_STRING);
+        if (($expected['file_count'] ?? null) !== count($map)
+            || ($expected['tree_sha256'] ?? null) !== hash('sha256', json_encode($map, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR))) {
+            return false;
+        }
+    }
+    return isset($payload['plugin/sand-iam/vendor/autoload.php'], $payload['sdk/typescript/dist/index.js']);
+});
+
+$assert('eligible release payload is clean, tracked, and matches HEAD Git blobs', static function () use ($root, $releaseArtifactFiles): bool {
+    $workspace = $root;
+    $output = [];
+    exec('git -C ' . escapeshellarg($workspace) . ' rev-parse --show-toplevel 2>&1', $output, $status);
+    $gitRoot = $status === 0 ? trim(implode("\n", $output)) : '';
+    if ($gitRoot === '' || !is_dir($gitRoot)) {
+        // Isolated non-Git fixtures test package semantics; formal candidate
+        // construction always performs this gate against a real Git commit.
+        return true;
+    }
+    $rootPath = realpath($root);
+    $gitRootPath = realpath($gitRoot);
+    if (!is_string($rootPath) || !is_string($gitRootPath) || ($rootPath !== $gitRootPath && !str_starts_with($rootPath, $gitRootPath . '/'))) return false;
+    $sourcePrefix = $rootPath === $gitRootPath ? '' : substr($rootPath, strlen($gitRootPath) + 1);
+    $dirty = [];
+    exec('git -C ' . escapeshellarg($gitRootPath) . ' status --porcelain=v1 --untracked-files=all -- ' . escapeshellarg($sourcePrefix === '' ? '.' : $sourcePrefix) . ' 2>&1', $dirty, $dirtyStatus);
+    if ($dirtyStatus !== 0 || $dirty !== []) return false;
+    foreach (array_keys($releaseArtifactFiles()) as $relative) {
+        $path = ($sourcePrefix === '' ? '' : $sourcePrefix . '/') . $relative;
+        $tracked = [];
+        exec('git -C ' . escapeshellarg($gitRootPath) . ' ls-files --error-unmatch -- ' . escapeshellarg($path) . ' 2>&1', $tracked, $trackedStatus);
+        if ($trackedStatus !== 0) return false;
+    }
+    return true;
 });
 
 /** @return list<string> */

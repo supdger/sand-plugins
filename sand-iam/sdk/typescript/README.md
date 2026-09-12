@@ -8,13 +8,19 @@
 
 ## 本地安装与发布前门禁
 
-先执行 `pnpm test`，再用 `pnpm pack --pack-destination /private/tmp` 生成 tarball；在空目录以 `pnpm add /private/tmp/<tarball>` 安装并运行 issue/verify mock。该步骤不调用 `npm publish`。包仅导出 `dist` 和本说明；仓库尚未声明可对外发布的 license、repository 或 registry，因此发布前必须由维护者补齐并复核这些元数据。
+先执行 `pnpm test`，再用 `pnpm pack --pack-destination /private/tmp` 生成 tarball；在空目录以 `pnpm add /private/tmp/<tarball>` 安装并运行 issue/verify mock。该步骤不调用 `npm publish`。包仅导出 `dist` 和本说明；SandIAM 项目采用 [Apache-2.0](../../LICENSE)，但 npm 发布元数据、registry 与公开发布仍须由维护者单独确认。
 
 `dist/` 是受锁定的本地 `pnpm-lock.yaml` 与 TypeScript 工具链从 `src/` 生成的 ESM
 消费载荷，不是手工维护的源码。修改 SDK 时只改 `src/`，执行 `pnpm run build`，并确认
 两次构建的 `dist/index.js`、`dist/index.d.ts`、`dist/management.js`、`dist/management.d.ts`
 字节一致。安装候选时只应消费 ZIP 内这四个构建物；不要从开发工作树、`node_modules` 或
 自行编辑的 `dist` 回退。
+
+当前可审查构建参数固定在 [`release-build-contract.json`](../../release-build-contract.json)：
+pnpm `11.19.0`、Node `v24.11.1`、TypeScript `5.9.3`，并使用 `pnpm install --offline
+--frozen-lockfile --ignore-scripts` 与 `pnpm exec tsc -p tsconfig.json`。构建前必须校验 lock 中的
+`typescript@5.9.3` SHA-512 integrity；更新 lock、工具链或四个构建物必须先做两份隔离构建的逐字节比对，
+再一并更新契约、产物和审核记录。
 
 ## 管理面客户端
 

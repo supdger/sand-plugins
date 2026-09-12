@@ -15,8 +15,14 @@ SandIAM 只提供通用身份、授权和审计能力。业务资源、业务状
 ## 版本与兼容性
 
 当前源码候选版本为 `0.7.1`，支持 SandAdmin `6.x`，数据库仅支持 PostgreSQL。
+
+随包 runtime 的 `plugin/sand-iam/vendor/` 与 `sdk/typescript/dist/` 是已审查的发布输入；其锁文件、
+固定工具链、生成范围和摘要见 [`release-build-contract.json`](release-build-contract.json)。正式候选只从
+clean Git commit 的 blob 构建，不能以本机缓存或 ignored 文件替代来源证明。
 管理 OpenAPI 中的 `0.13.0-candidate` 是接口契约版本，不等于插件发行版本。
 当前可证实的迁移与发布材料变化见[变更日志](CHANGELOG.md)。
+
+`0.7.1` 尚未发布：候选提交尚未推送，来源修复仍未提交，且 v12 正式来源验收已拒绝。不要把当前源码候选当作可下载或可安装的正式发行版。
 
 本源码候选尚未正式发布。不要把源码构建、静态检查或候选包生成视为生产可用证明；
 部署前应在隔离环境完成安装、升级、协议互操作、权限安全、备份恢复和业务闭环验证。

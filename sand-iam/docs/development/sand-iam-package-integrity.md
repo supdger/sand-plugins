@@ -63,8 +63,17 @@ php sand-iam/tools/check-package-integrity.php \
 
 源码级来源清单通过后，最终 ZIP 还必须单独绑定。`build-review-candidate.php --release-unsigned`
 只接受已提交且 `sand-iam/` 子树干净、已有获批 `LICENSE`、SBOM 未漂移、发布卫生和包完整性
-全部通过的权威源码，输出 `release-candidate-unsigned` / `release/unsigned` manifest。默认 builder
+全部通过的权威源码，输出 `release-candidate-unsigned` / `release/unsigned` manifest。正式构建从
+当前 clean HEAD（可显式重复给出该 commit）以 Git blob materialize 两个独立 source stage；工作区
+中的 ignored 或未跟踪 `vendor`、`dist` 和其他文件不被读取。每个 stage 的每个公开 payload 文件都
+必须等于该 commit 的 Git blob，两个 stage 的 snapshot、条目映射和 ZIP 摘要都必须一致。默认 builder
 仍固定输出 `candidate-review-only` / `candidate/dirty-not-release`，不能送签。
+
+`release-build-contract.json` 是同一套权威材料的一部分：它固定实测 PHP、Composer、Node、pnpm、
+TypeScript、ZIP/libzip 版本，Composer/pnpm lock 摘要、离线安装参数、TypeScript tarball integrity 与
+58 个 vendor、4 个 SDK `dist` 文件的树摘要。完整性检查会拒绝 lock、工具链契约、vendor、dist 的
+修改/删除，或任何可进入载荷但未被 Git 追踪的文件；依赖更新必须先在两个隔离目录按契约重建并逐字节比对，
+然后一并审查生成物与契约。
 
 独立审核者使用位于包根之外、权限为 `0600` 的 Ed25519 私钥运行
 `tools/sign-release-bundle.php`。签名的 canonical JSON 同时绑定 ZIP 名称、SHA-256、字节数、

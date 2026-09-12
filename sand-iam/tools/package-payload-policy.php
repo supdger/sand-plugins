@@ -15,7 +15,7 @@ declare(strict_types=1);
 function sandIamPayloadRoots(): array
 {
     return [
-        'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'SBOM.cdx.json',
+        'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'SBOM.cdx.json', 'release-build-contract.json',
         'config.json', 'info.ini', 'install.sql', 'update.sql', 'uninstall.sql',
         'migrations', 'lifecycle', 'plugin/sand-iam',
         'sandadmin-artd/src/views/plugin/sand-iam', 'portal', 'sdk', 'docs/user-guide', 'examples',
@@ -65,6 +65,44 @@ function sandIamPayloadExcluded(string $path): bool
     return preg_match('#(?:^|/)(?:\.git|\.env(?:\.|$)|node_modules|\.pnpm-store|\.dart_tool|\.DS_Store|\.staging|\.tmp|\.backups|backups|artifacts|coverage|test-results|tests?|dist|build|cache|logs?|waiting-codex)(?:/|$)|(?:^|/)[^/]+\.(?:test|spec)\.[^/]+$|(?:^|/)(?:id_rsa|[^/]+\.(?:pem|key|log|dump))$#i', $path) === 1;
 }
 
+/**
+ * Canonical form shared by the payload collector and release ZIP verifier.
+ *
+ * Do not normalize a hostile input here: accepting `a/./b` and then comparing
+ * its normalized form would leave different ZIP readers free to disagree. A
+ * release path must already be its canonical, portable relative form.
+ */
+function sandIamCanonicalPayloadPath(string $path): string
+{
+    if ($path === '' || str_starts_with($path, '/') || str_contains($path, '\\')
+        || preg_match('/^[A-Za-z]:/', $path) === 1
+        || preg_match('//u', $path) !== 1
+        || preg_match('/\\p{Cc}/u', $path) === 1) {
+        throw new RuntimeException('payload path is not a canonical relative path');
+    }
+    foreach (explode('/', $path) as $part) {
+        if ($part === '' || $part === '.' || $part === '..') {
+            throw new RuntimeException('payload path is not a canonical relative path');
+        }
+    }
+    return $path;
+}
+
+/**
+ * The release ZIP and Git-object materializer only support normalized relative
+ * paths. Keep this boundary shared so a path cannot be accepted by policy but
+ * rejected later by candidate construction.
+ */
+function sandIamPayloadPathSupported(string $path): bool
+{
+    try {
+        sandIamCanonicalPayloadPath($path);
+        return true;
+    } catch (RuntimeException) {
+        return false;
+    }
+}
+
 /** @return list<string> */
 function sandIamPayloadFiles(string $root, bool $includeGeneratedDescriptors): array
 {
@@ -75,6 +113,9 @@ function sandIamPayloadFiles(string $root, bool $includeGeneratedDescriptors): a
             throw new RuntimeException('payload path must not be symbolic: ' . $entry);
         }
         if (is_file($path)) {
+            if (!sandIamPayloadPathSupported($entry)) {
+                throw new RuntimeException('payload path contains unsupported characters');
+            }
             if (!sandIamPayloadExcluded($entry) && ($includeGeneratedDescriptors || !in_array($entry, sandIamGeneratedDescriptorPaths(), true))) {
                 $files[] = $entry;
             }
@@ -93,6 +134,9 @@ function sandIamPayloadFiles(string $root, bool $includeGeneratedDescriptors): a
                 continue;
             }
             $relative = $entry . '/' . substr($file->getPathname(), strlen($path) + 1);
+            if (!sandIamPayloadPathSupported($relative)) {
+                throw new RuntimeException('payload path contains unsupported characters');
+            }
             if (sandIamPayloadExcluded($relative)) {
                 continue;
             }

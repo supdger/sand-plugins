@@ -6,7 +6,7 @@
 > 48 项计分、恢复状态和未通过门槛以[终极验收原子账本](sand-iam-terminal-acceptance-ledger.md)
 > 与[任务看板](sand-iam-task-board.md)为准。历史候选和历史宿主观察不得自动计入当前通过。
 
-> **历史宿主记录，不作当前结论：** 早期受控同步后曾观察到 42/42 worker、未登录 401、未启用 503 和前端 200；“宿主 SandIAM 表为 0”也是事故当时的瞬时状态。2026-09-07 恢复记录的最新保留只读证据是 83 张 `sand_iam_*` 表、无迁移账本、`baseline_060`/`prefix_033_034` 和 registry `state=8`，本轮未重新读取。实际恢复仍为 2/8，禁止以空结构重装替代恢复；当前 Codex 可控 browser context 不可用，不能把阻塞归咎为用户未登录。
+> **历史宿主记录，不作当前结论：** 早期受控同步后曾观察到 42/42 worker、未登录 401、未启用 503 和前端 200；“宿主 SandIAM 表为 0”也是事故当时的瞬时状态。当前可复核的宿主事实以 [`HOST-202609-001`](../../../docs/host-requests/HOST-202609-001-sandpackage-failed-recovery.md) 为准：它仍是 `local draft / not sent`，demo registry 为健康的 `0.7.0`（`state=1`、`stage=completed`）；历史 `state=8` 只在 quarantine 证据中。实际恢复仍为 2/8，禁止以空结构重装替代恢复；当前 Codex 可控 browser context 不可用，不能把阻塞归咎为用户未登录。
 
 ## 1. 执行前授权与隔离
 

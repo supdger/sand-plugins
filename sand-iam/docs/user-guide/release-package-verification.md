@@ -9,8 +9,9 @@ SandIAM 的正式候选交付应同时提供四个彼此独立的文件：
 
 只有 ZIP 没有签名证明，或签名证明附带了无法从可信渠道核对的公钥，都不能证明来源。
 不要使用从尚未验证的 ZIP 中解出的脚本来验证同一个 ZIP；应从可信源码 revision、正式发布页
-或组织内受控工具库取得 `tools/verify-release-bundle.php` 和
-`tools/release-bundle-attestation.php`。
+或组织内受控工具库分别取得并核对摘要的三份输入：`tools/verify-release-bundle.php`、
+`tools/release-bundle-attestation.php` 和 `tools/package-payload-policy.php`。三者的可信来源
+revision/摘要边界独立于待验 ZIP；少任一份、或只信任同下载目录/ZIP 内的副本，都不能构成验证基础。
 
 ## 校验命令
 
@@ -28,7 +29,7 @@ php tools/verify-release-bundle.php \
 
 1. 公钥、签名和证明文件的 schema；
 2. 证明中的 manifest SHA-256 与本地 manifest 完全一致；
-3. manifest v7 同时包含干净源码 commit 与 `sand-iam/` tree object，明确声明正常包排除历史 recovery descriptor，且签名证明完整覆盖这些来源与载荷身份；
+3. manifest v8 同时包含干净源码 commit、`sand-iam/` tree object 和 `release-build-contract.json` 摘要；它必须声明两套独立 Git-blob source stage 均已逐文件匹配该 commit，明确声明正常包排除历史 recovery descriptor，且签名证明完整覆盖这些来源与载荷身份；
 4. ZIP 的文件名、字节数、SHA-256 和条目数与 manifest 完全一致；
 5. ZIP 内每个文件的 SHA-256、大小、路径安全性以及无符号链接、无重复条目；
 6. `LICENSE`、CycloneDX SBOM、第三方许可、安全与贡献说明齐全；
@@ -36,6 +37,11 @@ php tools/verify-release-bundle.php \
 
 成功时命令以状态码 `0` 结束并输出 ZIP 摘要和条目数。任何文件被替换、增加字节、重打包，
 或 manifest、签名、公钥不匹配时都会以非零状态码拒绝；不要绕过失败继续安装。
+
+签名者如果在同目录 no-replace 发布的 `link`、权限或目录 fsync 阶段失败，会仅按自身记录的
+dev/inode 清理 final/temp，并尽力 fsync 目录；不会删除同名的其他文件。非零退出时该输出名不能
+作为发布物使用。特别是 `cannot safely clean failed attestation publication` 表示目录持久化结果
+未能确认：隔离该目录，使用上述三份可信输入重新验证，并从新的候选重新生成证明。
 
 ## 公钥核对
 

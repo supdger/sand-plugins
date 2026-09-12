@@ -18,8 +18,14 @@ if (!is_int($keyMode) || ($keyMode & 0077) !== 0) throw new RuntimeException('pr
 $outputParent = sandIamAssertDirectoryPath(dirname($options['output']), 'output directory');
 $rootPath = realpath($root);
 if (!is_string($outputParent) || !is_string($rootPath) || str_starts_with($outputParent . '/', $rootPath . '/')) throw new RuntimeException('output must use an existing directory outside the SandIAM package root');
-$output = $outputParent . '/' . basename($options['output']);
-if (file_exists($output) || is_link($output)) throw new RuntimeException('refusing to overwrite attestation output');
+$outputName = basename($options['output']);
+try {
+    sandIamCanonicalPayloadPath($outputName);
+} catch (RuntimeException) {
+    throw new RuntimeException('output filename is invalid');
+}
+$output = $outputParent . '/' . $outputName;
+sandIamAssertOutputAbsent($output);
 $artifact = sandIamReadArtifactManifest($manifestPath);
 $unsigned = sandIamUnsignedBundleAttestation($artifact, $manifestPath, $archivePath, [
     'source' => $options['source'], 'reference' => $options['reference'],
@@ -36,5 +42,5 @@ try {
 $signed = $unsigned;
 $signed['provenance']['signature'] = ['algorithm' => 'ed25519', 'value' => base64_encode($signature)];
 $encoded = json_encode(sandIamCanonicalize($signed), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR) . "\n";
-if (file_put_contents($output, $encoded, LOCK_EX) === false || chmod($output, 0644) === false) throw new RuntimeException('cannot write signed attestation');
+sandIamPublishNewAttestation($outputParent, $output, $encoded);
 echo 'SandIAM release bundle attestation written: ' . $output . ' sha256=' . hash('sha256', $encoded) . PHP_EOL;

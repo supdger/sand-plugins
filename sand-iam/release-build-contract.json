@@ -1,0 +1,60 @@
+{
+  "schema": "sand-iam.release-build-contract/v1",
+  "kind": "reviewed-runtime-payload-inputs",
+  "source": {
+    "formal_builder": "git-blob-only",
+    "repeat_build": "independent-git-stage"
+  },
+  "toolchain": {
+    "php": "8.2.29",
+    "composer": "2.9.5",
+    "node": "v24.11.1",
+    "pnpm": "11.19.0",
+    "typescript": "5.9.3",
+    "zip_extension": "1.21.1",
+    "libzip": "1.11.4"
+  },
+  "composer": {
+    "lock_sha256": "cb6457572b7e68697ae82b2a282dbf5e67cb4c0626b92696163123579eed9b88",
+    "environment": {
+      "COMPOSER_DISABLE_NETWORK": "1",
+      "COMPOSER_ROOT_VERSION": "0.7.1"
+    },
+    "arguments": [
+      "install",
+      "--no-dev",
+      "--prefer-dist",
+      "--optimize-autoloader",
+      "--classmap-authoritative",
+      "--no-interaction",
+      "--no-plugins",
+      "--no-scripts"
+    ]
+  },
+  "typescript": {
+    "lock_sha256": "f8633dc2c3b6fa92d7be778f2365f375cdea0502d2054e07117fe02871c661df",
+    "package_integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+    "install_arguments": [
+      "install",
+      "--offline",
+      "--frozen-lockfile",
+      "--ignore-scripts"
+    ],
+    "build_arguments": [
+      "exec",
+      "tsc",
+      "-p",
+      "tsconfig.json"
+    ]
+  },
+  "generated_payloads": {
+    "plugin/sand-iam/vendor": {
+      "file_count": 58,
+      "tree_sha256": "d4689c17160f720f82f6c93ed70567dc53cf53701eafb89d6238520e5ea9e6c5"
+    },
+    "sdk/typescript/dist": {
+      "file_count": 4,
+      "tree_sha256": "4f0aa8fc2fedb948b9f6bce6a11bd7969dcb81f66b70953e1cc7605bfa9c2783"
+    }
+  }
+}
