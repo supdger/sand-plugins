@@ -6,8 +6,9 @@
 - 2026-09-12 当前态复核：Codex 任务列表中本工作区仅本 Goal 为 `active`，旧 SandIAM 任务均为 `notLoaded`；本机 automation 配置中没有 SandIAM/sand_plugins 定时项。该结论来自本轮只读任务列表与配置扫描，没有修改外部状态。
 - 旧任务状态不得自动计入当前通过。可复用证据先绑定当前源码树、候选摘要和适用环境，再回写同一[终极验收原子账本](sand-iam-terminal-acceptance-ledger.md)。
 - 当前复核计分：需求 **8/9**、模块 **20/20**、正式 FLOW **0/7**、本地业务闭环 **0/4**、可上线部署 **0/8**，合计 **28/48**；发布门槛 **0/10**。这是本轮逐原子复核后的新结论，不是旧任务自动继承。
-- 已只读锁定：变更前 SandIAM tree `24af41dd869e2ac64fcc7b71ea64e255dcda86a4`、当前 v70 review-only descriptor-excluded payload digest `4bbf92897537f663e80c42e5dc31ae54c85df5ad17eb7741760929688d2a7035`、SandAdmin H1 clean revision `558d92959947230ee562f29e015c62566be58c8e`、包内检查 **24/24 PASS**。
-- 当前仓库整体 dirty；已生成本轮 review-only ZIP，但尚无最终 LICENSE、可信签名或运行验收证据，因此不可发布。
+- 已只读锁定：0.7.0 的 `fa344cd`/tree `6465…` 仅为历史基线；当前权威源码为未提交的 0.7.1 实现，Astra 已 ACCEPT。through037 精确 preflight→原038，迁移 `001–038` 不变、无039，normal 包不含旧 recovery descriptor；safe **114**、PHP lint **507**、包内 **24**、发布卫生 **11/14**。
+- 当前冻结 review-only artifact `.artifacts/sand-iam-0.7.1-v10-20260912T051554Z`：634 entries，archive SHA `38392c9affc496ed56cb2b11e6963ee93c2c8aea518976ebc64df39f63471c7d`，payload/source snapshot SHA `07b9327c5bb3ddbc2ceb0db4ededbf406219d704c2f727b4388471b2086fad64`。开发记录按 payload policy 排除，不影响摘要；artifact 仍为 `dirty-not-release`，不计 FLOW。同步脚本的 `--checksum` 修复未提交，尚未重新 apply；v71 与 v70 payload 相同但 B 被独立 **REJECT**。
+- 只读 demo DB 为 86 tables、ledger 38 rows、max revision 37、无038；C 因 runtime `state=1/stage=completed` 不适用。D/E/H–L 未执行，G 未授权；当前仍未部署、未线上验证。旧 v70/v71 摘要只保留作历史证据。
 
 ### 当前执行顺序
 
@@ -97,7 +98,7 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 
 > **2026-09-08 P18-BLOCKER-TS-PACKAGE-01（独立 ACCEPT，分母不变）**：v16 因通用 `dist` 排除未携带 TypeScript SDK ESM 构建物，已由 v17 候选替代；其他 `dist` 继续拒绝。v17 ZIP 为 `.artifacts/sand-iam-0.7.0-v17-20260907T200515Z/`，SHA-256 `70bfe0186ae6aec48b971107dcbc7b89d80862ba4a0b083b8466e3c8a9a7734a`、598 entries，SDK `dist` 仅包含四个导出文件 `index.js/index.d.ts/management.js/management.d.ts`。独立验收为 **ACCEPT**：静态 package checker **23/23**、锁定本地双构建 bit-identical、SDK 原测试，以及 ZIP 解包后真实消费者的 loopback allow/403/401 结果均通过；恢复 descriptor 已重绑 596 文件的 payload SHA `be01909a…`，root/plugin descriptor byte-identical，`update.sql` 与 `035` hash 未改变。按 P 门槛归位，P18 现为**✅ 通过**；独立消费样例的当前业务闭环、宿主、浏览器、部署或线上验收仍未完成，分别留在 L/F/D。v17 历史候选未同步 demo；这不改变计划 v24 已完成的 17-file demo 静态白名单同步，也不构成运行时验收。无数据库、registry 或运行时写入，无 commit/push。详见同 artifact 的 `P18-BLOCKER-TS-PACKAGE-01-report.md` 和 `frontend-sync-plan-v17.json`。
 
-### 当前 0.7.0 升级票据原子追踪（冻结分母 7）
+### 历史 0.7.0 升级票据原子追踪（冻结分母 7）
 
 下表是本轮升级票据的固定七项，不把历史记录、候选包或页面源码自动当作升级通过。`5/7` 只统计状态为 ACCEPT 的原子项；真实数据库升级、恢复和浏览器验收仍单独计分。
 
@@ -172,7 +173,7 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 | IAM-T05 | Codex + Cursor | ▶ 进行中 | IAM-T03 | 接口目录、路由绑定、语义动作决策、PHP/TypeScript SDK 和 Webman 中间件已进入 `008` lifecycle；应用/组织隔离、幂等观察、路由冲突、停用关闭失败、OpenAPI 语义保留和审计已通过 PostgreSQL 集成。真实 SandAI/非 AI 应用授权和管理端闭环尚未验收。 |
 | IAM-T06 | Codex + Cursor | ▶ 进行中 | IAM-T04、IAM-T05 | 应用级委派、自助 API、Webhook、审计导出已进入 lifecycle；委托与 Webhook PostgreSQL 集成通过。仍缺并发 worker、真实 HTTPS 接收端、三角色页面和浏览器闭环。 |
 | IAM-T07 | Codex + Cursor | ▶ 进行中 | IAM-T04～IAM-T06 | 完整管理端交接契约和 Cursor U-T04～U-T13 源码/执行记录已交付；仍缺真实宿主同步、登录后的三角色流程与两个视口验收。 |
-| IAM-T08 | Codex + Cursor | ▶ 进行中 | IAM-T04～IAM-T12 | 当前 0.7.0 候选迁移为 `001–038`（38 个修订号、39 个文件），生成 SQL 目标为 86 张 `sand_iam_*` 表；根/插件载荷一致。fresh install 为 `001–038`，0.6.0 升级为 `033–038`，021 不可变、034 不自动授权、035 先验结构指纹再收养账本、036 以规范化自校验值关闭受控夹具支持、037 增加初始化草稿/修订表且权限只登记不自动授予、038 只增加认证限流清理索引。P19 前端隔离 ESLint/typecheck/build 与后端生命周期/行为检查均通过独立复核。SandPackage catalog/035 修复与 v15 production verifier/profile 同步有独立证据。实际恢复 **2/8**；宿主候选替换、重试、安装/升级/卸载、真实宿主 HTTP、浏览器、外部客户端、七条业务闭环和部署仍未通过，已移交 SandAdmin/SandPackage 维护者，本轮无数据库、registry 或运行时写入。 |
+| IAM-T08 | Codex + Cursor | ▶ 进行中 | IAM-T04～IAM-T12 | 当前 0.7.1 未提交实现沿用 `001–038`（无039），normal 包不含旧 recovery descriptor；safe 114、PHP 507、package 24、hygiene 11/14，均为静态证据。冻结 review-only artifact 为 `.artifacts/sand-iam-0.7.1-v10-20260912T051554Z`，634 entries，archive `38392c9a…`，payload/source snapshot `07b9327c…`；开发记录按 payload policy 排除，不影响摘要，仍为 `dirty-not-release`，不计 FLOW。只读 DB 86 tables、ledger 38 rows、max revision 37、无038，C 不适用。B 的 v71 apply 独立 REJECT，`--checksum` 修复未提交且尚未重新 apply；宿主候选替换、重试、安装/升级/卸载、真实宿主 HTTP、浏览器、外部客户端、七条业务闭环和部署仍未通过。|
 | IAM-T09 | Codex + Cursor | ▶ 进行中 | IAM-T06 | 应用登录体验、品牌、消息 Provider、独立用户门户后端候选与 `011/025` 已落；假驱动下的服务选择、密文配置、投递/Captcha、停用关闭失败和跨组织拒绝已通过 PostgreSQL 集成。真实供应商、HTTP、页面和浏览器未验收。 |
 | IAM-T10 | Codex + Cursor | ▶ 进行中 | IAM-T04、IAM-T09 | 用户生命周期、组、邀请、访客升级、CSV 导入导出、通用 Syncer 与 `012–015/026` 已形成候选；生命周期/组/访客、邀请、Syncer 三组 PostgreSQL 集成通过，P14 scheduler/worker 已独立最终复核 ACCEPT。真实 HTTP、真实 worker/目录运行和页面未验收。 |
 | IAM-T11 | Codex + Cursor | ▶ 进行中 | IAM-T03、IAM-T04 | DCR、OIDC 前/后通道登出、CAS、Kerberos/SPNEGO、RADIUS Access/Accounting 与 `016–018` 已形成候选，迁移已进入 lifecycle 并有 SandPackage 隔离安装记录；真实 Realm/NAS、标准客户端、宿主 HTTP 和页面未验收。 |

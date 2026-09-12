@@ -239,23 +239,66 @@ $update = (string) file_get_contents($root . '/update.sql');
 $packageUpdate = (string) file_get_contents($package . '/update.sql');
 $uninstall = (string) file_get_contents($root . '/uninstall.sql');
 $packageUninstall = (string) file_get_contents($package . '/uninstall.sql');
-$expectedUpdate = [
-    '033_identity_group_role.pgsql',
-    '034_identity_group_role_permission_catalog.pgsql',
-    '035_schema_migration_ledger.pgsql',
-    '036_acceptance_fixture_support.pgsql',
-    '037_initialization_draft.pgsql',
-    '038_auth_rate_limit_retention.pgsql',
-];
+$expectedUpdate = ['038_auth_rate_limit_retention.pgsql'];
+$updatePreflight = (string) file_get_contents($root . '/lifecycle/update-070-to-071-preflight.pgsql');
+preg_match_all("/\\('(sand_iam_[a-z0-9_]+)'\\)/", $updatePreflight, $preflightTableMatches);
+$preflightTables = array_values(array_unique($preflightTableMatches[1] ?? []));
+sort($preflightTables, SORT_STRING);
+$sourceTables = $tables = [];
+$sourceSchema = (string) file_get_contents($root . '/lifecycle/base.pgsql');
+foreach (glob($migrations . '/*.pgsql') ?: [] as $migration) {
+    $sourceSchema .= "\n" . (string) file_get_contents($migration);
+}
+preg_match_all('/\\bCREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+(sand_iam_[a-z0-9_]+)/i', $sourceSchema, $sourceTableMatches);
+$sourceTables = array_values(array_unique($sourceTableMatches[1] ?? []));
+sort($sourceTables, SORT_STRING);
+$sameCountRename = $sourceTables;
+array_pop($sameCountRename);
+$sameCountRename[] = 'sand_iam_renamed_fixture';
+sort($sameCountRename, SORT_STRING);
+$sameCountExtra = $sourceTables;
+array_pop($sameCountExtra);
+$sameCountExtra[] = 'sand_iam_extra_fixture';
+sort($sameCountExtra, SORT_STRING);
+release070Assert('0.7.1 preflight freezes the exact 86-table relation set and rejects same-count rename or extra substitutions',
+    count($preflightTables) === 86
+    && $preflightTables === $sourceTables
+    && count($sameCountRename) === 86
+    && count($sameCountExtra) === 86
+    && ($sameCountRename !== $preflightTables || $sameCountExtra !== $preflightTables)
+    && str_contains($updatePreflight, 'EXCEPT SELECT table_name FROM sand_iam_071_expected_table')
+    && str_contains($updatePreflight, 'SELECT table_name FROM sand_iam_071_expected_table')
+    && str_contains($updatePreflight, 'requires the exact completed 86-table 0.7.0 schema'));
+preg_match_all("/\\('([^']+\\.pgsql)',\\s*(\\d+),\\s*'([0-9a-f]{64})',\\s*'([^']+)'\\)/", $ledger, $ledgerRows, PREG_SET_ORDER);
+$expectedLedgerRows = array_map(
+    static fn (array $row): string => implode('|', [$row[1], $row[2], $row[3], $row[4]]),
+    array_values(array_filter($ledgerRows, static fn (array $row): bool => (int) $row[2] <= 37)),
+);
+preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $ledger, $ledgerSelfChecksum);
+if (isset($ledgerSelfChecksum[1])) {
+    $expectedLedgerRows[] = implode('|', ['035_schema_migration_ledger.pgsql', '35', $ledgerSelfChecksum[1], '0.7.0']);
+}
+sort($expectedLedgerRows, SORT_STRING);
+preg_match_all("/\\('([^']+\\.pgsql)',\\s*(\\d+),\\s*'([0-9a-f]{64})',\\s*'([^']+)'\\)/", $updatePreflight, $preflightRows, PREG_SET_ORDER);
+$actualLedgerRows = array_map(static fn (array $row): string => implode('|', [$row[1], $row[2], $row[3], $row[4]]), $preflightRows);
+sort($actualLedgerRows, SORT_STRING);
+release070Assert('0.7.1 preflight reproduces the exact immutable 001-037 ledger identities before 038',
+    count($expectedLedgerRows) === 38
+    && $actualLedgerRows === $expectedLedgerRows);
 release070Assert('fresh-install lifecycle is root/package identical and contains the 035-038 release migrations',
     hash('sha256', $install) === hash('sha256', $packageInstall)
     && str_contains($install, '-- lifecycle source: migrations/035_schema_migration_ledger.pgsql')
     && str_contains($install, '-- lifecycle source: migrations/036_acceptance_fixture_support.pgsql')
     && str_contains($install, '-- lifecycle source: migrations/037_initialization_draft.pgsql')
     && str_contains($install, '-- lifecycle source: migrations/038_auth_rate_limit_retention.pgsql'));
-release070Assert('0.6.0 to 0.7.0 update lifecycle is root/package identical and contains exactly 033-038',
+release070Assert('0.7.0 to 0.7.1 update lifecycle is root/package identical, gates exact 001-037, then contains only immutable 038',
     hash('sha256', $update) === hash('sha256', $packageUpdate)
     && release070PayloadSources($update) === $expectedUpdate
+    && str_contains($update, '-- lifecycle source: lifecycle/update-070-to-071-preflight.pgsql')
+    && strpos($update, '-- lifecycle source: lifecycle/update-070-to-071-preflight.pgsql') < strpos($update, '-- lifecycle source: migrations/038_auth_rate_limit_retention.pgsql')
+    && str_contains($update, 'requires exact 001-037 ledger identities before executing 038')
+    && str_contains($update, 'requires the exact completed 86-table 0.7.0 schema')
+    && !str_contains($update, '-- lifecycle source: migrations/037_initialization_draft.pgsql')
     && !str_contains($update, '-- lifecycle source: migrations/021_admin_permission_catalog.pgsql'));
 release070Assert('uninstall removes the ledger in root and package payloads',
     hash('sha256', $uninstall) === hash('sha256', $packageUninstall)
@@ -266,31 +309,21 @@ $packageInfo = parse_ini_file($package . '/info.ini');
 $appConfig = (string) file_get_contents($package . '/config/app.php');
 $portal = json_decode((string) file_get_contents($root . '/portal/package.json'), true);
 $managementCatalog = (string) file_get_contents($package . '/app/developer/ManagementApiCatalog.php');
-release070Assert('0.7.0 release metadata declares matching SandAdmin 6.x support while OpenAPI stays 0.13.0-candidate',
-    ($rootInfo['version'] ?? null) === '0.7.0'
-    && ($packageInfo['version'] ?? null) === '0.7.0'
+release070Assert('0.7.1 release metadata declares matching SandAdmin 6.x support while OpenAPI stays 0.13.0-candidate',
+    ($rootInfo['version'] ?? null) === '0.7.1'
+    && ($packageInfo['version'] ?? null) === '0.7.1'
     && ($rootInfo['support'] ?? null) === '6.x'
     && ($packageInfo['support'] ?? null) === '6.x'
-    && str_contains($appConfig, "'version' => '0.7.0'")
-    && is_array($portal) && ($portal['version'] ?? null) === '0.7.0'
+    && str_contains($appConfig, "'version' => '0.7.1'")
+    && is_array($portal) && ($portal['version'] ?? null) === '0.7.1'
     && str_contains($managementCatalog, "'version' => '0.13.0-candidate'"));
 
 $rootRecovery = (string) file_get_contents($root . '/recovery/failed-upgrade.v2.json');
 $packageRecovery = (string) file_get_contents($package . '/recovery/failed-upgrade.v2.json');
 $recovery = json_decode($rootRecovery, true);
-$recoveryManifestCommand = [PHP_BINARY, $root . '/tools/check-package-integrity.php', '--print-normalized-recovery-payload-manifest'];
-$recoveryPipes = [];
-$recoveryProcess = proc_open($recoveryManifestCommand, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $recoveryPipes);
-$recoveryManifestOutput = is_resource($recoveryProcess) ? stream_get_contents($recoveryPipes[1]) : false;
-if (is_resource($recoveryProcess)) {
-    fclose($recoveryPipes[1]);
-    fclose($recoveryPipes[2]);
-    $recoveryManifestStatus = proc_close($recoveryProcess);
-} else {
-    $recoveryManifestStatus = 127;
-}
-$recoveryManifest = is_string($recoveryManifestOutput) ? json_decode($recoveryManifestOutput, true) : null;
-release070Assert('0.7.0 recovery descriptor is root/plugin-identical, canonical, descriptor-excluded, and binds update.sql',
+require_once $root . '/tools/package-payload-policy.php';
+$normalPayload = sandIamPayloadFiles($root, true);
+release070Assert('historical 0.7.0 recovery descriptor remains root/plugin-identical but is excluded from normal 0.7.1 payloads',
     $rootRecovery !== ''
     && $rootRecovery === $packageRecovery
     && is_array($recovery)
@@ -299,23 +332,14 @@ release070Assert('0.7.0 recovery descriptor is root/plugin-identical, canonical,
     && ($recovery['schema'] ?? null) === 'sandpackage.failed-upgrade-recovery/v2'
     && ($recovery['profile']['schema'] ?? null) === 'sandpackage.failed-upgrade-recovery-profile/v2'
     && ($recovery['profile']['state'] ?? null) === 'prefix_033_034'
-    && $recoveryManifestStatus === 0
-    && is_array($recoveryManifest)
-    && ($recovery['candidate_payload']['algorithm'] ?? null) === 'sandpackage-normalized-package-manifest/v1'
-    && ($recovery['candidate_payload']['digest'] ?? null) === ($recoveryManifest['digest'] ?? null)
-    && ($recovery['update_lifecycle']['path'] ?? null) === 'update.sql'
-    && ($recovery['update_lifecycle']['sha256'] ?? null) === hash_file('sha256', $root . '/update.sql'));
+    && in_array('ledger_absent', array_column($recovery['profile']['assertions'] ?? [], 'type'), true)
+    && !in_array('recovery/failed-upgrade.v2.json', $normalPayload, true)
+    && !in_array('plugin/sand-iam/recovery/failed-upgrade.v2.json', $normalPayload, true));
 
-$schema = (string) file_get_contents($root . '/lifecycle/base.pgsql');
-foreach (glob($migrations . '/*.pgsql') ?: [] as $migration) {
-    $schema .= "\n" . (string) file_get_contents($migration);
-}
-preg_match_all('/\\bCREATE\\s+TABLE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+(sand_iam_[a-z0-9_]+)/i', $schema, $tableMatches);
-$tables = array_values(array_unique($tableMatches[1] ?? []));
-release070Assert('0.7.0 schema source has exactly 86 SandIAM tables including editable initialization drafts',
-    count($tables) === 86
-    && in_array('sand_iam_schema_migration', $tables, true)
-    && in_array('sand_iam_initialization_draft', $tables, true)
-    && in_array('sand_iam_initialization_draft_revision', $tables, true));
+release070Assert('0.7.1 schema source retains exactly 86 SandIAM tables including editable initialization drafts',
+    count($sourceTables) === 86
+    && in_array('sand_iam_schema_migration', $sourceTables, true)
+    && in_array('sand_iam_initialization_draft', $sourceTables, true)
+    && in_array('sand_iam_initialization_draft_revision', $sourceTables, true));
 
-echo 'SandIAM 0.7.0 lifecycle non-PG contract passed' . PHP_EOL;
+echo 'SandIAM 0.7.1 lifecycle non-PG contract passed' . PHP_EOL;

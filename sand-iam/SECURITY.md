@@ -2,9 +2,8 @@
 
 ## 报告漏洞
 
-请使用代码托管平台提供的私密漏洞报告或 Security Advisory 功能联系维护者。
-如果当前镜像没有私密报告入口，请通过项目所有者公布的私下联系方式联系维护者，
-不要创建公开 issue，也不要附加真实凭证、个人数据或生产数据库副本。
+请通过 [GitHub private advisory](https://github.com/supdger/sand-plugins/security/advisories/new)
+私下报告漏洞。不要创建公开 issue，也不要附加真实凭证、个人数据或生产数据库副本。
 
 报告中请包含：
 

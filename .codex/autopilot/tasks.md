@@ -17,7 +17,7 @@
   - 执行记录：`.codex/autopilot/executions/OSS-03.md`
 - [ ] OSS-04 · 提交首条真实业务链的一次性精确授权清单并执行
   - 验收：一次只推进一条链，按复现 → 权威源码 → 自动回归 → demo 实测 → 独立验收闭合；需要数据库写入、迁移、服务启停或宿主同步时先取得明确授权。
-  - 当前：v70 已完成 `--allow-dirty` 只读差异盘点（206 文件项、21 目录元数据项、8 删除）；A–L 精确范围见 `.codex/autopilot/executions/OSS-04-authorization.md`，尚未获得授权、未执行。F 仅允许官方依赖公告查询；G 仅允许向预建空置隔离库恢复；H–L 仅允许在既有 demo schema 运行精确 PostgreSQL 用例。
+  - 当前：A/F 独立结论均为 **PARTIAL**；权威源码的 0.7.1 未提交实现已获 Astra **ACCEPT**，但只计静态证据。through037 精确 preflight→原038，迁移 `001–038` 不变、无039，normal 包不含旧 recovery descriptor；safe **114**、PHP lint **507**、包内 **24**、发布卫生 **11/14**。冻结 review-only artifact 为 `.artifacts/sand-iam-0.7.1-v10-20260912T051554Z`，634 entries，archive `38392c9a…`，payload/source snapshot `07b9327c…`；开发记录按 payload policy 排除，不影响摘要，artifact 仍为 `dirty-not-release`，不计 FLOW，不称正式 final release。v71 与 v70 payload 相同但 B 被独立 **REJECT**：rsync size+mtime 假阴性；同步脚本已未提交修复 `--checksum`，尚未重新 apply。历史 `fa344cd`/tree `6465…` 仅是 0.7.0 基线。C 因 runtime `state=1/stage=completed` 不适用；只读 DB 为 86 tables、ledger 38 rows、max revision 37、无038。D/E/H–L 未执行，G 未授权。仍需独立复核和明确的正常升级/同版本切换授权，不得把 checksum 修复或 0.7.1 静态包写成生命周期通过。
 - [ ] OSS-05 · 完成剩余真实链、外部互操作、独立体验、24 小时稳定性和发布包终验
   - 验收：FLOW 48/48、发布门槛 10/10、无发布阻塞缺陷；不包含 push、正式 Release、部署或线上验证。
   - 当前预备：已增加候选绑定模板、24 小时 runner/独立 verifier、Casdoor 3 旅程 × 双方 2 轮证据门禁、七类标准客户端/真实对端互操作验证器、隔离备份恢复验证器及未参与开发者公开文档交付验证器，回归 114/114；未实际运行，不计通过。记录：`.codex/autopilot/executions/OSS-05-preflight.md`。

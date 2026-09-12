@@ -89,7 +89,7 @@ function sandIamReadArtifactManifest(string $path): array
 {
     $manifest = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
     if (!is_array($manifest)
-        || ($manifest['schema'] ?? null) !== 'sand-iam.artifact-manifest/v6'
+        || ($manifest['schema'] ?? null) !== 'sand-iam.artifact-manifest/v7'
         || ($manifest['kind'] ?? null) !== 'release-candidate-unsigned'
         || ($manifest['release_state'] ?? null) !== 'release/unsigned') {
         throw new RuntimeException('artifact manifest is not an unsigned release candidate');
@@ -97,12 +97,11 @@ function sandIamReadArtifactManifest(string $path): array
     if (($manifest['archive_authority_parity']['passed'] ?? false) !== true
         || ($manifest['reproducibility']['bit_identical_zip'] ?? false) !== true
         || ($manifest['reproducibility']['entry_list_identical'] ?? false) !== true
-        || ($manifest['reproducibility']['descriptor_identical'] ?? false) !== true) {
+        || ($manifest['archive_authority_parity']['normal_package_recovery_descriptors'] ?? null) !== 'excluded') {
         throw new RuntimeException('artifact manifest has incomplete parity or reproducibility evidence');
     }
     $package = $manifest['package'] ?? null;
     $revision = $manifest['source_revision'] ?? null;
-    $recovery = $manifest['candidate_recovery_payload'] ?? null;
     if (!is_array($package)
         || ($package['app'] ?? null) !== 'sand-iam'
         || !is_string($package['version'] ?? null)
@@ -112,11 +111,10 @@ function sandIamReadArtifactManifest(string $path): array
         || preg_match('/^[0-9a-f]{40,64}$/', (string) ($revision['commit'] ?? '')) !== 1
         || preg_match('/^[0-9a-f]{40,64}$/', (string) ($revision['tree'] ?? '')) !== 1
         || ($revision['subtree'] ?? null) !== 'sand-iam/'
-        || ($revision['clean'] ?? null) !== true
-        || !is_array($recovery)) {
+        || ($revision['clean'] ?? null) !== true) {
         throw new RuntimeException('artifact manifest has no valid clean SandIAM source revision or package identity');
     }
-    foreach (['sha256' => $manifest['source_snapshot']['sha256'] ?? null, 'payload digest' => $recovery['digest'] ?? null, 'descriptor sha256' => $recovery['descriptor_sha256'] ?? null, 'update sql sha256' => $recovery['update_sql_sha256'] ?? null] as $label => $hash) {
+    foreach (['sha256' => $manifest['source_snapshot']['sha256'] ?? null, 'update sql sha256' => $manifest['files']['update.sql']['sha256'] ?? null] as $label => $hash) {
         if (!is_string($hash) || preg_match('/^[0-9a-f]{64}$/', $hash) !== 1) throw new RuntimeException('artifact manifest has invalid ' . $label);
     }
     if (!is_array($manifest['files'] ?? null) || $manifest['files'] === []) throw new RuntimeException('artifact manifest has no ZIP file map');
@@ -147,16 +145,15 @@ function sandIamUnsignedBundleAttestation(array $artifact, string $artifactManif
         throw new RuntimeException('provenance.approved_at must be a UTC ISO-8601 second timestamp');
     }
     return [
-        'schema' => 'sand-iam.release-bundle-attestation/v1',
+        'schema' => 'sand-iam.release-bundle-attestation/v2',
         'kind' => 'external-reviewed-release-bundle',
         'package' => ['app' => $package['app'], 'version' => $package['version']],
         'archive' => ['name' => $package['archive'], 'sha256' => $archiveHash, 'bytes' => $archiveBytes, 'entry_count' => $package['entry_count']],
         'artifact_manifest' => ['name' => basename($artifactManifestPath), 'sha256' => $manifestHash],
         'source_revision' => $artifact['source_revision'],
         'source_snapshot_sha256' => $artifact['source_snapshot']['sha256'] ?? null,
-        'payload_sha256' => $artifact['candidate_recovery_payload']['digest'] ?? null,
-        'descriptor_sha256' => $artifact['candidate_recovery_payload']['descriptor_sha256'] ?? null,
-        'update_sql_sha256' => $artifact['candidate_recovery_payload']['update_sql_sha256'] ?? null,
+        'normal_package_recovery_descriptors' => 'excluded',
+        'update_sql_sha256' => $artifact['files']['update.sql']['sha256'] ?? null,
         'provenance' => [
             'source' => trim($provenance['source']),
             'reference' => trim($provenance['reference']),

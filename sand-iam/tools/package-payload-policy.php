@@ -15,10 +15,10 @@ declare(strict_types=1);
 function sandIamPayloadRoots(): array
 {
     return [
-        'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'SBOM.cdx.json',
+        'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'SBOM.cdx.json',
         'config.json', 'info.ini', 'install.sql', 'update.sql', 'uninstall.sql',
         'migrations', 'lifecycle', 'plugin/sand-iam',
-        'sandadmin-artd/src/views/plugin/sand-iam', 'portal', 'sdk', 'docs/user-guide', 'examples', 'recovery',
+        'sandadmin-artd/src/views/plugin/sand-iam', 'portal', 'sdk', 'docs/user-guide', 'examples',
     ];
 }
 
@@ -35,6 +35,14 @@ function sandIamGeneratedDescriptorPaths(): array
 
 function sandIamPayloadExcluded(string $path): bool
 {
+    // Recovery descriptors describe the historical 0.6.0 -> 0.7.0 repair
+    // path. A normal 0.7.1 package must not opt into that host-specific flow.
+    if ($path === 'recovery/failed-upgrade.v2.json'
+        || $path === 'recovery/failed-upgrade.v2.json.sha256'
+        || $path === 'plugin/sand-iam/recovery/failed-upgrade.v2.json'
+        || $path === 'plugin/sand-iam/recovery/failed-upgrade.v2.json.sha256') {
+        return true;
+    }
     // The TypeScript SDK is published as native ESM. Its compiled output is a
     // consumer-facing runtime dependency, unlike every other generated dist
     // tree in this source package. Keep this exception path-scoped: widening

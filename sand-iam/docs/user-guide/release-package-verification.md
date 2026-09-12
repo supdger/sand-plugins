@@ -19,7 +19,7 @@ PHP 必须提供 `zip` 和 `sodium` 扩展。四个待校验文件应放在 Sand
 ```sh
 php tools/verify-release-bundle.php \
   --artifact-manifest=/downloads/manifest.json \
-  --archive=/downloads/sand-iam-0.7.0-release-unsigned.zip \
+  --archive=/downloads/sand-iam-0.7.1-release-unsigned.zip \
   --attestation=/downloads/sand-iam.release-attestation.json \
   --public-key=/trusted-keys/sand-iam-ed25519.pub
 ```
@@ -28,7 +28,7 @@ php tools/verify-release-bundle.php \
 
 1. 公钥、签名和证明文件的 schema；
 2. 证明中的 manifest SHA-256 与本地 manifest 完全一致；
-3. manifest v6 同时包含干净源码 commit 与 `sand-iam/` tree object，且签名证明完整覆盖二者；
+3. manifest v7 同时包含干净源码 commit 与 `sand-iam/` tree object，明确声明正常包排除历史 recovery descriptor，且签名证明完整覆盖这些来源与载荷身份；
 4. ZIP 的文件名、字节数、SHA-256 和条目数与 manifest 完全一致；
 5. ZIP 内每个文件的 SHA-256、大小、路径安全性以及无符号链接、无重复条目；
 6. `LICENSE`、CycloneDX SBOM、第三方许可、安全与贡献说明齐全；

@@ -30,17 +30,16 @@ $removeTree = static function (string $path) use (&$removeTree): void {
 
 try {
     $manifest = [
-        'schema' => 'sand-iam.artifact-manifest/v6', 'kind' => 'release-candidate-unsigned', 'release_state' => 'release/unsigned',
-        'archive_authority_parity' => ['passed' => true],
-        'reproducibility' => ['bit_identical_zip' => true, 'entry_list_identical' => true, 'descriptor_identical' => true],
-        'package' => ['app' => 'sand-iam', 'version' => '0.7.0', 'archive' => 'sand-iam.zip', 'sha256' => str_repeat('a', 64), 'bytes' => 1, 'entry_count' => 1],
+        'schema' => 'sand-iam.artifact-manifest/v7', 'kind' => 'release-candidate-unsigned', 'release_state' => 'release/unsigned',
+        'archive_authority_parity' => ['passed' => true, 'normal_package_recovery_descriptors' => 'excluded'],
+        'reproducibility' => ['bit_identical_zip' => true, 'entry_list_identical' => true],
+        'package' => ['app' => 'sand-iam', 'version' => '0.7.1', 'archive' => 'sand-iam.zip', 'sha256' => str_repeat('a', 64), 'bytes' => 1, 'entry_count' => 1],
         'source_revision' => [
             'vcs' => 'git', 'commit' => str_repeat('b', 40), 'tree' => str_repeat('c', 40),
             'subtree' => 'sand-iam/', 'clean' => true,
         ],
         'source_snapshot' => ['sha256' => str_repeat('c', 64)],
-        'candidate_recovery_payload' => ['digest' => str_repeat('d', 64), 'descriptor_sha256' => str_repeat('e', 64), 'update_sql_sha256' => str_repeat('f', 64)],
-        'files' => ['README.md' => ['sha256' => str_repeat('1', 64), 'bytes' => 1]],
+        'files' => ['README.md' => ['sha256' => str_repeat('1', 64), 'bytes' => 1], 'update.sql' => ['sha256' => str_repeat('f', 64), 'bytes' => 1]],
     ];
     $manifestPath = $seed . '/manifest.json';
     file_put_contents($manifestPath, json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));

@@ -35,7 +35,10 @@ $record = static function (string $name, bool $passed, string $detail = '') use 
     if (!$passed && $detail !== '') $details[$name] = $detail;
 };
 
-$record('project license exists', is_file($root . '/LICENSE'), 'LICENSE is pending owner approval.');
+$projectLicense = is_file($root . '/LICENSE') ? file_get_contents($root . '/LICENSE') : false;
+$hasCompleteApacheLicense = is_string($projectLicense)
+    && hash_equals('c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4', hash('sha256', $projectLicense));
+$record('project license exists', $hasCompleteApacheLicense, 'LICENSE must contain the complete unmodified Apache License 2.0 text.');
 $securityPolicy = is_file($root . '/SECURITY.md') ? file_get_contents($root . '/SECURITY.md') : false;
 $hasPrivateSecurityChannel = is_string($securityPolicy)
     && preg_match('#(?:https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/security/advisories/new|mailto:[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})#i', $securityPolicy) === 1;

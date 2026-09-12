@@ -10,7 +10,6 @@ declare(strict_types=1);
  * Usage:
  *   php sand-iam/tools/check-package-integrity.php
  *   php sand-iam/tools/check-package-integrity.php --print-candidate-manifest
- *   php sand-iam/tools/check-package-integrity.php --print-normalized-recovery-payload-manifest
  *   php sand-iam/tools/check-package-integrity.php --release --trusted-manifest=/controlled/path/sand-iam-release.json --trusted-public-key=/controlled/keys/sand-iam-ed25519.pub
  *
  * The default mode validates package-internal consistency only. Candidate
@@ -22,11 +21,9 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 $package = $root . '/plugin/sand-iam';
 require_once $root . '/tools/package-payload-policy.php';
-require_once $root . '/tools/failed-upgrade-recovery-profile-v2.php';
 $arguments = array_slice($argv, 1);
 $releaseMode = in_array('--release', $arguments, true);
 $printCandidateManifest = in_array('--print-candidate-manifest', $arguments, true);
-$printNormalizedRecoveryPayloadManifest = in_array('--print-normalized-recovery-payload-manifest', $arguments, true);
 $trustedManifestPath = null;
 $trustedPublicKeyPath = null;
 foreach ($arguments as $argument) {
@@ -37,9 +34,9 @@ foreach ($arguments as $argument) {
         $trustedPublicKeyPath = substr($argument, strlen('--trusted-public-key='));
     }
 }
-if (($printCandidateManifest || $printNormalizedRecoveryPayloadManifest)
-    && ($releaseMode || $trustedManifestPath !== null || $trustedPublicKeyPath !== null || $printCandidateManifest === $printNormalizedRecoveryPayloadManifest)) {
-    fwrite(STDERR, "manifest print modes cannot be combined with each other or release verification\n");
+if ($printCandidateManifest
+    && ($releaseMode || $trustedManifestPath !== null || $trustedPublicKeyPath !== null)) {
+    fwrite(STDERR, "candidate manifest mode cannot be combined with release verification\n");
     exit(2);
 }
 if (($trustedManifestPath !== null || $trustedPublicKeyPath !== null) && !$releaseMode) {
@@ -102,41 +99,6 @@ $releaseArtifactFiles = static function () use ($root): array {
     return sandIamPayloadFilePaths($root, true);
 };
 
-/**
- * The recovery descriptor binds this digest, so the two mirrored descriptor
- * copies are the only excluded payload files. Optional .sha256 companions are
- * deliberately named here too: if a release adds either companion, it cannot
- * create a descriptor/manifest cycle.
- *
- * @return array{schema:string,algorithm:string,files:array<string,string>,digest:string}
- */
-$normalizedRecoveryPayloadManifest = static function () use ($releaseArtifactFiles): array {
-    $files = $releaseArtifactFiles();
-    foreach (sandIamGeneratedDescriptorPaths() as $excluded) {
-        unset($files[$excluded]);
-    }
-    $hashes = [];
-    foreach ($files as $relative => $file) {
-        $hash = hash_file('sha256', $file);
-        if (!is_string($hash)) {
-            throw new RuntimeException('cannot hash normalized recovery payload artifact: ' . $relative);
-        }
-        $hashes[$relative] = $hash;
-    }
-    ksort($hashes, SORT_STRING);
-    $manifest = [
-        'algorithm' => 'sandpackage-normalized-package-manifest/v1',
-        'files' => $hashes,
-        'schema' => 'sandpackage.normalized-package-manifest/v1',
-    ];
-    $canonical = json_encode($manifest, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-    if (!is_string($canonical)) {
-        throw new RuntimeException('cannot canonicalize normalized recovery payload manifest');
-    }
-    $manifest['digest'] = hash('sha256', $canonical);
-    return $manifest;
-};
-
 /** @return array{schema:string,kind:string,version:string,migration_file_count:int,migrations:list<string>,key_file_hashes:array<string,string>,package_sha256:string} */
 $candidateManifest = static function () use ($root, $package, $migrationNames, $releaseArtifactFiles): array {
     $files = $releaseArtifactFiles();
@@ -182,92 +144,8 @@ if ($printCandidateManifest) {
     }
 }
 
-if ($printNormalizedRecoveryPayloadManifest) {
-    try {
-        echo json_encode($normalizedRecoveryPayloadManifest(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
-        exit(0);
-    } catch (Throwable $exception) {
-        fwrite(STDERR, "[FAIL] normalized recovery payload manifest cannot enumerate package artifacts: {$exception->getMessage()}\n");
-        exit(1);
-    }
-}
-
 $assert('release artifact payload contains no symbolic links', static function () use ($releaseArtifactFiles): bool {
     $releaseArtifactFiles();
-    return true;
-});
-
-$assert('failed-upgrade recovery descriptor is canonical, root/plugin-identical, and binds the descriptor-excluded payload', static function () use ($root, $package, $normalizedRecoveryPayloadManifest): bool {
-    $canonicalize = null;
-    $canonicalize = static function (mixed $value) use (&$canonicalize): mixed {
-        if (is_float($value)) {
-            throw new RuntimeException('canonical recovery descriptor forbids floating-point values');
-        }
-        if (!is_array($value)) {
-            return $value;
-        }
-        if (array_is_list($value)) {
-            return array_map($canonicalize, $value);
-        }
-        ksort($value, SORT_STRING);
-        foreach ($value as $key => $item) {
-            $value[$key] = $canonicalize($item);
-        }
-        return $value;
-    };
-    $canonicalJson = static function (array $value) use ($canonicalize): string {
-        $canonical = json_encode($canonicalize($value), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-        if (!is_string($canonical)) {
-            throw new RuntimeException('cannot canonicalize recovery descriptor');
-        }
-        return $canonical;
-    };
-    $validate = static function (string $raw) use ($canonicalJson, $normalizedRecoveryPayloadManifest, $root): array {
-        try {
-            $descriptor = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
-        } catch (JsonException $exception) {
-            throw new RuntimeException('recovery descriptor is not valid JSON', 0, $exception);
-        }
-        if (!is_array($descriptor) || array_is_list($descriptor) || $raw !== $canonicalJson($descriptor)) {
-            throw new RuntimeException('recovery descriptor is not canonical JSON');
-        }
-        $expectedKeys = ['app', 'candidate_payload', 'from_version', 'profile', 'schema', 'to_version', 'update_lifecycle'];
-        $keys = array_keys($descriptor);
-        sort($keys, SORT_STRING);
-        if ($keys !== $expectedKeys
-            || ($descriptor['schema'] ?? null) !== 'sandpackage.failed-upgrade-recovery/v2'
-            || ($descriptor['app'] ?? null) !== 'sand-iam'
-            || ($descriptor['from_version'] ?? null) !== '0.6.0'
-            || ($descriptor['to_version'] ?? null) !== '0.7.0'
-            || ($descriptor['profile'] ?? null) !== sandIamFailedUpgradeRecoveryProfileV2($root)) {
-            throw new RuntimeException('recovery descriptor has an unknown key or incompatible SandIAM recovery profile');
-        }
-        $candidate = $descriptor['candidate_payload'] ?? null;
-        $lifecycle = $descriptor['update_lifecycle'] ?? null;
-        if (!is_array($candidate) || !is_array($lifecycle)
-            || array_keys($candidate) !== ['algorithm', 'digest']
-            || array_keys($lifecycle) !== ['path', 'sha256']
-            || ($candidate['algorithm'] ?? null) !== 'sandpackage-normalized-package-manifest/v1'
-            || !is_string($candidate['digest'] ?? null)
-            || !preg_match('/^[0-9a-f]{64}$/', $candidate['digest'])
-            || ($candidate['digest'] ?? null) !== $normalizedRecoveryPayloadManifest()['digest']
-            || ($lifecycle['path'] ?? null) !== 'update.sql'
-            || !is_string($lifecycle['sha256'] ?? null)
-            || !preg_match('/^[0-9a-f]{64}$/', $lifecycle['sha256'])
-            || ($lifecycle['sha256'] ?? null) !== hash_file('sha256', $root . '/update.sql')) {
-            throw new RuntimeException('recovery descriptor payload or update lifecycle binding is invalid');
-        }
-        return $descriptor;
-    };
-    $rootPath = $root . '/recovery/failed-upgrade.v2.json';
-    $packagePath = $package . '/recovery/failed-upgrade.v2.json';
-    $rootRaw = is_file($rootPath) ? file_get_contents($rootPath) : false;
-    $packageRaw = is_file($packagePath) ? file_get_contents($packagePath) : false;
-    if (!is_string($rootRaw) || !is_string($packageRaw) || $rootRaw !== $packageRaw) {
-        return false;
-    }
-    $validate($rootRaw);
-    $validate($packageRaw);
     return true;
 });
 
@@ -322,7 +200,17 @@ $assert('root and plugin lifecycle payloads have matching hashes', static functi
     return true;
 });
 
-$assert('generated lifecycle separates full install from 0.6.0 to 0.7.0 update and safe cleanup payload', static function () use ($root, $manifestMigrationNames, $updateMigrationNames): bool {
+$assert('normal 0.7.1 payload excludes historical failed-upgrade recovery descriptors', static function () use ($releaseArtifactFiles): bool {
+    $files = $releaseArtifactFiles();
+    foreach (sandIamGeneratedDescriptorPaths() as $descriptor) {
+        if (isset($files[$descriptor])) {
+            return false;
+        }
+    }
+    return true;
+});
+
+$assert('generated lifecycle separates full install from guarded 0.7.0 to 0.7.1 update and safe cleanup payload', static function () use ($root, $manifestMigrationNames, $updateMigrationNames): bool {
     $install = file_get_contents($root . '/install.sql');
     $update = file_get_contents($root . '/update.sql');
     $uninstall = file_get_contents($root . '/uninstall.sql');
@@ -372,15 +260,14 @@ $assert('generated lifecycle separates full install from 0.6.0 to 0.7.0 update a
             throw new RuntimeException('update replays historical migration ' . $name);
         }
     }
-    if ($updateMigrationNames !== [
-        '033_identity_group_role.pgsql',
-        '034_identity_group_role_permission_catalog.pgsql',
-        '035_schema_migration_ledger.pgsql',
-        '036_acceptance_fixture_support.pgsql',
-        '037_initialization_draft.pgsql',
-        '038_auth_rate_limit_retention.pgsql',
-    ]) {
-        throw new RuntimeException('0.7.0 update manifest must contain exactly 033-038');
+    if ($updateMigrationNames !== ['038_auth_rate_limit_retention.pgsql']) {
+        throw new RuntimeException('0.7.1 update manifest must contain only immutable 038');
+    }
+    $preflight = file_get_contents($root . '/lifecycle/update-070-to-071-preflight.pgsql');
+    if (!is_string($preflight) || !str_contains($update, '-- lifecycle source: lifecycle/update-070-to-071-preflight.pgsql')
+        || !str_contains($update, $collapse($preflight))
+        || strpos($update, $collapse($preflight)) > strpos($update, '-- lifecycle source: migrations/038_auth_rate_limit_retention.pgsql')) {
+        throw new RuntimeException('0.7.1 update must admit exact 001-037 before immutable 038');
     }
     foreach ($updateMigrationNames as $name) {
         $source = file_get_contents($root . '/migrations/' . $name);
@@ -608,7 +495,7 @@ $requiredFiles = [
     'admin UI payload' => ['../../sandadmin-artd/src/views/plugin/sand-iam/index/index.vue', '../../sandadmin-artd/src/views/plugin/sand-iam/api/types.ts'],
     'SDK and user-facing documentation' => [
         '../../sdk/dart/README.md', '../../sdk/php/composer.json', '../../sdk/typescript/package.json',
-        '../../README.md', '../../CONTRIBUTING.md', '../../SECURITY.md', '../../THIRD_PARTY_NOTICES.md',
+        '../../README.md', '../../CONTRIBUTING.md', '../../SECURITY.md', '../../LICENSE', '../../NOTICE', '../../THIRD_PARTY_NOTICES.md',
         '../../docs/user-guide/sand-iam-first-connection.md',
         '../../docs/user-guide/sand-iam-operator-guide.md',
         '../../docs/user-guide/installation-and-upgrade.md',

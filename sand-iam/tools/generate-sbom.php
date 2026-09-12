@@ -153,7 +153,14 @@ $document = [
     'specVersion' => '1.6',
     'version' => 1,
     'metadata' => [
-        'component' => ['type' => 'application', 'bom-ref' => $rootRef, 'name' => 'SandIAM', 'version' => $version],
+        'component' => [
+            'type' => 'application', 'bom-ref' => $rootRef, 'name' => 'SandIAM', 'version' => $version,
+            'licenses' => [['license' => ['id' => 'Apache-2.0']]],
+            'properties' => [
+                ['name' => 'sandiam:license-evidence', 'value' => 'LICENSE'],
+                ['name' => 'sandiam:notice', 'value' => 'NOTICE'],
+            ],
+        ],
         'properties' => [['name' => 'sandiam:generation', 'value' => 'deterministic-lockfile-license-inventory/v2']],
     ],
     'components' => array_values($components),

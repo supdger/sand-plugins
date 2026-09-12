@@ -234,7 +234,6 @@ $checks = [
         return is_string($source)
             && str_contains($source, '--release')
             && str_contains($source, '--print-candidate-manifest')
-            && str_contains($source, '--print-normalized-recovery-payload-manifest')
             && str_contains($source, '--trusted-manifest=')
             && str_contains($source, '[CANDIDATE]')
             && str_contains($source, 'Package integrity: passed=');
@@ -263,14 +262,14 @@ $checks = [
             && is_array($manifest['migrations'] ?? null)
             && is_array($manifest['key_file_hashes'] ?? null);
     },
-    'recovery descriptor contract proves canonical JSON, unknown-key rejection, no digest cycle, and update binding' => static function () use ($recoveryDescriptorContract): bool {
+    'historical recovery descriptor is retained but excluded from normal package payloads' => static function () use ($recoveryDescriptorContract): bool {
         if (!is_file($recoveryDescriptorContract)) {
             return false;
         }
         $output = [];
         exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($recoveryDescriptorContract) . ' 2>&1', $output, $status);
         return $status === 0
-            && str_contains(implode(PHP_EOL, $output), 'Failed-upgrade recovery descriptor contract: passed=6/6; failed=0');
+            && str_contains(implode(PHP_EOL, $output), 'Historical failed-upgrade recovery descriptor contract: passed=4/4; failed=0');
     },
     'release rejects a missing trusted manifest' => static function () use ($runTool): bool {
         [$status, $output] = $runTool(['--release']);

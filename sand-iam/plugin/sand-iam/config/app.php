@@ -5,7 +5,7 @@ return [
     'debug' => (int) env('SAND_IAM_DEBUG', 0) === 1,
     'controller_suffix' => 'Controller',
     'controller_reuse' => false,
-    'version' => '0.7.0',
+    'version' => '0.7.1',
     // Deployment-managed secret. Empty means runtime context issuance fails closed.
     'context_signing_key' => env('SAND_IAM_CONTEXT_SIGNING_KEY', ''),
     // Required for all human-authentication secrets. Empty means auth fails closed.

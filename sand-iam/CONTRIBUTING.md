@@ -2,6 +2,18 @@
 
 感谢你改进 SandIAM。提交改动表示你有权贡献相关代码和文档，并同意贡献内容按项目 `LICENSE` 发布。
 
+## Developer Certificate of Origin
+
+本项目唯一的贡献治理机制是 Developer Certificate of Origin（DCO），不要求单独的 CLA。
+每个提交都必须由实际贡献者使用 Git 的 `-s` 选项签署：
+
+```sh
+git commit -s -m "your change summary"
+```
+
+该选项会在提交中写入 `Signed-off-by: Name <email>`，表示签署者确认其有权按项目
+`LICENSE` 贡献该内容。代他人提交时，必须由实际贡献者提供对应的签署行。
+
 ## 开始之前
 
 1. 先阅读根 `README.md`，确认变更属于通用 IAM 能力而不是某个行业的业务规则。

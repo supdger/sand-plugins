@@ -1,7 +1,7 @@
 {
   "name": "sand-iam-account-portal",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.7.1",
   "packageManager": "pnpm@11.19.0",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",

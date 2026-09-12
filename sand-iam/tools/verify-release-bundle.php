@@ -16,7 +16,7 @@ $attestationPath = sandIamAssertExternalPath($options['attestation'], $root, 'at
 $publicKeyPath = sandIamAssertExternalPath($options['public-key'], $root, 'public key');
 $artifact = sandIamReadArtifactManifest($manifestPath);
 $attestation = json_decode((string) file_get_contents($attestationPath), true, 512, JSON_THROW_ON_ERROR);
-if (!is_array($attestation) || ($attestation['schema'] ?? null) !== 'sand-iam.release-bundle-attestation/v1' || ($attestation['kind'] ?? null) !== 'external-reviewed-release-bundle') throw new RuntimeException('invalid release bundle attestation schema');
+if (!is_array($attestation) || ($attestation['schema'] ?? null) !== 'sand-iam.release-bundle-attestation/v2' || ($attestation['kind'] ?? null) !== 'external-reviewed-release-bundle') throw new RuntimeException('invalid release bundle attestation schema');
 $signature = $attestation['provenance']['signature'] ?? null;
 if (!is_array($signature) || ($signature['algorithm'] ?? null) !== 'ed25519' || !is_string($signature['value'] ?? null)) throw new RuntimeException('release bundle attestation has no Ed25519 signature');
 $unsigned = $attestation;

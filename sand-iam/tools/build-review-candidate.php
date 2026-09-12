@@ -20,7 +20,6 @@ if (!class_exists(ZipArchive::class)) {
 }
 
 require_once __DIR__ . '/package-payload-policy.php';
-require_once __DIR__ . '/failed-upgrade-recovery-profile-v2.php';
 
 const SAND_IAM_REVIEW_EPOCH = 946684800; // 2000-01-01T00:00:00Z; valid ZIP/DOS time.
 
@@ -108,12 +107,6 @@ function reviewExcluded(string $path): bool
     return sandIamPayloadExcluded($path);
 }
 
-/** @return bool */
-function generatedDescriptor(string $path): bool
-{
-    return in_array($path, sandIamGeneratedDescriptorPaths(), true);
-}
-
 /** @return list<string> */
 function payloadFiles(string $root, bool $includeSourceDescriptors): array
 {
@@ -191,83 +184,6 @@ function snapshotSource(string $source, string $snapshot): array
     return ['files' => $map, 'digest' => hash('sha256', canonicalJson($map))];
 }
 
-/** @return array{digest:string,files:array<string,string>,descriptor_sha256:string,update_sha256:string} */
-function writeDescriptor(string $stage): array
-{
-    $files = payloadFiles($stage, false);
-    $hashes = [];
-    foreach ($files as $relative) {
-        $hash = hash_file('sha256', $stage . '/' . $relative);
-        if (!is_string($hash)) {
-            throw new RuntimeException('Cannot hash descriptor input: ' . $relative);
-        }
-        $hashes[$relative] = $hash;
-    }
-    ksort($hashes, SORT_STRING);
-    $payload = [
-        'algorithm' => 'sandpackage-normalized-package-manifest/v1',
-        'files' => $hashes,
-        'schema' => 'sandpackage.normalized-package-manifest/v1',
-    ];
-    $digest = hash('sha256', canonicalJson($payload));
-    $updateHash = hash_file('sha256', $stage . '/update.sql');
-    if (!is_string($updateHash)) {
-        throw new RuntimeException('Cannot hash staged update.sql');
-    }
-    $descriptor = [
-        'app' => 'sand-iam',
-        'candidate_payload' => ['algorithm' => 'sandpackage-normalized-package-manifest/v1', 'digest' => $digest],
-        'from_version' => '0.6.0',
-        'profile' => sandIamFailedUpgradeRecoveryProfileV2($stage),
-        'schema' => 'sandpackage.failed-upgrade-recovery/v2',
-        'to_version' => '0.7.0',
-        'update_lifecycle' => ['path' => 'update.sql', 'sha256' => $updateHash],
-    ];
-    $json = canonicalJson($descriptor);
-    foreach (['recovery/failed-upgrade.v2.json', 'plugin/sand-iam/recovery/failed-upgrade.v2.json'] as $relative) {
-        $path = $stage . '/' . $relative;
-        createDirectory(dirname($path));
-        if (file_put_contents($path, $json) !== strlen($json) || !chmod($path, 0644) || !touch($path, SAND_IAM_REVIEW_EPOCH)) {
-            throw new RuntimeException('Cannot write generated recovery descriptor: ' . $relative);
-        }
-    }
-    return ['digest' => $digest, 'files' => $hashes, 'descriptor_sha256' => hash('sha256', $json), 'update_sha256' => $updateHash];
-}
-
-/**
- * Descriptor input deliberately excludes both descriptor paths, so this checks
- * representation parity without turning the normalized payload into a
- * self-referential digest.
- *
- * @param list<string> $roots
- */
-function assertGeneratedDescriptorParity(array $roots): void
-{
-    $expected = null;
-    $expectedPath = null;
-
-    foreach ($roots as $root) {
-        foreach (sandIamGeneratedDescriptorPaths() as $relative) {
-            if (!str_ends_with($relative, '.json')) {
-                continue;
-            }
-            $path = $root . '/' . $relative;
-            $contents = file_get_contents($path);
-            if (!is_string($contents)) {
-                throw new RuntimeException('Unable to read generated descriptor: ' . $path);
-            }
-            if ($expected === null) {
-                $expected = $contents;
-                $expectedPath = $path;
-                continue;
-            }
-            if (!hash_equals($expected, $contents)) {
-                throw new RuntimeException('Generated descriptor parity failed: ' . $path . ' differs from ' . $expectedPath);
-            }
-        }
-    }
-}
-
 /** @return array{files:array<string,array{sha256:string,bytes:int}>,archive_sha256:string,bytes:int} */
 function archiveStage(string $stage, string $archive): array
 {
@@ -304,26 +220,12 @@ function archiveStage(string $stage, string $archive): array
 }
 
 /** @return array{ok:bool,errors:list<string>,files:array<string,array{sha256:string,bytes:int}>} */
-function validateArchive(string $stage, string $archive, array $baseSnapshotFiles, array $descriptor): array
+function validateArchive(string $stage, string $archive, array $baseSnapshotFiles): array
 {
     $errors = [];
     $stageFiles = fileMap($stage, payloadFiles($stage, true));
-    $baseStage = $stageFiles;
-    unset($baseStage['recovery/failed-upgrade.v2.json'], $baseStage['plugin/sand-iam/recovery/failed-upgrade.v2.json']);
-    if ($baseStage !== $baseSnapshotFiles) {
-        $errors[] = 'immutable snapshot parity mismatch outside generated descriptors';
-    }
-    $rootDescriptor = file_get_contents($stage . '/recovery/failed-upgrade.v2.json');
-    $pluginDescriptor = file_get_contents($stage . '/plugin/sand-iam/recovery/failed-upgrade.v2.json');
-    $decoded = is_string($rootDescriptor) ? json_decode($rootDescriptor, true) : null;
-    if (!is_string($rootDescriptor) || $rootDescriptor !== $pluginDescriptor || !is_array($decoded)
-        || $rootDescriptor !== canonicalJson($decoded)
-        || ($decoded['schema'] ?? null) !== 'sandpackage.failed-upgrade-recovery/v2'
-        || ($decoded['profile']['schema'] ?? null) !== 'sandpackage.failed-upgrade-recovery-profile/v2'
-        || ($decoded['profile']['state'] ?? null) !== 'prefix_033_034'
-        || ($decoded['candidate_payload']['digest'] ?? null) !== $descriptor['digest']
-        || ($decoded['update_lifecycle']['sha256'] ?? null) !== $descriptor['update_sha256']) {
-        $errors[] = 'generated recovery descriptor is not canonical, mirrored, or correctly bound';
+    if ($stageFiles !== $baseSnapshotFiles) {
+        $errors[] = 'immutable snapshot parity mismatch';
     }
     $zip = new ZipArchive();
     if ($zip->open($archive, ZipArchive::RDONLY) !== true) {
@@ -367,20 +269,19 @@ function materializeStage(string $snapshot, string $stage): void
     }
 }
 
-/** @return array{archive:string,archive_sha256:string,archive_bytes:int,entry_files:array<string,array{sha256:string,bytes:int}>,descriptor:array{digest:string,files:array<string,string>,descriptor_sha256:string,update_sha256:string},validation:array{ok:bool,errors:list<string>,files:array<string,array{sha256:string,bytes:int}>}} */
+/** @return array{archive:string,archive_sha256:string,archive_bytes:int,entry_files:array<string,array{sha256:string,bytes:int}>,validation:array{ok:bool,errors:list<string>,files:array<string,array{sha256:string,bytes:int}>}} */
 function buildFromSnapshot(string $snapshot, string $destination, string $archiveName, array $baseFiles): array
 {
     $stage = $destination . '/stage/package';
     createDirectory($stage);
     materializeStage($snapshot, $stage);
-    $descriptor = writeDescriptor($stage);
     $archive = $destination . '/' . $archiveName;
     $archiveResult = archiveStage($stage, $archive);
-    $validation = validateArchive($stage, $archive, $baseFiles, $descriptor);
+    $validation = validateArchive($stage, $archive, $baseFiles);
     if (!$validation['ok']) {
         throw new RuntimeException('Candidate archive validation failed: ' . implode('; ', $validation['errors']));
     }
-    return ['archive' => $archive, 'archive_sha256' => $archiveResult['archive_sha256'], 'archive_bytes' => $archiveResult['bytes'], 'entry_files' => $archiveResult['files'], 'descriptor' => $descriptor, 'validation' => $validation];
+    return ['archive' => $archive, 'archive_sha256' => $archiveResult['archive_sha256'], 'archive_bytes' => $archiveResult['bytes'], 'entry_files' => $archiveResult['files'], 'validation' => $validation];
 }
 
 if ($rebuildFrom !== null) {
@@ -390,8 +291,7 @@ if ($rebuildFrom !== null) {
     createDirectory($output);
     $baseFiles = fileMap($rebuildFrom, payloadFiles($rebuildFrom, false));
     $result = buildFromSnapshot($rebuildFrom, $output, 'sand-iam-rebuild.zip', $baseFiles);
-    assertGeneratedDescriptorParity([$rebuildFrom, $output . '/stage/package']);
-    echo canonicalJson(['kind' => 'candidate-rebuild', 'archive_sha256' => $result['archive_sha256'], 'entries' => count($result['entry_files']), 'descriptor_sha256' => $result['descriptor']['descriptor_sha256'], 'payload_sha256' => $result['descriptor']['digest']]) . PHP_EOL;
+    echo canonicalJson(['kind' => 'candidate-rebuild', 'archive_sha256' => $result['archive_sha256'], 'entries' => count($result['entry_files'])]) . PHP_EOL;
     exit(0);
 }
 
@@ -399,7 +299,7 @@ $sourceRevision = $releaseUnsigned ? assertUnsignedReleasePrerequisites($workspa
 if ($releaseUnsigned) assertExternalArtifactRoot($artifactRoot, $source);
 
 createDirectory($artifactRoot);
-$version = '0.7.0';
+$version = '0.7.1';
 $next = 10;
 foreach (glob($artifactRoot . '/sand-iam-' . $version . '-v*-*') ?: [] as $existing) {
     if (preg_match('/-v(\d+)-/', basename($existing), $match) === 1) {
@@ -412,7 +312,6 @@ if (file_exists($artifact)) {
     throw new RuntimeException('Refusing to overwrite artifact: ' . $artifact);
 }
 createDirectory($artifact);
-writeDescriptor($source);
 $snapshot = $artifact . '/snapshot/package';
 createDirectory($snapshot);
 $sourceSnapshot = snapshotSource($source, $snapshot);
@@ -423,34 +322,29 @@ $snapshotRecord = [
     'source_root' => $source,
     'file_count' => count($sourceSnapshot['files']),
     'source_snapshot_sha256' => $sourceSnapshot['digest'],
-    'generated_descriptor_source_files' => array_values(array_filter(array_keys($sourceSnapshot['files']), 'generatedDescriptor')),
     'files' => $sourceSnapshot['files'],
 ];
 file_put_contents($artifact . '/source-snapshot.json', json_encode($snapshotRecord, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . PHP_EOL);
 $archiveSuffix = $releaseUnsigned ? '-release-unsigned.zip' : '-candidate-dirty-not-release.zip';
 $result = buildFromSnapshot($snapshot, $artifact, $artifactName . $archiveSuffix, $baseFiles);
-assertGeneratedDescriptorParity([$source, $snapshot, $artifact . '/stage/package']);
 
 $repeat = $artifact . '/reproducibility/rebuild';
 createDirectory($repeat);
 $repeatResult = buildFromSnapshot($snapshot, $repeat, 'sand-iam-rebuild.zip', $baseFiles);
-assertGeneratedDescriptorParity([$source, $snapshot, $artifact . '/stage/package', $repeat . '/stage/package']);
 $repeatOk = $repeatResult['archive_sha256'] === $result['archive_sha256']
-    && $repeatResult['entry_files'] === $result['entry_files']
-    && $repeatResult['descriptor'] === $result['descriptor'];
+    && $repeatResult['entry_files'] === $result['entry_files'];
 if (!$repeatOk) {
     throw new RuntimeException('Repeat build from the same immutable snapshot was not identical');
 }
 
 $manifest = [
-    'schema' => 'sand-iam.artifact-manifest/v6',
+    'schema' => 'sand-iam.artifact-manifest/v7',
     'kind' => $releaseUnsigned ? 'release-candidate-unsigned' : 'candidate-review-only',
     'release_state' => $releaseUnsigned ? 'release/unsigned' : 'candidate/dirty-not-release',
     'package' => ['app' => 'sand-iam', 'version' => $version, 'archive' => basename($result['archive']), 'sha256' => $result['archive_sha256'], 'bytes' => $result['archive_bytes'], 'entry_count' => count($result['entry_files'])],
     'source_snapshot' => ['file_count' => count($sourceSnapshot['files']), 'sha256' => $sourceSnapshot['digest'], 'path' => 'snapshot/package'],
-    'archive_authority_parity' => ['missing' => [], 'unexpected' => [], 'mismatch_non_generated' => [], 'generated_descriptors' => ['recovery/failed-upgrade.v2.json', 'plugin/sand-iam/recovery/failed-upgrade.v2.json'], 'generated_descriptors_source_snapshot_stage_identical' => true, 'passed' => true],
-    'candidate_recovery_payload' => ['algorithm' => 'sandpackage-normalized-package-manifest/v1', 'file_count' => count($result['descriptor']['files']), 'digest' => $result['descriptor']['digest'], 'descriptor_sha256' => $result['descriptor']['descriptor_sha256'], 'profile_schema' => 'sandpackage.failed-upgrade-recovery-profile/v2', 'profile_state' => 'prefix_033_034', 'update_sql_sha256' => $result['descriptor']['update_sha256']],
-    'reproducibility' => ['same_snapshot_archive_sha256' => $repeatResult['archive_sha256'], 'bit_identical_zip' => $repeatOk, 'entry_list_identical' => true, 'descriptor_identical' => true],
+    'archive_authority_parity' => ['missing' => [], 'unexpected' => [], 'mismatch' => [], 'normal_package_recovery_descriptors' => 'excluded', 'passed' => true],
+    'reproducibility' => ['same_snapshot_archive_sha256' => $repeatResult['archive_sha256'], 'bit_identical_zip' => $repeatOk, 'entry_list_identical' => true],
     'files' => $result['entry_files'],
 ];
 if ($sourceRevision !== null) {
@@ -465,10 +359,8 @@ $command = 'php sand-iam/tools/build-review-candidate.php --rebuild-from=' . $ar
 file_put_contents($artifact . '/REBUILD_COMMAND.txt', $command . PHP_EOL);
 $validationReport = "# Candidate build validation\n\n"
     . "- Immutable source snapshot: PASS (" . count($sourceSnapshot['files']) . " files).\n"
-    . "- Descriptor-excluded canonical payload digest: PASS (" . count($result['descriptor']['files']) . " files).\n"
-    . "- Root/plugin recovery descriptor byte identity and inline v2 profile/update bindings: PASS.\n"
     . "- ZIP path, content, CRC/reader, and staged-entry parity: PASS (" . count($result['entry_files']) . " entries).\n"
-    . "- Source, immutable snapshot, staged payload, and ZIP payload are byte-identical, including both generated recovery descriptors: PASS.\n"
+    . "- Source, immutable snapshot, staged payload, and ZIP payload are byte-identical; normal-package recovery descriptors are excluded: PASS.\n"
     . "- Repeat build from the identical snapshot: PASS (bit-identical ZIP SHA-256).\n\n"
     . ($releaseUnsigned ? "- Clean committed SandIAM source, approved LICENSE, current SBOM, release hygiene, and package integrity prerequisites: PASS.\n\n" : "\n")
     . "This report is package construction evidence only. Lifecycle, database, host, browser, business-loop, deployment, and signed release-provenance acceptance are not run by this builder.\n";
@@ -480,9 +372,8 @@ $provenance = "# SandIAM {$version} v{$next} {$title}\n\n"
     . ($sourceRevision === null ? '' : "- Clean source commit: `{$sourceRevision['commit']}`.\n- Committed SandIAM tree: `{$sourceRevision['tree']}`.\n")
     . "- Source snapshot: " . count($sourceSnapshot['files']) . " files; SHA-256 `{$sourceSnapshot['digest']}`.\n"
     . "- ZIP: " . count($result['entry_files']) . " entries; SHA-256 `{$result['archive_sha256']}`.\n"
-    . "- Archive-authority parity: 0 missing, 0 unexpected, 0 non-generated mismatches; source, snapshot, stage, and ZIP include byte-identical generated recovery descriptors.\n"
-    . "- Descriptor-excluded payload: " . count($result['descriptor']['files']) . " files; SHA-256 `{$result['descriptor']['digest']}`. Root/plugin descriptors are byte-identical, SHA-256 `{$result['descriptor']['descriptor_sha256']}`, and bind root `update.sql` SHA-256 `{$result['descriptor']['update_sha256']}`.\n"
+    . "- Archive-authority parity: 0 missing, 0 unexpected, 0 mismatches; normal-package recovery descriptors are excluded.\n"
     . "- Rebuild proof: a second build from the exact same snapshot produced the same ZIP SHA-256 and entry list.\n\n"
     . "v7 and v9 remain historical evidence only and are obsolete for current-source review; this v{$next} artifact does not promote or repair them.\n";
 file_put_contents($artifact . '/package-provenance.md', $provenance);
-echo canonicalJson(['artifact' => $artifact, 'archive_sha256' => $result['archive_sha256'], 'entries' => count($result['entry_files']), 'source_snapshot_sha256' => $sourceSnapshot['digest'], 'descriptor_sha256' => $result['descriptor']['descriptor_sha256'], 'payload_sha256' => $result['descriptor']['digest'], 'repeat_bit_identical' => $repeatOk]) . PHP_EOL;
+echo canonicalJson(['artifact' => $artifact, 'archive_sha256' => $result['archive_sha256'], 'entries' => count($result['entry_files']), 'source_snapshot_sha256' => $sourceSnapshot['digest'], 'repeat_bit_identical' => $repeatOk]) . PHP_EOL;

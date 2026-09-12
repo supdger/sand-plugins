@@ -50,7 +50,9 @@ if [[ -n "$(git -C "$workspace_root" status --porcelain -- "$plugin_id")" ]]; th
   }
 fi
 
-rsync_arguments=(-a --delete-delay --itemize-changes)
+# Export candidates by content so restored/archive files with matching size and
+# mtime cannot hide a divergent demo payload.
+rsync_arguments=(-a --checksum --delete-delay --itemize-changes)
 $apply || rsync_arguments+=(--dry-run)
 export_excludes=(
   '--exclude=.git/' '--exclude=.artifacts/' '--exclude=.backups/'
@@ -67,7 +69,7 @@ if ! $apply; then
   exit 0
 fi
 
-remaining="$(rsync -ani --delete-delay --itemize-changes "${export_excludes[@]}" "$source_root/" "$target_root/")"
+remaining="$(rsync -ani --checksum --delete-delay --itemize-changes "${export_excludes[@]}" "$source_root/" "$target_root/")"
 [[ -z "$remaining" ]] || {
   print -u2 "Plugin export verification failed; remaining differences:"
   print -u2 "$remaining"

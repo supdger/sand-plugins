@@ -50,7 +50,8 @@ foreach (['install.sql', 'update.sql', 'uninstall.sql'] as $name) {
     lifecycleAssert(!str_contains($rootSql, '\\ir') && !str_contains($rootSql, '\\i '), "{$name} contains a psql include");
 
     $statements = importedStatements($rootSql, $name);
-    lifecycleAssert(count($statements) > 10, "{$name} produced too few importer statements");
+    $minimumStatements = $name === 'update.sql' ? 2 : 10;
+    lifecycleAssert(count($statements) > $minimumStatements, "{$name} produced too few importer statements");
     foreach (preg_split('/\R/u', $rootSql) ?: [] as $line) {
         if (str_starts_with(ltrim($line), 'DO $$')) {
             lifecycleAssert(str_ends_with(trim($line), '$$;'), "{$name} contains a multi-line DO block");

@@ -14,7 +14,7 @@ SandIAM 只提供通用身份、授权和审计能力。业务资源、业务状
 
 ## 版本与兼容性
 
-当前源码候选版本为 `0.7.0`，支持 SandAdmin `6.x`，数据库仅支持 PostgreSQL。
+当前源码候选版本为 `0.7.1`，支持 SandAdmin `6.x`，数据库仅支持 PostgreSQL。
 管理 OpenAPI 中的 `0.13.0-candidate` 是接口契约版本，不等于插件发行版本。
 当前可证实的迁移与发布材料变化见[变更日志](CHANGELOG.md)。
 
@@ -33,7 +33,8 @@ SandIAM 只提供通用身份、授权和审计能力。业务资源、业务状
 下载候选包后，先按[发布包校验](docs/user-guide/release-package-verification.md)核对包外 Ed25519 签名、
 manifest 和 ZIP 内逐文件摘要，再执行安装。
 
-已发布迁移文件不可修改。升级修复必须通过新迁移追加；不要手工改写迁移账本或跳过失败恢复检查。
+已发布迁移文件不可修改。`0.7.1` 没有新增迁移：它只允许已完成 `001–037` 精确账本的
+`0.7.0` 安装执行原始 `038`。不要手工改写迁移账本、伪造失败状态或跳过前置核验。
 安装、升级和卸载都可能改变数据库，应先备份，并只在获得环境负责人授权后执行。
 
 ## 接入应用
@@ -69,9 +70,10 @@ manifest 和 ZIP 内逐文件摘要，再执行安装。
 - `docs/user-guide/`：公开中文操作文档；
 - `examples/`：不含秘密的接入示例；
 - `SBOM.cdx.json`：由锁文件和精确版本许可证策略生成的软件物料清单；
+- `LICENSE`、`NOTICE`：SandIAM 的 Apache-2.0 许可证正文和版权告知；
 - `THIRD_PARTY_NOTICES.md`：第三方许可、分发形态和原许可证位置索引；
 - `migrations/`、`lifecycle/` 和根生命周期 SQL：PostgreSQL 安装、升级与卸载载荷；
-- `recovery/`：供 SandPackage 验证的失败升级恢复描述。
+- `recovery/`：保留的 0.7.0 历史恢复证据，不随 0.7.1 正常包分发；当前正常升级不 opt-in 该描述器。
 
 ## 获取帮助
 
@@ -79,4 +81,4 @@ manifest 和 ZIP 内逐文件摘要，再执行安装。
 报告问题时请提供 SandIAM 和 SandAdmin 版本、操作时间、错误码、请求 ID 与脱敏日志；不要提交凭证、令牌、个人数据或数据库备份。
 
 参与开发请阅读[贡献说明](CONTRIBUTING.md)，安全问题请按[漏洞报告指南](SECURITY.md)私下报告。
-项目许可证将在正式发布前写入 `LICENSE`。
+SandIAM 以 [Apache-2.0](LICENSE) 发布；版权告知见 [NOTICE](NOTICE)。

@@ -59,6 +59,7 @@ try {
         'SECURITY.md' => "# Security\n",
         'CONTRIBUTING.md' => "# Contributing\n",
         'README.md' => "# SandIAM\n",
+        'update.sql' => "-- immutable lifecycle fixture\n",
     ] as $name => $content) {
         if (!$zip->addFromString($name, $content)) throw new RuntimeException('cannot add fixture ZIP entry');
     }
@@ -69,18 +70,17 @@ try {
     $archiveBytes = filesize($archive);
     if (!is_string($archiveHash) || !is_int($archiveBytes)) throw new RuntimeException('cannot hash fixture ZIP');
     $manifest = [
-        'schema' => 'sand-iam.artifact-manifest/v6',
+        'schema' => 'sand-iam.artifact-manifest/v7',
         'kind' => 'release-candidate-unsigned',
         'release_state' => 'release/unsigned',
-        'archive_authority_parity' => ['passed' => true],
+        'archive_authority_parity' => ['passed' => true, 'normal_package_recovery_descriptors' => 'excluded'],
         'reproducibility' => [
             'bit_identical_zip' => true,
             'entry_list_identical' => true,
-            'descriptor_identical' => true,
         ],
         'package' => [
             'app' => 'sand-iam',
-            'version' => '0.7.0',
+            'version' => '0.7.1',
             'archive' => basename($archive),
             'sha256' => $archiveHash,
             'bytes' => $archiveBytes,
@@ -90,11 +90,6 @@ try {
         'source_revision' => [
             'vcs' => 'git', 'commit' => str_repeat('a', 40), 'tree' => str_repeat('b', 40),
             'subtree' => 'sand-iam/', 'clean' => true,
-        ],
-        'candidate_recovery_payload' => [
-            'digest' => str_repeat('2', 64),
-            'descriptor_sha256' => str_repeat('3', 64),
-            'update_sql_sha256' => str_repeat('4', 64),
         ],
         'files' => $inspection['files'],
     ];

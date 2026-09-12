@@ -20,7 +20,7 @@ php sand-iam/tools/build-review-candidate.php
 php sand-iam/tools/build-review-candidate.php --release-unsigned
 ```
 
-这个模式输出 `release/unsigned`，并在 artifact manifest v6 中同时绑定当前 Git commit 与
+这个模式输出 `release/unsigned`，并在 artifact manifest v7 中同时绑定当前 Git commit 与
 `HEAD:sand-iam` tree object；缺少任一摘要的清单不能签名，也不能生成外部验收模板。它仍不是签名发布物。
 私钥必须保留在 SandIAM 包根和 artifact 目录之外，且权限不得向 group/other 开放。独立审核者
 确认来源和验收记录后，使用包外私钥生成证明：
@@ -28,7 +28,7 @@ php sand-iam/tools/build-review-candidate.php --release-unsigned
 ```bash
 php sand-iam/tools/sign-release-bundle.php \
   --artifact-manifest=/controlled/candidate/manifest.json \
-  --archive=/controlled/candidate/sand-iam-0.7.0-release-unsigned.zip \
+  --archive=/controlled/candidate/sand-iam-0.7.1-release-unsigned.zip \
   --private-key=/controlled/keys/sand-iam-ed25519.key \
   --output=/controlled/candidate/sand-iam.release-attestation.json \
   --source=git \
@@ -58,11 +58,10 @@ caches do not enter the package. The sole path-scoped exception is
 `sdk/typescript/dist/**`: it is the locked-toolchain-generated ESM SDK runtime
 and its declarations. No other `dist` directory may enter a candidate.
 
-After every other payload file is materialized, the builder calculates the
-descriptor-excluded canonical payload digest, writes byte-identical root and
-plugin failed-upgrade descriptors, verifies ZIP contents and source-snapshot
-parity, then rebuilds from the same snapshot. ZIP entry ordering, mtimes and
-permissions are normalized; a byte-identical second ZIP is required.
+The builder excludes the historical root/plugin failed-upgrade descriptors from
+the normal 0.7.1 payload, verifies ZIP contents and source-snapshot parity,
+then rebuilds from the same snapshot. ZIP entry ordering, mtimes and permissions
+are normalized; a byte-identical second ZIP is required.
 
 Each artifact contains `manifest.json`, `source-snapshot.json`, provenance,
 `SHA256SUMS`, the exact `REBUILD_COMMAND.txt`, and its reproducibility rebuild.
@@ -75,11 +74,9 @@ php sand-iam/tools/build-review-candidate.php \
   --output=/absolute/new-rebuild-directory
 ```
 
-The two generated recovery descriptors always retain the frozen SandIAM
-`0.6.0 -> 0.7.0` inline v2 profile for the exact `prefix_033_034` state and
-the staged `update.sql` SHA-256. The profile is declaration-only and limited
-to the host's fixed assertion vocabulary. The descriptors bind the archive
-payload, never an authority-tree digest, so there is no self-hash cycle.
+The retained recovery descriptors are historical 0.7.0 evidence for the
+`0.6.0 -> 0.7.0` `ledger_absent` recovery profile. They are not generated or
+included in normal 0.7.1 candidates, and do not authorize a 0.6.0 direct upgrade.
 
 ## External release acceptance
 

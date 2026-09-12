@@ -4,15 +4,17 @@
 
 ## 2026-09-12 完整开源成品 Goal 当前基线
 
-本节是当前状态入口；下方 2026-09-08 表格保留为历史证据索引。旧结论只有在本轮绑定到当前
+本节是当前状态入口；下方 2026-09-08 表格保留为历史证据索引。0.7.0 的 `fa344cd`/tree
+`6465…` 与 v70/v71 摘要均为历史基线；旧结论只有在本轮绑定到当前
 SandIAM 源码树、候选包和适用运行环境并逐原子复核后才可继承，不因旧任务曾勾选而自动通过。
 
 | 当前事实 | 只读证据 | 结论 |
 | --- | --- | --- |
-| SandIAM 权威源码 | 仓库 HEAD `88ae1a0702e597f52b39cf44f0590112bf0f8189`；`HEAD:sand-iam` 树对象 `24af41dd869e2ac64fcc7b71ea64e255dcda86a4`；`git diff -- sand-iam` 为空 | SandIAM 子树可定位，但仓库整体 dirty，尚不是发布来源 |
+| SandIAM 权威源码 | 当前为未提交的 0.7.1 实现，Astra ACCEPT；through037 精确 preflight→原038，迁移 `001–038` 不变、无039，normal 包无旧 recovery descriptor；历史 `fa344cd`/tree `6465…` 仅作 0.7.0 基线 | 源码整体仍 dirty，尚不是发布来源 |
 | SandAdmin H1 基线 | `sandadmin-host.lock` 锁定 clean revision `558d92959947230ee562f29e015c62566be58c8e` | 仅证明宿主文件基线，不证明插件已同步、安装或运行 |
-| 包内一致性 | `php sand-iam/tools/check-package-integrity.php` 为 **24/24 PASS** | 仅证明当前源码包内部契约 |
-| review-only 清单 | version `0.7.0`、39 个迁移文件、descriptor-excluded payload digest `4bbf92897537f663e80c42e5dc31ae54c85df5ad17eb7741760929688d2a7035`；v70 archive `6cae3a2f…cfd97cf82`、635 entries、双构建 bit-identical；正式 manifest v6 要求 clean commit 与 `HEAD:sand-iam` tree | 是 review-only ZIP；不是签名、可信来源或正式候选；包外签名链回归通过不等于 v70 已送签 |
+| 包内一致性 | 当前静态状态：safe **114**、PHP lint **507**、package **24/24 PASS**、发布卫生 **11/14** | 仅证明当前源码包内部契约，不证明生命周期 |
+| 冻结 review-only artifact | `.artifacts/sand-iam-0.7.1-v10-20260912T051554Z`；634 entries；archive SHA `38392c9affc496ed56cb2b11e6963ee93c2c8aea518976ebc64df39f63471c7d`；payload/source snapshot SHA `07b9327c5bb3ddbc2ceb0db4ededbf406219d704c2f727b4388471b2086fad64`；开发记录按 payload policy 排除，不影响摘要 | 仍为 `dirty-not-release` review-only artifact，不计 FLOW；不称正式 final release；`--checksum` 修复未提交且尚未重新 apply |
+| 历史 review-only 清单 | v70/v71 payload 相同；v70 archive `6cae3a2f…cfd97cf82`、635 entries、descriptor-excluded payload `4bbf9289…` | v70/v71 仅作历史证据；v71 B 已因 rsync size+mtime 假阴性被独立 REJECT |
 | 开源材料 | 已有 `CHANGELOG.md`、79/79 组件含 SPDX 与许可证证据引用的 `SBOM.cdx.json`、精确坐标许可证策略、`THIRD_PARTY_NOTICES.md`、`SECURITY.md`、`CONTRIBUTING.md` 和八份公开中文指南；发布卫生 11/14 | 项目 `LICENSE`、版权主体、具体私密漏洞报告入口和 DCO/CLA 二选一贡献机制仍须用户确认，发布材料门槛未通过 |
 | 旧循环 | Codex 与 Cursor Autopilot/DETECT 均已 `enabled=false` | 旧任务不会作为当前 Goal 的自动执行入口 |
 
@@ -166,7 +168,7 @@ L01–L04 在 2026-09-08 的严格计数为 **0/4**。
 | D04 | **标准客户端与外部系统。** OIDC/SAML/LDAP/SCIM/CAS/Kerberos/RADIUS、消息/目录等按声明范围完成真实互操作。 | 标准客户端、临时 Realm/NAS、受控外部服务正负报告。 | 自写单测、fake transport。 | 已有候选绑定的七类互操作模板与关闭失败验证器，但没有标准客户端、真实对端或原始运行证据。**◻ 未通过** |
 | D05 | **三角色 UI。** 平台管理员、应用管理员、应用用户在目标视口完成真实任务、错误恢复、撤权和无 404。 | 当前宿主多角色多视口浏览器记录。 | 隔离 build、旧实现记录或旧宿主截图。 | 截至该快照，最终候选未在宿主执行多角色、多视口验收。**◻ 未通过** |
 | D06 | **备份恢复。** PostgreSQL 备份恢复到隔离目标后，授权、撤销、审计链和验签一致，恢复过程可回滚。 | 备份/恢复命令、校验、前后摘要、清理记录。 | 运行文件备份恢复、只读 preflight。 | 已有候选绑定模板和关闭失败验证器，但未执行数据库备份恢复演练。**◻ 未通过** |
-| D07 | **安全与并发。** 秘密泄露扫描、限流/重放、并发消费/撤权/刷新、密钥轮换和 fail-closed 全部通过。 | 当前候选压力/并发/故障注入及安全报告。 | lint、静态安全规则、单线程测试。 | v70 的默认关闭 retention worker 已以有限批次覆盖过期 succeeded 幂等记录和过期认证限流窗口，pending/审计保留；目录 outbox 与 OIDC back-channel dead 都已补人工恢复并发门禁，OIDC 恢复重新签发令牌而不复用过期密文。24 小时两类 retention backlog 及 queue/unrecoverable backlog 都有精确 PostgreSQL 状态公式和零容忍阈值。相关 PostgreSQL 夹具未获授权执行，且尚无压力、并发、故障注入或 24 小时资源曲线，因此仍不计分。**◻ 未通过** |
+| D07 | **安全与并发。** 秘密泄露扫描、限流/重放、并发消费/撤权/刷新、密钥轮换和 fail-closed 全部通过。 | 当前候选压力/并发/故障注入及安全报告。 | lint、静态安全规则、单线程测试。 | 历史 v70 的默认关闭 retention worker 已以有限批次覆盖过期 succeeded 幂等记录和过期认证限流窗口，pending/审计保留；目录 outbox 与 OIDC back-channel dead 都已补人工恢复并发门禁，OIDC 恢复重新签发令牌而不复用过期密文。24 小时两类 retention backlog 及 queue/unrecoverable backlog 都有精确 PostgreSQL 状态公式和零容忍阈值。相关 PostgreSQL 夹具未获授权执行，且尚无压力、并发、故障注入或 24 小时资源曲线，因此仍不计分。**◻ 未通过** |
 | D08 | **回滚与发布。** 失败停止、候选替换、数据库/运行文件回滚、残留清理、发布审批和线上验证计划均闭合。 | 恢复/回滚演练、最终报告、审批与可追溯发行物。 | 升级票据 5/7、恢复 UI staging。 | 快照中的实际恢复为 2/8，未进入候选替换、重试、回滚发布结论。**◻ 未通过** |
 
 D01–D08 在 2026-09-08 的严格计数为 **0/8**。

@@ -1,11 +1,15 @@
 # OSS-04 · 首条真实业务链精确授权单
 
 - 日期：2026-09-12
-- 状态：待用户授权，未执行任何提交、同步、数据库写入、迁移或服务启停。
-- 当前输入：v70 review-only ZIP，635 entries，archive SHA-256
+- 状态：用户已授权 A–F、H–L，G 未授权。A/F 独立结论为 PARTIAL；B 的 v71 apply 已执行但因 rsync size+mtime 假阴性被独立验收 REJECT，checksum 修复已获 Astra ACCEPT 但尚未重新 apply。C 因 runtime `state=1/stage=completed` 不适用；D/E/H–L 未执行。
+- 当前冻结 review-only artifact `.artifacts/sand-iam-0.7.1-v10-20260912T051554Z`：634 entries，archive SHA `38392c9affc496ed56cb2b11e6963ee93c2c8aea518976ebc64df39f63471c7d`，payload/source snapshot SHA `07b9327c5bb3ddbc2ceb0db4ededbf406219d704c2f727b4388471b2086fad64`。开发记录按 payload policy 排除，不影响摘要；artifact 仍为 `dirty-not-release`，不计 FLOW，不称正式 final release。
+
+旧 v70 review-only ZIP（635 entries，archive SHA-256
   `6cae3a2f9880ef1a2818d04edc28dde4c65afc69a8f632a4b718b59cfd97cf82`，
   descriptor-excluded payload SHA-256
-  `4bbf92897537f663e80c42e5dc31ae54c85df5ad17eb7741760929688d2a7035`。
+  `4bbf92897537f663e80c42e5dc31ae54c85df5ad17eb7741760929688d2a7035`）仅作历史基线。
+
+当前权威源码静态状态：0.7.1 未提交实现已获 Astra ACCEPT；through037 精确 preflight→原038，迁移 `001–038` 不变、无039，normal 包不含旧 recovery descriptor；safe 114、PHP lint 507、package 24、hygiene 11/14。历史 `fa344cd` 与 tree `6465…` 是 0.7.0 基线，不是当前候选。只读 demo DB 为 86 tables、ledger 38 rows、max revision 37、无038；C 不适用，未执行数据库/registry 写入。
 
 ## 只读预检结果
 
@@ -13,8 +17,8 @@
   该门禁正确阻止 dirty source 用于正式验收。
 - 仅探索的 `--dry-run --allow-dirty` 成功且没有写文件：当前有 206 个文件项、21 个目录元数据项
   和 8 个删除项差异。
-- demo 当前 lock 仍指向 clean revision `069a9a19f152f28349cb23f92a598f86ff97234d`，
-  authority 与 demo 的 `info.ini` 均为 `0.7.0`；版本号相同不代表载荷相同。
+- demo 当前 lock 仍指向 clean revision `069a9a19f152f28349cb23f92a598f86ff97234d`；旧
+  authority 与 demo 的 `info.ini` 均为 `0.7.0`，仅说明历史基线，版本号相同不代表载荷相同。
 
 ## 请求的一次性授权范围
 
@@ -133,3 +137,35 @@ RSA 签名密钥、logout encryption key 和 `SAND_IAM_OIDC_BACKCHANNEL_LOGOUT_E
 - 同一候选、同一状态和同一错误没有新证据时不重试；最多三轮单变量诊断。
 - 本授权即使全部执行，也只可能增加安装恢复和 C01 的当前证据，不自动提升其他 FLOW、
   Casdoor、24 小时、部署或线上验证门槛。
+
+## 2026-09-12 执行记录
+
+- 以下为执行者的历史记录；不替代本次独立复核结论。
+- A（历史执行记录）：仅精确范围的 175 个实际文件提交为
+  `fa344cdfadfc7adb6306d2507809e4a493a0e319`，`HEAD:sand-iam` 为
+  tree `6465a3b28ad249aa0da625e4fe4f866bda0741b6`（不是 commit），没有 push。提交前后 non-PG/contract
+  **114/114**、PHP lint **507/507**、包完整性 **24/24** 均通过；发布卫生仍
+  **11/14**，只差 LICENSE、私密漏洞报告入口和 DCO/CLA 三项用户决策。
+- clean-source 重建生成 v71；archive
+  `6cae3a2f9880ef1a2818d04edc28dde4c65afc69a8f632a4b718b59cfd97cf82`、payload
+  `4bbf92897537f663e80c42e5dc31ae54c85df5ad17eb7741760929688d2a7035`、descriptor
+  `a34677bbe7867aa9cd9896bbcc57c81dcbde77fd7ebef649cc7527dda8c403d5`、source snapshot
+  `c48cbb78e68a6727e7a211f772bf5d1f8b0f96a66ac5508082929b50ec4832cb`，635 entries，
+  repeat bit-identical；与 v70 完全一致。
+- B（历史执行记录，当前验收已否决）：`scripts/sync-plugin-to-demo.sh sand-iam --apply` 已执行；
+  同步后 normal `--dry-run` 曾输出 0 差异，但独立复核发现该脚本默认按 rsync size+mtime 判断，
+  对 recovery descriptor 产生假阴性。权威源两份 descriptor SHA 为
+  `a34677bbe7867aa9cd9896bbcc57c81dcbde77fd7ebef649cc7527dda8c403d5`，demo 两份为
+  `e70418…`；两边 size 均为 `28046`、mtime 均为 epoch。因此 B apply 的独立验收结论为
+  **REJECT**；需先修复 checksum 校验，再另行取得 apply 授权。
+- C：`php webman sandpackage:recover inspect sand-iam` 只读返回
+  `该插件不是可检查的数据库升级失败状态`。运行 registry 当前为
+  `state=1` / `stage=completed`；随后显式 `BEGIN READ ONLY` 的 PostgreSQL 核对返回
+  `database=sandadmin`、SandIAM 表 86、迁移账本 38 行、`max_revision=37`、
+  `revision_38_rows=0`（无 038），并已 rollback。不存在可安全继续的
+  `prepare → verify → replace → retry` 路径，未执行任何数据库或 registry 写入。
+- F（历史执行记录，独立结论 PARTIAL）：Composer 2.9.5 经 Packagist 官方公告查询为 0；portal 锁文件 28 个依赖、
+  TypeScript SDK 锁文件 1 个依赖经 `registry.npmjs.org` 审计，info/low/moderate/high/critical
+  均为 0。没有 install/update 或 lock 改写。
+- 防循环：任务列表中旧 SandIAM 任务均为 `notLoaded`；自动化配置中无
+  SandIAM、sand_plugins 或旧任务 ID 匹配，未发现会继续唤醒的旧循环。
