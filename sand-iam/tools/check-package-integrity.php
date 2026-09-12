@@ -99,6 +99,74 @@ $releaseArtifactFiles = static function () use ($root): array {
     return sandIamPayloadFilePaths($root, true);
 };
 
+/**
+ * @param list<string> $directories
+ * @return array<string,array<string,string>>|null Relative directory => relative file => SHA-256.
+ */
+$cleanGitPayloadMaps = static function (array $directories) use ($root): ?array {
+    $status = [];
+    exec('git -C ' . escapeshellarg($root) . ' status --porcelain=v1 --untracked-files=all -- . 2>&1', $status, $statusCode);
+    if ($statusCode !== 0 || $status !== []) {
+        return null;
+    }
+    $revision = [];
+    exec('git -C ' . escapeshellarg($root) . ' rev-parse HEAD 2>&1', $revision, $revisionCode);
+    $commit = $revisionCode === 0 ? trim(implode("\n", $revision)) : '';
+    if (preg_match('/^[0-9a-f]{40,64}$/', $commit) !== 1) {
+        throw new RuntimeException('cannot resolve clean Git payload source');
+    }
+    $maps = [];
+    foreach ($directories as $directory) {
+        $tree = proc_open(
+            ['git', '-C', $root, 'ls-tree', '-r', '-z', $commit, '--', $directory],
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+        if (!is_resource($tree)) {
+            throw new RuntimeException('cannot enumerate clean Git payload source');
+        }
+        fclose($pipes[0]);
+        $listing = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[2]);
+        if (proc_close($tree) !== 0 || !is_string($listing) || $listing === '' || !str_ends_with($listing, "\0")) {
+            throw new RuntimeException('cannot enumerate clean Git payload source' . ($stderr === '' ? '' : ': ' . trim($stderr)));
+        }
+        $map = [];
+        foreach (explode("\0", substr($listing, 0, -1)) as $entry) {
+            if (preg_match('/^100(?:644|755) blob ([0-9a-f]{40,64})\t(.+)$/s', $entry, $match) !== 1
+                || !str_starts_with($match[2], $directory . '/')) {
+                throw new RuntimeException('clean Git payload source has an unsupported entry');
+            }
+            $relative = substr($match[2], strlen($directory) + 1);
+            if ($relative === '' || isset($map[$relative])) {
+                throw new RuntimeException('clean Git payload source has an invalid file map');
+            }
+            $blob = proc_open(
+                ['git', '-C', $root, 'cat-file', '-p', $match[1]],
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+                $blobPipes,
+            );
+            if (!is_resource($blob)) {
+                throw new RuntimeException('cannot read clean Git payload blob');
+            }
+            fclose($blobPipes[0]);
+            $bytes = stream_get_contents($blobPipes[1]);
+            fclose($blobPipes[1]);
+            $blobStderr = stream_get_contents($blobPipes[2]);
+            fclose($blobPipes[2]);
+            if (proc_close($blob) !== 0 || !is_string($bytes)) {
+                throw new RuntimeException('cannot read clean Git payload blob' . ($blobStderr === '' ? '' : ': ' . trim($blobStderr)));
+            }
+            $map[$relative] = hash('sha256', $bytes);
+        }
+        ksort($map, SORT_STRING);
+        $maps[$directory] = $map;
+    }
+    return $maps;
+};
+
 /** @return array{schema:string,kind:string,version:string,migration_file_count:int,migrations:list<string>,key_file_hashes:array<string,string>,package_sha256:string} */
 $candidateManifest = static function () use ($root, $package, $migrationNames, $releaseArtifactFiles): array {
     $files = $releaseArtifactFiles();
@@ -649,7 +717,7 @@ $assert('TypeScript SDK exports resolve to packaged ESM and declaration files on
     return isset($expected['sdk/typescript/dist/index.js'], $expected['sdk/typescript/dist/index.d.ts'], $expected['sdk/typescript/dist/management.js'], $expected['sdk/typescript/dist/management.d.ts']);
 });
 
-$assert('release build contract locks toolchain and reviewed runtime payloads', static function () use ($root, $releaseArtifactFiles): bool {
+$assert('release build contract locks toolchain and reviewed runtime payloads', static function () use ($root, $releaseArtifactFiles, $cleanGitPayloadMaps): bool {
     $contractPath = $root . '/release-build-contract.json';
     $contract = json_decode((string) file_get_contents($contractPath), true, 512, JSON_THROW_ON_ERROR);
     if (!is_array($contract)
@@ -701,6 +769,7 @@ $assert('release build contract locks toolchain and reviewed runtime payloads', 
     if ($declaredGeneratedPayloads !== $requiredGeneratedPayloads) {
         return false;
     }
+    $gitPayloadMaps = $cleanGitPayloadMaps($requiredGeneratedPayloads);
     foreach ($requiredGeneratedPayloads as $directory) {
         $expected = $generatedPayloads[$directory] ?? null;
         if (!is_array($expected)) {
@@ -713,16 +782,23 @@ $assert('release build contract locks toolchain and reviewed runtime payloads', 
             || !is_string($expected['tree_sha256']) || preg_match('/^[0-9a-f]{64}$/', $expected['tree_sha256']) !== 1) {
             return false;
         }
-        $absolute = $root . '/' . $directory;
-        if (!is_dir($absolute) || is_link($absolute)) return false;
-        $map = [];
-        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($absolute, FilesystemIterator::SKIP_DOTS));
-        foreach ($iterator as $file) {
-            if (!$file instanceof SplFileInfo || !$file->isFile() || $file->isLink()) continue;
-            $relative = substr($file->getPathname(), strlen($absolute) + 1);
-            $map[$relative] = hash_file('sha256', $file->getPathname());
+        if ($gitPayloadMaps !== null) {
+            $map = $gitPayloadMaps[$directory] ?? null;
+            if (!is_array($map)) return false;
+        } else {
+            $absolute = $root . '/' . $directory;
+            if (!is_dir($absolute) || is_link($absolute)) return false;
+            $map = [];
+            $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($absolute, FilesystemIterator::SKIP_DOTS));
+            foreach ($iterator as $file) {
+                if (!$file instanceof SplFileInfo || !$file->isFile() || $file->isLink()) continue;
+                $relative = substr($file->getPathname(), strlen($absolute) + 1);
+                $hash = hash_file('sha256', $file->getPathname());
+                if (!is_string($hash)) return false;
+                $map[$relative] = $hash;
+            }
+            ksort($map, SORT_STRING);
         }
-        ksort($map, SORT_STRING);
         if (($expected['file_count'] ?? null) !== count($map)
             || ($expected['tree_sha256'] ?? null) !== hash('sha256', json_encode($map, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR))) {
             return false;

@@ -307,6 +307,99 @@ function assertStageMatchesGitBlobs(string $workspace, string $commit, string $s
     }
 }
 
+/** @return array<string,string> */
+function releaseBuildContractPayloadMap(string $stage, string $directory): array
+{
+    $absolute = $stage . '/' . $directory;
+    if (!is_dir($absolute) || is_link($absolute)) {
+        throw new RuntimeException('release build contract stage payload directory is invalid: ' . $directory);
+    }
+    $map = [];
+    $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($absolute, FilesystemIterator::SKIP_DOTS));
+    foreach ($iterator as $file) {
+        if (!$file instanceof SplFileInfo || !$file->isFile() || $file->isLink()) {
+            continue;
+        }
+        $relative = substr($file->getPathname(), strlen($absolute) + 1);
+        $hash = hash_file('sha256', $file->getPathname());
+        if ($relative === '' || !is_string($hash) || isset($map[$relative])) {
+            throw new RuntimeException('release build contract stage payload map is invalid: ' . $directory);
+        }
+        $map[$relative] = $hash;
+    }
+    ksort($map, SORT_STRING);
+    return $map;
+}
+
+function assertReleaseBuildContractMatchesGitStage(string $stage): void
+{
+    $contractPath = $stage . '/release-build-contract.json';
+    $contractSource = file_get_contents($contractPath);
+    if (!is_string($contractSource)) {
+        throw new RuntimeException('release build contract is missing from Git-blob stage');
+    }
+    try {
+        $contract = json_decode($contractSource, true, 512, JSON_THROW_ON_ERROR);
+    } catch (JsonException $exception) {
+        throw new RuntimeException('release build contract is malformed in Git-blob stage', 0, $exception);
+    }
+    if (!is_array($contract)
+        || ($contract['schema'] ?? null) !== 'sand-iam.release-build-contract/v1'
+        || ($contract['kind'] ?? null) !== 'reviewed-runtime-payload-inputs'
+        || ($contract['source']['formal_builder'] ?? null) !== 'git-blob-only'
+        || ($contract['source']['repeat_build'] ?? null) !== 'independent-git-stage') {
+        throw new RuntimeException('release build contract has an invalid Git-blob stage schema');
+    }
+    $toolchain = $contract['toolchain'] ?? null;
+    if (!is_array($toolchain)
+        || ($toolchain['php'] ?? null) !== PHP_VERSION
+        || ($toolchain['zip_extension'] ?? null) !== phpversion('zip')
+        || ($toolchain['libzip'] ?? null) !== (defined('ZipArchive::LIBZIP_VERSION') ? ZipArchive::LIBZIP_VERSION : null)) {
+        throw new RuntimeException('release build contract toolchain differs from the Git-blob stage build environment');
+    }
+    $version = static function (array $command): string {
+        $output = checkedCommand($command, 'cannot read release build contract toolchain version');
+        return trim($output);
+    };
+    $composer = $version(['composer', '--version']);
+    $node = $version(['node', '--version']);
+    $pnpm = $version(['pnpm', '--version']);
+    if (preg_match('/Composer version ([0-9]+\.[0-9]+\.[0-9]+)/', $composer, $composerMatch) !== 1
+        || ($toolchain['composer'] ?? null) !== $composerMatch[1]
+        || ($toolchain['node'] ?? null) !== $node
+        || ($toolchain['pnpm'] ?? null) !== $pnpm
+        || ($toolchain['typescript'] ?? null) !== '5.9.3') {
+        throw new RuntimeException('release build contract toolchain differs from the Git-blob stage build environment');
+    }
+    $composerContract = $contract['composer'] ?? null;
+    $typescriptContract = $contract['typescript'] ?? null;
+    if (!is_array($composerContract) || !is_array($typescriptContract)
+        || ($composerContract['lock_sha256'] ?? null) !== hash_file('sha256', $stage . '/plugin/sand-iam/composer.lock')
+        || ($typescriptContract['lock_sha256'] ?? null) !== hash_file('sha256', $stage . '/sdk/typescript/pnpm-lock.yaml')
+        || ($typescriptContract['package_integrity'] ?? null) !== 'sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==') {
+        throw new RuntimeException('release build contract locks differ from the Git-blob stage');
+    }
+    $generated = $contract['generated_payloads'] ?? null;
+    $directories = ['plugin/sand-iam/vendor', 'sdk/typescript/dist'];
+    if (!is_array($generated) || array_keys($generated) !== $directories) {
+        throw new RuntimeException('release build contract generated payload declarations are invalid');
+    }
+    foreach ($directories as $directory) {
+        $expected = $generated[$directory] ?? null;
+        if (!is_array($expected)
+            || array_keys($expected) !== ['file_count', 'tree_sha256']
+            || !is_int($expected['file_count']) || $expected['file_count'] < 1
+            || !is_string($expected['tree_sha256']) || preg_match('/^[0-9a-f]{64}$/', $expected['tree_sha256']) !== 1) {
+            throw new RuntimeException('release build contract generated payload declarations are invalid');
+        }
+        $map = releaseBuildContractPayloadMap($stage, $directory);
+        $actual = hash('sha256', json_encode($map, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+        if ($expected['file_count'] !== count($map) || !hash_equals($expected['tree_sha256'], $actual)) {
+            throw new RuntimeException('release build contract does not match Git-blob stage payload: ' . $directory);
+        }
+    }
+}
+
 if ($verifyGitStage !== null) {
     if (preg_match('/^[0-9a-f]{40,64}$/', $sourceCommit) !== 1) {
         throw new InvalidArgumentException('--source-commit must be a full Git object id');
@@ -317,6 +410,7 @@ if ($verifyGitStage !== null) {
         throw new RuntimeException('--verify-git-stage must be an existing regular directory');
     }
     assertStageMatchesGitBlobs($workspace, $commit, $stage);
+    assertReleaseBuildContractMatchesGitStage($stage);
     echo canonicalJson(['kind' => 'git-stage-verification', 'commit' => $commit, 'stage_matches_git_blobs' => true]) . PHP_EOL;
     exit(0);
 }
@@ -549,6 +643,7 @@ $sourceMaterial = $source;
 if ($sourceRevision !== null) {
     $sourceMaterial = materializeGitSubtree($workspace, $sourceRevision['commit'], $artifact . '/source-git/primary');
     assertStageMatchesGitBlobs($workspace, $sourceRevision['commit'], $sourceMaterial);
+    assertReleaseBuildContractMatchesGitStage($sourceMaterial);
 }
 $snapshot = $artifact . '/snapshot/package';
 createDirectory($snapshot);
@@ -576,6 +671,7 @@ $repeatSnapshot = $snapshot;
 if ($sourceRevision !== null) {
     $repeatSource = materializeGitSubtree($workspace, $sourceRevision['commit'], $artifact . '/source-git/repeat');
     assertStageMatchesGitBlobs($workspace, $sourceRevision['commit'], $repeatSource);
+    assertReleaseBuildContractMatchesGitStage($repeatSource);
     $repeatSnapshot = $repeat . '/snapshot/package';
     createDirectory($repeatSnapshot);
     $repeatSourceSnapshot = snapshotSource($repeatSource, $repeatSnapshot);
