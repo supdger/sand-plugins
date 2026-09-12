@@ -6,9 +6,17 @@
 - Frozen consumer host: `sandadmin-demo-host`, lock revision `558d92959947230ee562f29e015c62566be58c8e`.
 - Authorization: this evidence did not write a host, database, registry, service, lock file, or deployment. It does not authorize any of those actions, sync, commit, push, or external issue submission.
 
-## Current fact versus historical artifacts
+## Pre-reproduction fact versus historical artifacts
 
-The active demo registry is currently healthy: `server/runtime/sandpackage/sand-iam/info.ini` reports `state=1`, `stage=completed`, version `0.7.0`. Its `last_stable_state=1` agrees. Historical `state=8`, `stage=failed`, `failed_stage=database_update` records remain only under `server/runtime/sandpackage/quarantine/sand-iam/`; they are not the current runtime state and must not be presented as one.
+Before the 2026-09-12 reproduction, the active demo registry was healthy: `server/runtime/sandpackage/sand-iam/info.ini` reported `state=1`, `stage=completed`, version `0.7.0`. Its `last_stable_state=1` agreed. Historical `state=8`, `stage=failed`, `failed_stage=database_update` records remain only under `server/runtime/sandpackage/quarantine/sand-iam/`; they are not the current runtime state and must not be presented as one.
+
+## 2026-09-12 real `0.7.0 → 0.7.1` manifest-recovery blocker
+
+This was an authorized normal SandPackage upload/upgrade attempt against the existing demo, not a fixture and not a manual filesystem or database intervention. The current transaction is frozen at `phase=backed_up` with backup ID `sand-iam-package-20260912203549-29a3884cf7ea`. Its exact identity facts are: old `registration_manifest`/`previous_registration_manifest` `2cd54b2570a5ff38a20b64a22d2ae27606e702956c1ea6b6ae9fe042fb82d5ba`; actual deployment manifest `7ccadd3c745f1fcde3a08300298c1750f8f3700f1834d7187ef936d701282eff`; and the 608-entry backup/prepared-package digest `367fc0d1dd18a2fae0381fc381cc604c4678fdd5b398529733708f185c015ded`.
+
+The installed `0.7.0` package and its backup independently recalculate to the deployment digest above. The retained registration digest is instead the old `0.6.0 → 0.7.0` candidate combination. `markInstalled()` changes state/stage but preserves that stale `registration_manifest`; on the next upgrade `backupPackage()` renames the active package, records `backed_up`, then compares the retained digest with the current deployment digest. Its compensation path tries to rename back, but the subsequent identity assertion rejects the now-stale registration digest and masks the original pre-upgrade error. The journal therefore remains `backed_up`; the active registry is left at `state=2`, and no `0.7.1` lifecycle SQL, file deployment, service registration, database migration, or deploy step was entered.
+
+This is a SandAdmin/SandPackage defect, not a SandIAM package workaround target. Do not hand-edit the journal/digest, move directories, restore the old `0.6.0` backup, or invoke the current official recovery entry: each would bypass or repeat the same identity gate.
 
 ## Minimal neutral, non-DB evidence
 
@@ -28,6 +36,7 @@ Its executable evidence is deliberately split:
 | B | The same real gate rejects a simulated `state=8/failed/database_update` shape three times. Static-rule assertions establish only that normal `upload`, `uploadFromPath`, `install`, `uninstall`, `registerExisting`, and `discardCandidate` contain a call to that gate. Real v2 inspector/identity classes reject a partial identity and parse a canonical descriptor. | The harness does not establish public-entry call order or execute upload/install/uninstall. |
 | C | Structure-only: the frozen `retryFailedUpgrade()` source contains SQL, file deploy and service-registration calls; its compensation method contains no SQL executor call; no public `resumeAfterDb` method is present. | No PostgreSQL commit/deploy fault is executed. This is not proof that SQL may be skipped or that any recovery is safe. |
 | D | The real file-transaction class is fault-injected, then resumed and called once more in a temporary directory. A temporary unrelated-plugin registry/file/service canary has the same snapshot after each of those three operations. Static-rule assertions establish only that listed public recovery methods contain an operation-lock call. | The canary is a local file substitute, not a real plugin/registry/service. Multi-process locking is not dynamically exercised and no concurrency-safety conclusion is claimed. |
+| E | Static-rule only: `markInstalled()` does not refresh `registration_manifest`; `backupPackage()` writes `backed_up` after rename and only then performs the registration/deployment comparison, with a rollback path. | It deliberately freezes the known-bad order in the current host source; it is not a private demo-state read or a production recovery simulation. Update this case to the corrected contract when a host fix exists. |
 
 ## Reproduction result
 
@@ -53,3 +62,13 @@ The neutral fixture is not this acceptance. SandAdmin must run isolated real Pos
 | COMMIT succeeds but receipt persistence/confirmation is lost | State is `unknown`; no automatic SQL retry or deploy skip; only read-only fingerprint, authorized deterministic reconcile, or manual review is available. |
 | Duplicate request ID | Returns the same durable outcome and does not duplicate SQL, deployment, service registration or audit. |
 | Concurrent UI/CLI workers | Actual operation lock preserves one durable outcome; losing worker does not mutate target or sentinel. |
+
+### Required acceptance for this specific defect
+
+| Scenario | Required observation |
+| --- | --- |
+| Fresh successful install/upgrade | The persisted `registration_manifest` equals the actual deployed manifest after `markInstalled()`, and a subsequent upload can back up the package without a digest drift. |
+| Invalid pre-upgrade identity | The registration/deployment mismatch is rejected before any active-package rename or `backed_up` journal write. |
+| This frozen legacy combination | The official host recovery path restores `sand-iam-package-20260912203549-29a3884cf7ea` with the exact old/deployment/prepared digests above, resolves the `backed_up` journal, and does not run SQL or deploy while recovering. |
+| Post-recovery retry | A new normal `0.7.1` upload succeeds after recovery; only then may its lifecycle/deployment checks be evaluated. |
+| Fix provenance | SandAdmin records the exact released host version and commit containing the fix. Current fix version: **not supplied / not accepted**. |

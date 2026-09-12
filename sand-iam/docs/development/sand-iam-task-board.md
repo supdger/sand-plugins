@@ -255,3 +255,10 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 - 本轮可复核提交：`6e190953dc260f32e7428e751c3c6318dc9fcd8d`（HOST-202609-001）、`a7edcebb37ea06b2da3dc445d5b7307d3111a7ab`（生命周期）、`1aba9b444ae8ec69972faa2c1e6fe8e6ebc32d48`（外部验收）。这些是源码/离线证据提交，不改变正式 FLOW、业务闭环或发布门槛。
 - `a7edceb` 的非 vendor whitespace 检查为零；完整检查仅报告 18 个原样第三方 vendor 文件的 whitespace，未改写第三方字节，不能称完整检查通过。
 - 备份恢复 BLOCKED-B 的 7 文件仍未提交：`docs/user-guide/backup-and-restore.md`、`plugin/sand-iam/tests/backup_recovery_evidence_non_pg_test.php`、`plugin/sand-iam/tests/backup_restore_command_guard_non_pg_test.php`、`plugin/sand-iam/tests/external_acceptance_template_non_pg_test.php`、`tools/validate-backup-recovery.php`、`tools/prepare-external-acceptance.php`、`tools/README.md`；不计 G。
+
+### 2026-09-12 当前宿主阻塞与下一输出
+
+- 正式 unsigned 候选仍绑定 `0d210a99c397a480e63fc488847820e578e8e117`；当前应用恢复源码修复在 `553a0145e380cd7ccf01ac42d85421b8df0d0dc1` 与 `644359839e425abce2e5d470f73aa1258826c028`。后者已从 clean clone 受控同步到 demo 的源码副本，但该副本不是安装运行树，不能构成升级或正式验收证据。
+- 实际正常 `0.7.0 → 0.7.1` 升级在 SandPackage 的 manifest 身份缺陷处停止：`markInstalled` 留下旧登记摘要，`backupPackage` 在 rename 后才核验，当前 journal 为 `backed_up`；未进入 SQL/deploy。详情与精确 digest/backup ID 冻结在 [HOST-202609-001](../../../docs/host-requests/HOST-202609-001-sandpackage-failed-recovery.md)。唯一下一输出是 SandAdmin 提供含修复版本的官方恢复验收：恢复该 journal 后再按正规上传升级。
+- C01 的两次探索都不计正式分数：运行树仍为已安装 `0.7.0`，所以第二次恢复仍命中旧代码 `403`。每次均经业务 API 清理夹具，`.env` 恢复原摘要，且没有触碰 pending journal；**C01 正式为 0/7，探索失败且零残留**。宿主恢复并正规升级加载 `6443598` 前不得重跑。
+- 既有授权位置仅作范围留存，不扩展权限：`.codex/autopilot/executions/OSS-04-authorization.md`，以及本会话两次“授权”和“持续授权”指令。它们已覆盖当时受控同步/C01 的限定操作；本节点未据此执行 SandAdmin、数据库、服务或 SandPackage 写入。
