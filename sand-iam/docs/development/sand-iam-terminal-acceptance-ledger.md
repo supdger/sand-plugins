@@ -4,18 +4,24 @@
 
 ## 2026-09-12 完整开源成品 Goal 当前基线
 
+### 签名链初审 checkpoint（2026-09-12）
+
+- 签名链初审为 **3P2**；修复后 Astra 复核 **ACCEPT（P0/P1/P2=0）**，helper SHA-256 为 `78f9…`。
+- 临时测试签名仅是非正式测试材料。受控目录、同 UID TOCTOU、真实密钥信任、Git 独立重建分别是未闭合的信任边界；正式 signing 尚未执行。
+- 不改变计分：发布 **0/10**、FLOW **28/48**，F/L/D 不变。
+
 本节是当前状态入口；下方 2026-09-08 表格保留为历史证据索引。0.7.0 的 `fa344cd`/tree
 `6465…` 与 v70/v71 摘要均为历史基线；旧结论只有在本轮绑定到当前
-SandIAM 源码树、候选包和适用运行环境并逐原子复核后才可继承，不因旧任务曾勾选而自动通过。
+SandIAM 源码树、候选包和适用运行环境并逐原子复核后才可继承，不因旧任务曾勾选而自动通过。`0.7.0-v71` 仅是历史 0.7.0 材料，不能作为 0.7.1 证据。
 
 | 当前事实 | 只读证据 | 结论 |
 | --- | --- | --- |
-| SandIAM 权威源码 | 当前为未提交的 0.7.1 实现，Astra ACCEPT；through037 精确 preflight→原038，迁移 `001–038` 不变、无039，normal 包无旧 recovery descriptor；历史 `fa344cd`/tree `6465…` 仅作 0.7.0 基线 | 源码整体仍 dirty，尚不是发布来源 |
+| SandIAM 权威源码 | A′ 已提交 `61a7f13821980deca8479f9c9e5e872be92cf72a`，独立范围复核 ACCEPT、未 push；当前工作树 non-clean，有 22 项 tracked changes 与 6 个 untracked path roots | 主树 integrity 25/26，唯一失败为 clean/tracked；最终 commit/tree/ZIP 均 pending |
 | SandAdmin H1 基线 | `sandadmin-host.lock` 锁定 clean revision `558d92959947230ee562f29e015c62566be58c8e` | 仅证明宿主文件基线，不证明插件已同步、安装或运行 |
-| 包内一致性 | 当前静态状态：safe **114**、PHP lint **507**、package **24/24 PASS**、发布卫生 **11/14** | 仅证明当前源码包内部契约，不证明生命周期 |
-| 冻结 review-only artifact | `.artifacts/sand-iam-0.7.1-v10-20260912T051554Z`；634 entries；archive SHA `38392c9affc496ed56cb2b11e6963ee93c2c8aea518976ebc64df39f63471c7d`；payload/source snapshot SHA `07b9327c5bb3ddbc2ceb0db4ededbf406219d704c2f727b4388471b2086fad64`；开发记录按 payload policy 排除，不影响摘要 | 仍为 `dirty-not-release` review-only artifact，不计 FLOW；不称正式 final release；`--checksum` 修复未提交且尚未重新 apply |
-| 历史 review-only 清单 | v70/v71 payload 相同；v70 archive `6cae3a2f…cfd97cf82`、635 entries、descriptor-excluded payload `4bbf9289…` | v70/v71 仅作历史证据；v71 B 已因 rsync size+mtime 假阴性被独立 REJECT |
-| 开源材料 | 已有 `CHANGELOG.md`、79/79 组件含 SPDX 与许可证证据引用的 `SBOM.cdx.json`、精确坐标许可证策略、`THIRD_PARTY_NOTICES.md`、`SECURITY.md`、`CONTRIBUTING.md` 和八份公开中文指南；发布卫生 11/14 | 项目 `LICENSE`、版权主体、具体私密漏洞报告入口和 DCO/CLA 二选一贡献机制仍须用户确认，发布材料门槛未通过 |
+| 包内一致性 | 当前静态状态：safe **114**、PHP lint **507**、package **24/24 PASS**；Composer **58** 与 TypeScript `dist` **4** 已双隔离重建并完成锁校验 | 仅证明当前源码包内部契约，不证明生命周期 |
+| 冻结 review-only artifact | v12 内容自洽；旧 verifier 对 manifest/validation 自报 `release/unsigned`、clean committed source/hygiene PASS | 独立 Astra 发现 verifier 只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件；自报已被推翻，v12 仅为历史快照，不能作为正式来源或升级包 |
+| 历史 review-only 清单 | `0.7.0-v70/v71` payload 相同；v70 archive `6cae3a2f…cfd97cf82`、635 entries、descriptor-excluded payload `4bbf9289…` | 仅作历史 0.7.0 证据，不能作为 0.7.1 证据；v71 B 已因 rsync size+mtime 假阴性被独立 REJECT |
+| 开源材料 | 已有 `CHANGELOG.md`、79/79 组件含 SPDX 与许可证证据引用的 `SBOM.cdx.json`、精确坐标许可证策略、`THIRD_PARTY_NOTICES.md`、`SECURITY.md`、`CONTRIBUTING.md` 和八份公开中文指南 | v12 来源完整性仍 REJECT；主树 integrity 25/26；发布材料门槛未通过 |
 | 旧循环 | Codex 与 Cursor Autopilot/DETECT 均已 `enabled=false` | 旧任务不会作为当前 Goal 的自动执行入口 |
 
 ### 当前 FLOW 复核计分
@@ -47,6 +53,12 @@ SandIAM 源码树、候选包和适用运行环境并逐原子复核后才可继
 | 干净、可复现、许可/签名/文档一致的发布包 | **0/1 未通过** |
 
 当前发布门槛：**0/10**。已部署：**否**。线上验证：**未执行**。
+
+### Endurance v2 checkpoint（2026-09-12）
+
+本次按 `write-gate begin --replace` 归档既有 endurance contract checkpoint：v1 审计为 **4P1 + 3P2**；v2 分三批修复，最终经 Astra 工具复核 **ACCEPT（P0/P1/P2=0）**。这只是离线 contract/tool 结构收口，不改变任何 FLOW 或发布门槛。
+
+边界必须与计分同时保留：这是协作式可信环境协议；JSONL 哈希链仅提供完整性和篡改可见性，不是签名、身份认证或防伪；Git 未独立重建，collector/probe 真实性依赖受控环境、独立保管和可信对端。所有 fixture 均短于 86400 秒，真实同一最终候选 24 小时长跑尚未开始（**0**）。external validators 的 fixture 修复即使离线结构 ACCEPT，也不代表 ready。发布仍 **0/10**，FLOW **28/48**，F/L/D 不变。
 
 ## 2026-09-11 pre-P1 状态
 
@@ -211,3 +223,9 @@ REC01–REC08 在 2026-09-08 快照中为 **2/8**。后续只有对应步骤出�
 3. 候选、宿主、数据库或页面发生变化后，旧动态证据自动降为历史，除非完成内容寻址的一致性证明且该原子允许复用。
 4. 升级票据、REC 子检查或 C 业务链进度可以单独汇报，但不得加到 2026-09-08 基线的 **28/48**。
 5. “实现完成”“正式 FLOW 通过”“本地闭环”“可上线”“已部署”“线上验证”分别下结论。
+
+## 10. 2026-09-12 0.7.1 提交锚点（未 push）
+
+- 已提交：`6e190953dc260f32e7428e751c3c6318dc9fcd8d`（HOST-202609-001）、`a7edcebb37ea06b2da3dc445d5b7307d3111a7ab`（生命周期）和 `1aba9b444ae8ec69972faa2c1e6fe8e6ebc32d48`（外部验收）。它们不构成任何 F/L/D 或 G 原子通过。
+- 生命周期提交的非 vendor `git diff --cached --check` 为零；完整检查只有 18 个原样第三方 vendor 文件的 whitespace 报告，未改写其字节，故不记整体 diff-check 通过。
+- BLOCKED-B 的 7 个备份恢复文件未提交：`docs/user-guide/backup-and-restore.md`、`plugin/sand-iam/tests/backup_recovery_evidence_non_pg_test.php`、`plugin/sand-iam/tests/backup_restore_command_guard_non_pg_test.php`、`plugin/sand-iam/tests/external_acceptance_template_non_pg_test.php`、`tools/validate-backup-recovery.php`、`tools/prepare-external-acceptance.php`、`tools/README.md`；G 继续为未通过。

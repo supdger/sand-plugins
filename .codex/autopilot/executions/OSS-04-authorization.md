@@ -1,15 +1,19 @@
 # OSS-04 · 首条真实业务链精确授权单
 
-- 日期：2026-09-12
-- 状态：用户已授权 A–F、H–L，G 未授权。A/F 独立结论为 PARTIAL；B 的 v71 apply 已执行但因 rsync size+mtime 假阴性被独立验收 REJECT，checksum 修复已获 Astra ACCEPT 但尚未重新 apply。C 因 runtime `state=1/stage=completed` 不适用；D/E/H–L 未执行。
-- 当前冻结 review-only artifact `.artifacts/sand-iam-0.7.1-v10-20260912T051554Z`：634 entries，archive SHA `38392c9affc496ed56cb2b11e6963ee93c2c8aea518976ebc64df39f63471c7d`，payload/source snapshot SHA `07b9327c5bb3ddbc2ceb0db4ededbf406219d704c2f727b4388471b2086fad64`。开发记录按 payload policy 排除，不影响摘要；artifact 仍为 `dirty-not-release`，不计 FLOW，不称正式 final release。
+## 签名链初审 checkpoint（2026-09-12）
 
-旧 v70 review-only ZIP（635 entries，archive SHA-256
+签名链初审为 **3P2**；修复后 Astra 复核 **ACCEPT（P0/P1/P2=0）**，helper SHA-256 `78f9…`。临时测试签名仅是非正式测试材料；受控目录、同 UID TOCTOU、真实密钥信任与 Git 独立重建仍需独立证据。正式 signing 未执行，发布 **0/10**、FLOW **28/48**、F/L/D 不变。
+
+- 日期：2026-09-12
+- 状态：A′ 已提交为 `61a7f13821980deca8479f9c9e5e872be92cf72a` 且未 push；当前工作树 non-clean，有 22 项 tracked changes 与 6 个 untracked path roots。v12 内容自洽，但旧 verifier 对 `release/unsigned`、clean committed source/hygiene PASS 的自报已被独立 Astra 推翻：它只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件；v12 仅为历史快照，正式来源 **REJECT**，不能作升级包。B′/C′/D′ 未执行，G 未授权；历史 0.7.0 v71 B apply REJECT 不构成当前同步通过。
+- v10 是历史 review-only artifact，不是当前候选。最终 ZIP、哈希和签名尚未形成；内部执行记录按 payload policy 排除，且任何候选均不计 FLOW 或称正式发布。
+
+以下 v70/v71 均为历史 0.7.0 材料，不能作为 0.7.1 候选或证据。旧 v70 review-only ZIP（635 entries，archive SHA-256
   `6cae3a2f9880ef1a2818d04edc28dde4c65afc69a8f632a4b718b59cfd97cf82`，
   descriptor-excluded payload SHA-256
   `4bbf92897537f663e80c42e5dc31ae54c85df5ad17eb7741760929688d2a7035`）仅作历史基线。
 
-当前权威源码静态状态：0.7.1 未提交实现已获 Astra ACCEPT；through037 精确 preflight→原038，迁移 `001–038` 不变、无039，normal 包不含旧 recovery descriptor；safe 114、PHP lint 507、package 24、hygiene 11/14。历史 `fa344cd` 与 tree `6465…` 是 0.7.0 基线，不是当前候选。只读 demo DB 为 86 tables、ledger 38 rows、max revision 37、无038；C 不适用，未执行数据库/registry 写入。
+当前权威源码静态状态：A′ 已提交为 `61a7f138…`，当前工作树仍 non-clean（22 项 tracked changes、6 个 untracked path roots）；through037 精确 preflight→原038，迁移 `001–038` 不变、无039，normal 包不含旧 recovery descriptor。safe 114、PHP lint 507、package 24 为静态证据；v12 的旧 verifier 自报已被独立推翻，正式来源 REJECT。最终 commit/tree/ZIP pending。历史 `fa344cd` 与 tree `6465…` 是 0.7.0 基线，不是当前候选。当前可复核 demo registry 为健康 `0.7.0`（`state=1`、`stage=completed`）；只读 DB 的 86 tables、ledger 38 rows、max revision 37、无038只限观察窗口，未执行数据库/registry 写入。
 
 ## 只读预检结果
 
@@ -146,7 +150,7 @@ RSA 签名密钥、logout encryption key 和 `SAND_IAM_OIDC_BACKCHANNEL_LOGOUT_E
   tree `6465a3b28ad249aa0da625e4fe4f866bda0741b6`（不是 commit），没有 push。提交前后 non-PG/contract
   **114/114**、PHP lint **507/507**、包完整性 **24/24** 均通过；发布卫生仍
   **11/14**，只差 LICENSE、私密漏洞报告入口和 DCO/CLA 三项用户决策。
-- clean-source 重建生成 v71；archive
+- 历史 0.7.0 clean-source 重建生成 v71；它不能作为 0.7.1 候选、来源或升级包证据。archive
   `6cae3a2f9880ef1a2818d04edc28dde4c65afc69a8f632a4b718b59cfd97cf82`、payload
   `4bbf92897537f663e80c42e5dc31ae54c85df5ad17eb7741760929688d2a7035`、descriptor
   `a34677bbe7867aa9cd9896bbcc57c81dcbde77fd7ebef649cc7527dda8c403d5`、source snapshot
@@ -169,3 +173,22 @@ RSA 签名密钥、logout encryption key 和 `SAND_IAM_OIDC_BACKCHANNEL_LOGOUT_E
   均为 0。没有 install/update 或 lock 改写。
 - 防循环：任务列表中旧 SandIAM 任务均为 `notLoaded`；自动化配置中无
   SandIAM、sand_plugins 或旧任务 ID 匹配，未发现会继续唤醒的旧循环。
+
+## 2026-09-12 A′ 后独立复核回写
+
+- A′ 已按授权提交为 `61a7f13821980deca8479f9c9e5e872be92cf72a`，未 push。独立范围复核为 **ACCEPT**：父提交为 `fa344cdfadfc7adb6306d2507809e4a493a0e319`，diff-tree 共 43 files（A=4、M=39、D=0），全部在白名单；无删除、migration、Vue/TS 或白名单外路径。
+- v12 archive 的内容自洽，但旧 verifier 对 manifest/validation 自报 `release/unsigned`、clean committed source/hygiene PASS 已被独立 Astra 推翻：它只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件。v12 仅是历史快照，正式来源 **REJECT**，不能作为升级包；final commit/tree/ZIP pending。主树 integrity **25/26**，唯一失败为 clean/tracked。
+- Composer 58 与 TypeScript `dist` 4 已完成双隔离重建及锁校验。两次测试选择器偏差已作为限制保留；只读 DB 复核仅能证明复核时间窗口内未见可见写入，不能证明窗口外或此前无写入：86 tables、ledger 38 rows、max revision 37、revision 038 rows 0、runtime 仍 0.7.0。
+- B′/C′/D′ 尚未执行；G 仍未授权。发布门槛保持 **0/10**，FLOW 保持 **28/48**，不增加业务链、生命周期或部署分子。本回写未执行 sync、数据库/registry/service 操作。
+
+## Endurance v2 checkpoint（不计分）
+
+- v1 审计为 **4P1 + 3P2**；v2 分三批修复并经 Astra 工具最终 **ACCEPT（P0/P1/P2=0）**。这是离线 contract/tool 结构结果，不是实际长跑、外部互操作或发布 ready。
+- 协议边界为协作式可信环境：哈希链非签名、身份认证或防伪；Git 未独立重建，collector/probe 真实性依赖受控环境、独立保管和可信对端。所有 fixture 均非 86400 秒，真实 24 小时仍未开始（**0**）；external validators fixture 修复的离线结构 ACCEPT 不代表 ready。
+- 发布门槛、FLOW 和 F/L/D 维持 **0/10、28/48、不变**；本回写未执行 sync、数据库/registry/service 操作。
+
+## 2026-09-12 本地提交回写（未 push）
+
+- 本次授权范围已拆为三个已提交的、可复核的本地提交：宿主恢复契约 `6e190953dc260f32e7428e751c3c6318dc9fcd8d`、0.7.1 生命周期 `a7edcebb37ea06b2da3dc445d5b7307d3111a7ab`、外部验收证据 `1aba9b444ae8ec69972faa2c1e6fe8e6ebc32d48`。
+- `a7edceb` 的非 vendor 路径 `git diff --cached --check` 为零；完整检查仅报 18 个原样纳入的第三方 vendor 文件的既有 whitespace，未改写其字节。此事实不构成整体 whitespace 检查通过声明。
+- 以下 7 个备份恢复文件仍未提交，且不计入任何 G/备份恢复验收：`docs/user-guide/backup-and-restore.md`、`plugin/sand-iam/tests/backup_recovery_evidence_non_pg_test.php`、`plugin/sand-iam/tests/backup_restore_command_guard_non_pg_test.php`、`plugin/sand-iam/tests/external_acceptance_template_non_pg_test.php`、`tools/validate-backup-recovery.php`、`tools/prepare-external-acceptance.php`、`tools/README.md`。B′/C′/D′、G 和所有正式 FLOW 仍未执行。

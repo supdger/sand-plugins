@@ -42,11 +42,29 @@
 - 测试质量：tests=139、source_matches=0、heuristic_leads=1、exit=0；portal 与一次性秘密响应源码形状门禁已显式标记为静态规则测试并单独执行通过。
 - 包完整性：24/24 PASS。
 - 敏感序列化门禁：35/35 模型、61/61 隐藏字段实际 `toArray()`/JSON 验证通过；登记集合与源码中全部 `$hidden` 声明精确一致。
-- 发布卫生：11/14；失败项为未获批的项目 `LICENSE`、具体私密漏洞报告入口，以及 DCO/CLA 二选一贡献机制。
-- 当前依赖漏洞状态：未验证。Composer 官方 audit 因需要向 Packagist 发送锁定依赖名/版本而被安全审批拒绝；没有绕过。聚合目录中的 pnpm 调用因无根 lock 在发送前退出。官方查询的精确授权已列为 OSS-04 F。
+- 发布治理材料：源码现含 Apache-2.0 `LICENSE`、`NOTICE`、GitHub private advisory 报告入口和唯一 DCO 贡献机制；它们已不再是待确认项。当前发布阻塞是 v12 的正式来源 REJECT（62 个 ignored 来源文件未进入可追溯来源），以及所有未执行的运行门槛。
+- 依赖漏洞查询：OSS-04 的历史 F 记录为 Composer/registry 官方查询未发现已审计范围的 info/low/moderate/high/critical 项；该记录不替代与最终 clean 候选绑定的发布复核。
+
+## Endurance v2 checkpoint 回写
+
+### 签名链初审 checkpoint（2026-09-12）
+
+- 签名链初审：**3P2**；修复后 Astra 复核：**ACCEPT（P0/P1/P2=0）**；helper SHA-256：`78f9…`。
+- 临时测试签名不是正式签名。受控目录、同 UID TOCTOU、真实密钥信任和 Git 独立重建均是独立边界，当前未闭合；正式 signing 未执行。
+- 因此发布 **0/10**、FLOW **28/48**、F/L/D 不变。
+
+- v1 审计：**4P1 + 3P2**。v2 按三批修复，最终经 Astra 工具复核 **ACCEPT（P0/P1/P2=0）**。
+- 该结果仅覆盖离线 contract/tool 结构；它采用协作式可信环境边界。JSONL 哈希链不是签名、身份认证或防伪；Git 未独立重建，collector/probe 真实性仍依赖受控环境、独立保管和可信对端。
+- 所有 fixture 均不是 86400 秒；真实同一最终候选 24 小时运行尚未开始（**0**）。external validators 的 fixture 修复即使离线结构 ACCEPT，也不表示 ready。发布 **0/10**、FLOW **28/48**、F/L/D 不变。
 
 ## 不计通过的边界
 
 本记录只证明验收计划和证据门禁会关闭失败。没有实际 24 小时采样、Casdoor 或 SandIAM 双方
 十二轮旅程、七类外部标准客户端/真实对端运行、实际备份恢复、独立开发者公开文档交付、真实宿主或业务数据，因此 R09、F/L/D 和发布门槛
-均不增加。实际执行仍等待用户许可证决定、首链数据库/宿主/服务授权以及外部人员和对端。
+均不增加。实际执行仍等待首链数据库/宿主/服务授权、最终 clean 来源与候选，以及外部人员和对端。
+
+## 2026-09-12 本地提交回写（未 push）
+
+- 本轮已提交的精确链为 `6e190953dc260f32e7428e751c3c6318dc9fcd8d`（HOST-202609-001）、`a7edcebb37ea06b2da3dc445d5b7307d3111a7ab`（0.7.1 生命周期）和 `1aba9b444ae8ec69972faa2c1e6fe8e6ebc32d48`（外部验收证据）。
+- 生命周期提交的非 vendor `git diff --cached --check` 为零；完整检查仅列出 18 个原样纳入的第三方 vendor 文件 whitespace，未改写第三方字节，故不得将完整 diff-check 表述为通过。
+- 备份恢复的 7 个阻塞文件未提交：`docs/user-guide/backup-and-restore.md`、`plugin/sand-iam/tests/backup_recovery_evidence_non_pg_test.php`、`plugin/sand-iam/tests/backup_restore_command_guard_non_pg_test.php`、`plugin/sand-iam/tests/external_acceptance_template_non_pg_test.php`、`tools/validate-backup-recovery.php`、`tools/prepare-external-acceptance.php`、`tools/README.md`；它们不计 G 或任何发布门槛通过。

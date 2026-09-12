@@ -2,13 +2,20 @@
 
 ## 2026-09-12 完整开源成品 Goal
 
+### 签名链初审 checkpoint（2026-09-12）
+
+- 签名链初审记录为 **3P2**；修复后由 Astra 复核 **ACCEPT（P0/P1/P2=0）**，helper SHA-256 记录为 `78f9…`（仅作该次 helper 身份锚点）。
+- 初审结论仍受边界约束：临时测试签名仅为非正式测试材料；受控目录、同 UID 的 TOCTOU 防护、真实密钥信任与从独立 Git 来源重建必须分别具备证据。当前没有正式 signing、真实密钥信任或 Git 独立重建证据。
+- 该 checkpoint 不改变任何 FLOW 或发布计分：正式 signing **未执行**，发布 **0/10**，FLOW **28/48**，F/L/D 计数不变。
+
 - 当前 Goal 是唯一活跃执行目标；2026-09-08 及更早的 SandIAM/Cursor/Codex Autopilot 任务均为历史输入，不恢复其循环。
 - 2026-09-12 当前态复核：Codex 任务列表中本工作区仅本 Goal 为 `active`，旧 SandIAM 任务均为 `notLoaded`；本机 automation 配置中没有 SandIAM/sand_plugins 定时项。该结论来自本轮只读任务列表与配置扫描，没有修改外部状态。
 - 旧任务状态不得自动计入当前通过。可复用证据先绑定当前源码树、候选摘要和适用环境，再回写同一[终极验收原子账本](sand-iam-terminal-acceptance-ledger.md)。
 - 当前复核计分：需求 **8/9**、模块 **20/20**、正式 FLOW **0/7**、本地业务闭环 **0/4**、可上线部署 **0/8**，合计 **28/48**；发布门槛 **0/10**。这是本轮逐原子复核后的新结论，不是旧任务自动继承。
-- 已只读锁定：0.7.0 的 `fa344cd`/tree `6465…` 仅为历史基线；当前权威源码为未提交的 0.7.1 实现，Astra 已 ACCEPT。through037 精确 preflight→原038，迁移 `001–038` 不变、无039，normal 包不含旧 recovery descriptor；safe **114**、PHP lint **507**、包内 **24**、发布卫生 **11/14**。
-- 当前冻结 review-only artifact `.artifacts/sand-iam-0.7.1-v10-20260912T051554Z`：634 entries，archive SHA `38392c9affc496ed56cb2b11e6963ee93c2c8aea518976ebc64df39f63471c7d`，payload/source snapshot SHA `07b9327c5bb3ddbc2ceb0db4ededbf406219d704c2f727b4388471b2086fad64`。开发记录按 payload policy 排除，不影响摘要；artifact 仍为 `dirty-not-release`，不计 FLOW。同步脚本的 `--checksum` 修复未提交，尚未重新 apply；v71 与 v70 payload 相同但 B 被独立 **REJECT**。
-- 只读 demo DB 为 86 tables、ledger 38 rows、max revision 37、无038；C 因 runtime `state=1/stage=completed` 不适用。D/E/H–L 未执行，G 未授权；当前仍未部署、未线上验证。旧 v70/v71 摘要只保留作历史证据。
+- A′ 已按授权提交为 `61a7f13821980deca8479f9c9e5e872be92cf72a`，独立范围复核 **ACCEPT**，未 push；仅含白名单 43 files（A=4、M=39、D=0），无 migration/Vue/TS/越界路径。当前工作树 non-clean，有 22 项 tracked changes 与 6 个 untracked path roots；来源/事务修复仍未提交。主树 integrity **25/26**，唯一失败为 clean/tracked。
+- v12 archive 内容自洽，但其旧 verifier 对 manifest/validation 自报 `release/unsigned`、clean committed source 与 hygiene PASS 已被独立 Astra 推翻：它只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件。v12 仅是历史快照，正式来源验收 **REJECT**，不得作为正式来源或升级包。Composer **58** 与 TypeScript `dist` **4** 已完成双隔离重建和锁校验。
+- 两次测试选择器偏差已记录；只读 DB 复核只在时间窗口内未见可见写入，不能证明此前或窗口外无写入：86 tables、ledger 38 rows、max revision 37、revision 038 rows 0、runtime 仍 0.7.0。B′/C′/D′ 尚未执行，G 未授权；发布 **0/10**、FLOW **28/48**、业务链计数均不变，当前仍未部署、未线上验证。历史 `0.7.0-v70/v71` 摘要不能作为 0.7.1 证据。
+- **Endurance contract checkpoint（write-gate begin --replace 归档）**：v1 审计记录为 **4P1 + 3P2**；v2 分三批修复，最终由 Astra 工具复核 **ACCEPT（P0/P1/P2=0）**。该 ACCEPT 只证明离线 contract/tool 修复，不是实际长跑通过。协议明确为协作式可信环境边界：JSONL 哈希链只提供完整性/篡改可见性，不是签名、身份认证或防伪；Git 来源未独立重建，collector/probe 的真实性仍依赖受控环境、独立保管和可信对端。所有 fixture 均不是 86400 秒；真实同一最终候选 24 小时运行尚未开始（**0**）。external validators 的 fixture 修复即使离线结构 ACCEPT，也不表示 ready。发布门槛仍 **0/10**，FLOW **28/48**，F/L/D 计数不变。
 
 ### 当前执行顺序
 
@@ -18,10 +25,10 @@
 4. **OSS-03 外部与人工门槛**：标准客户端/真实受控对端、Casdoor 三旅程各两轮、未参与开发者公开文档安装接入、最终候选 24 小时稳定性。
 5. **OSS-04 发布包终验**：10/10 发布门槛、独立终验、无阻塞缺陷；终点不含 push、正式 Release、部署或线上验证。
 
-当前进展：OSS-00 已完成；OSS-01 依赖/许可证审计已完成并推荐 Apache-2.0，最终
-`LICENSE`、版权主体与 DCO/CLA 等待用户确认。该决策只阻塞发布许可门槛，不阻塞 OSS-02/OSS-03。
+当前进展：OSS-00 已完成；OSS-01 的依赖/许可证审计已完成，源码已具备 Apache-2.0
+`LICENSE`、`NOTICE`、私密漏洞报告入口和唯一 DCO 贡献机制，不再表述为 license/DCO 待确认。它们不消除来源、签名、生命周期或正式发布门槛。
 
-OSS-02/OSS-03 已完成；OSS-05 的外部门槛只完成 runner 预备：PHP lint **507/507**、
+OSS-02/OSS-03 的静态基线已完成；OSS-05 的外部门槛只完成 runner 预备：PHP lint **507/507**、
 non-PG/contract **114/114**、测试质量扫描 `tests=139, SOURCE_MATCH=0, heuristic_leads=1`
 （唯一 heuristic 已人工确认是执行生产
 `RouteBindingSynchronizer` 的内存仓储行为夹具，不复制生产算法）、R08 **9/9**、PHP SDK、
@@ -29,10 +36,7 @@ portal 契约与 TypeScript SDK 均通过。Dart SDK 先复现 3 个 analyze err
 `onboardingPreview` 的 async 返回与私有命名参数后，`dart analyze` 0 问题、测试 **11/11**。
 管理端源码与 demo dry-run 无差异；宿主全量 `vue-tsc` 仍被 SandPackage 自身的
 `failed-upgrade-recovery.vite.config.mts` 模块解析错误阻断，不计 SandIAM 失败，也不计发布构建通过。
-v70 review-only 候选为 635 entries、双构建 bit-identical、archive SHA-256
-`6cae3a2f9880ef1a2818d04edc28dde4c65afc69a8f632a4b718b59cfd97cf82`；发布卫生 **11/14**，
-失败项为项目 `LICENSE`、具体私密漏洞报告入口及 DCO/CLA 二选一贡献机制尚未确认。包外 Ed25519 签名/验签、篡改与符号链接拒绝回归已通过；
-`--release-unsigned` 因三项发布治理输入未齐在产物创建前关闭失败。该工件仍为 dirty candidate，不计 F/L/D 或发布门槛。
+历史 `0.7.0-v70/v71` 仅作追溯，不能作为 0.7.1 候选或证据。v12 的内容一致性虽通过，但其旧 verifier 对 `release/unsigned`、clean committed source/hygiene PASS 的自报已被独立 Astra 推翻：该 verifier 只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件；v12 仅为历史快照，正式来源 **REJECT**。最终 commit/tree/ZIP/签名均未形成。`LICENSE`、私密漏洞报告入口与 DCO 已在源码中，不得再列作未确认项。该状态不计 F/L/D 或发布门槛。
 机器服务示例已增加 HTTPS、HTTP 状态、JSON/data 结构及 service/audience/action 的关闭失败校验，成功结果不再输出短期 context；尚未进行真实 HTTP 调用，不计业务接入通过。
 公开备份恢复指南已补齐 PostgreSQL 归档列表/摘要、预建隔离库、源/恢复 DSN 防同库和单事务失败即停命令；未实际执行备份或恢复，不计恢复门槛通过。
 公开配置参考和随包离线预检已覆盖 `app.php`/`process.php` 的 85/85 个 `SAND_IAM_*` 环境键，明确密钥格式、keyring、默认关闭和 worker 双开关；插件 debug 已从硬编码开启改为部署开关且发布默认 `0`。默认关闭的运维 retention worker 现以有限批次处理过期 succeeded 幂等记录与过期认证限流窗口，迁移 038 提供时间索引，两类 backlog 均纳入 24 小时零容忍指标。目录 Sync outbox 已补有界失败终态、脱敏查看、同应用幂等重试和 running 并发互斥；24 小时队列/不可恢复积压也已绑定具体状态公式。预检不输出秘密、不连接数据库，行为测试 8/8；迁移、worker 与 PostgreSQL 夹具均未执行，不计运行配置通过。
@@ -86,7 +90,7 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 >
 > v7/v9 均已作废为历史 review-only 证据；v13 亦已被独立离线验收 **REJECT**（P1：builder/checker payload policy 不一致、authority descriptor stale；见 `.artifacts/sand-iam-v13-independent-acceptance-20260907/INDEPENDENT_ACCEPTANCE.md`），三者均不得复用、安装或同步。v14、v15、v16 均由后续候选取代；v17 是 P19 收口前的历史候选：`.artifacts/sand-iam-0.7.0-v17-20260907T200515Z/`，ZIP SHA-256 `70bfe0186ae6aec48b971107dcbc7b89d80862ba4a0b083b8466e3c8a9a7734a`、598 entries。v17 的 SDK `dist` 仅放行四个 TypeScript 导出文件（`index.js/index.d.ts/management.js/management.d.ts`），静态 package checker **23/23**，重复构建 bit-identical；从 ZIP 解包后由真实消费者完成默认 fetch 的 loopback allow/403/401 三种结果。该证据继续证明 P18，但 v17 不含 P19 最终源码，不得再安装或同步为当前候选。
 >
-> SandPackage catalog/035 修复已由 `.artifacts/sandpackage-recovery-catalog-independent-review-20260907/P0_P1_CORRECTION_EVIDENCE.md` 记录为 30/30、verifier 107/107；v15 的 production verifier/profile 已按 `.artifacts/recovery-controlled-sync-v15-20260907/MANIFEST.md` 完成 8/8 受控同步。该同步不等于候选上传、数据库恢复或部署完成。演示宿主 `.env` 和既有 `sandadmin` 数据库状态均只引用 2026-09-07 的最新保留只读证据：83 张 `sand_iam_*` 表、`baseline_060`/`prefix_033_034` 两个 catalog 状态与 registry `state=8` 的 failed v4 记录；本轮未重新读取，不能表述为当前已绑定或当前可用，复用必须另行取得配置授权。
+> SandPackage catalog/035 修复已由 `.artifacts/sandpackage-recovery-catalog-independent-review-20260907/P0_P1_CORRECTION_EVIDENCE.md` 记录为 30/30、verifier 107/107；v15 的 production verifier/profile 已按 `.artifacts/recovery-controlled-sync-v15-20260907/MANIFEST.md` 完成 8/8 受控同步。该同步不等于候选上传、数据库恢复或部署完成。2026-09-07 的 83 表、catalog 与 `state=8` 仅是历史保留证据，不能再称当前状态；当前可复核宿主事实以 [`HOST-202609-001`](../../../docs/host-requests/HOST-202609-001-sandpackage-failed-recovery.md) 为准：它是 `local draft / not sent`，demo registry 为健康 `0.7.0`（`state=1`、`stage=completed`），精确数据库计数未在本轮重新验收。
 >
 > v17 的历史前端 build/type/lint/54 路由证据已通过；计划 v24 已完成 P19 前端隔离 ESLint/typecheck/build 和 ZIP 构建所需源码。SandPackage 6.1.4 demo static gate 已 ACCEPT：**`DEMO_SYNC_6_1_4_STATIC_PASS`**（lifecycle 10/10、lint 3/3、vue-tsc PASS、关键 SHA 5/5；digest `dbdec85c3558592f2af196a689a28fdaa89f9ce56e8e38ecfcf93e6f3de5f34f`，白名单外不变）。正式 Gate A 已 **PASS**：existing replacement `8ecc5cec…f9e9f` 绑定真实 identity，返回 `retry_safe`、101/101、`failed_assertion_ids=[]`、`audit_written=false`、fingerprint `714894c6…a16ce6`，且 READ ONLY + REPEATABLE READ + ROLLBACK/连接复用通过。P2 历史风险不阻断静态门。Gate A 仅使真实恢复阶段前进到 **1/5**；无 active registry/DB 写、replace/retry、服务、浏览器、commit 或 push。
 
@@ -110,7 +114,7 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 | 4. SandPackage 失败升级恢复 staging | ✅ ACCEPT | [`GATE_A_VERIFICATION.md`](../../../.staging/sandpackage-failed-upgrade-recovery-v1-20260901T121000Z/report/GATE_A_VERIFICATION.md) 对应 Gate A/B、backend 10/10、行为断言 672 PASS、SHA manifest 16/16；它证明 staging 套件，不证明宿主数据库已恢复。 |
 | 5. 受控同步与候选包材料 | ✅ ACCEPT | v15 production verifier/profile 及相关 SandPackage 运行材料按 `../../../.artifacts/recovery-controlled-sync-v15-20260907/MANIFEST.md` 完成 8/8 受控同步；当前 `17-file demo` 静态白名单同步已完成，候选材料仍只作离线证据，不能外推为 host/runtime 验收。 |
 | 6. 官方 UI 升级入口 | ⏸ BLOCKED | 0.6.0→0.7.0 官方 UI 尝试在后端提交前因候选缺少兼容 `support` 字段被拒；没有绕过 UI，也没有生命周期写入。见 [`IAM-T08-real-upgrade-gate-20260831.md`](../../../.codex/autopilot/executions/IAM-T08-real-upgrade-gate-20260831.md)。 |
-| 7. 当前宿主数据库/业务闭环 | ◻ NOT VERIFIED | 实际恢复阶段 **2/8** 通过；官方核验在业务状态 `FAILED_UPGRADE_RECOVERY_BLOCKED` 后停止，候选替换/重试、数据库生命周期、浏览器和七条业务链仍未通过。浏览器上下文与认证恢复流程尚未完成，不能写成“用户未登录”；本轮无数据库、registry 或运行时写入。现场库仍为 83 张 `sand_iam_*` 表、`baseline_060`/`prefix_033_034`、registry `state=8`。 |
+| 7. 当前宿主数据库/业务闭环 | ◻ NOT VERIFIED | 实际恢复阶段 **2/8** 是历史恢复子步骤，不构成当前候选通过；候选替换/重试、数据库生命周期、浏览器和七条业务链仍未通过。浏览器上下文与认证恢复流程尚未完成，不能写成“用户未登录”；本轮无数据库、registry 或运行时写入。当前可复核宿主 registry 为健康 `0.7.0`（`state=1`、`stage=completed`）；精确数据库计数未在本轮重新验收，见 [`HOST-202609-001`](../../../docs/host-requests/HOST-202609-001-sandpackage-failed-recovery.md)。 |
 
 因此当前升级票据为 **5/7=71.4%**。`U-WIZARD-01` 的 Cursor 队列项记录为 **not started / superseded**，实际源码由 Codex takeover 并曾独立复核；当前权威四文件登记为 `index.vue` `4890158e…`、`WizardStepForm.vue` `94b335fb…`、`wizardState.ts` `83ff7012…`、state test `bd56e2d2…`。计划 v24 按唯一 payload policy 只分发前三个运行文件；state test 与七个只服务 behavior/viewport mock harness 的 helper 均排除。`17-file demo` 静态白名单同步已完成；真实组件/三视口、宿主运行和浏览器验收仍未执行。
 
@@ -173,7 +177,7 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 | IAM-T05 | Codex + Cursor | ▶ 进行中 | IAM-T03 | 接口目录、路由绑定、语义动作决策、PHP/TypeScript SDK 和 Webman 中间件已进入 `008` lifecycle；应用/组织隔离、幂等观察、路由冲突、停用关闭失败、OpenAPI 语义保留和审计已通过 PostgreSQL 集成。真实 SandAI/非 AI 应用授权和管理端闭环尚未验收。 |
 | IAM-T06 | Codex + Cursor | ▶ 进行中 | IAM-T04、IAM-T05 | 应用级委派、自助 API、Webhook、审计导出已进入 lifecycle；委托与 Webhook PostgreSQL 集成通过。仍缺并发 worker、真实 HTTPS 接收端、三角色页面和浏览器闭环。 |
 | IAM-T07 | Codex + Cursor | ▶ 进行中 | IAM-T04～IAM-T06 | 完整管理端交接契约和 Cursor U-T04～U-T13 源码/执行记录已交付；仍缺真实宿主同步、登录后的三角色流程与两个视口验收。 |
-| IAM-T08 | Codex + Cursor | ▶ 进行中 | IAM-T04～IAM-T12 | 当前 0.7.1 未提交实现沿用 `001–038`（无039），normal 包不含旧 recovery descriptor；safe 114、PHP 507、package 24、hygiene 11/14，均为静态证据。冻结 review-only artifact 为 `.artifacts/sand-iam-0.7.1-v10-20260912T051554Z`，634 entries，archive `38392c9a…`，payload/source snapshot `07b9327c…`；开发记录按 payload policy 排除，不影响摘要，仍为 `dirty-not-release`，不计 FLOW。只读 DB 86 tables、ledger 38 rows、max revision 37、无038，C 不适用。B 的 v71 apply 独立 REJECT，`--checksum` 修复未提交且尚未重新 apply；宿主候选替换、重试、安装/升级/卸载、真实宿主 HTTP、浏览器、外部客户端、七条业务闭环和部署仍未通过。|
+| IAM-T08 | Codex + Cursor | ▶ 进行中 | IAM-T04～IAM-T12 | `61a7f138…` 是未 push 的 0.7.1 候选提交，来源/事务修复仍未提交；normal 包排除旧 recovery descriptor。v12 内容自洽但因 62 个 ignored 来源文件未进入可追溯来源而正式 **REJECT**，不得作为发布来源。只读 DB 为 86 tables、ledger 38 rows、max revision 37、无038，runtime 仍 0.7.0；B′/C′/D′ 未执行，G 未授权。宿主同步、安装/升级/卸载、真实宿主 HTTP、浏览器、外部客户端、七条业务闭环和部署仍未通过。|
 | IAM-T09 | Codex + Cursor | ▶ 进行中 | IAM-T06 | 应用登录体验、品牌、消息 Provider、独立用户门户后端候选与 `011/025` 已落；假驱动下的服务选择、密文配置、投递/Captcha、停用关闭失败和跨组织拒绝已通过 PostgreSQL 集成。真实供应商、HTTP、页面和浏览器未验收。 |
 | IAM-T10 | Codex + Cursor | ▶ 进行中 | IAM-T04、IAM-T09 | 用户生命周期、组、邀请、访客升级、CSV 导入导出、通用 Syncer 与 `012–015/026` 已形成候选；生命周期/组/访客、邀请、Syncer 三组 PostgreSQL 集成通过，P14 scheduler/worker 已独立最终复核 ACCEPT。真实 HTTP、真实 worker/目录运行和页面未验收。 |
 | IAM-T11 | Codex + Cursor | ▶ 进行中 | IAM-T03、IAM-T04 | DCR、OIDC 前/后通道登出、CAS、Kerberos/SPNEGO、RADIUS Access/Accounting 与 `016–018` 已形成候选，迁移已进入 lifecycle 并有 SandPackage 隔离安装记录；真实 Realm/NAS、标准客户端、宿主 HTTP 和页面未验收。 |
@@ -245,3 +249,9 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 - U-05B / UX-01B / UX-02 的 Cursor 浏览器证据已于 2026-08-28 交付；Codex 独立验收与权威包回同步仍待办，不上调正式 FLOW。
 - Autopilot 通信通道已于 2026-09-07 再次开启（用户确认 Codex 已恢复）：`enabled=true`、HARD_STOP 无。DETECT watcher pid **37015**。证据：`.cursor/autopilot/executions/CURSOR-PING-20260907.md`、`.cursor/autopilot/executions/DETECT-01.md`。
 - 2026-08-31 DETECT 自领 **U-17** 后源码已完成（体验契约第 4 节 / 去掉宿主全高裁切 class）。演示宿主副本未同步；Codex 独立验收需先同步权威前端。双视口滚动未验收，不上调正式 FLOW。
+
+### 2026-09-12 0.7.1 提交锚点（未 push）
+
+- 本轮可复核提交：`6e190953dc260f32e7428e751c3c6318dc9fcd8d`（HOST-202609-001）、`a7edcebb37ea06b2da3dc445d5b7307d3111a7ab`（生命周期）、`1aba9b444ae8ec69972faa2c1e6fe8e6ebc32d48`（外部验收）。这些是源码/离线证据提交，不改变正式 FLOW、业务闭环或发布门槛。
+- `a7edceb` 的非 vendor whitespace 检查为零；完整检查仅报告 18 个原样第三方 vendor 文件的 whitespace，未改写第三方字节，不能称完整检查通过。
+- 备份恢复 BLOCKED-B 的 7 文件仍未提交：`docs/user-guide/backup-and-restore.md`、`plugin/sand-iam/tests/backup_recovery_evidence_non_pg_test.php`、`plugin/sand-iam/tests/backup_restore_command_guard_non_pg_test.php`、`plugin/sand-iam/tests/external_acceptance_template_non_pg_test.php`、`tools/validate-backup-recovery.php`、`tools/prepare-external-acceptance.php`、`tools/README.md`；不计 G。

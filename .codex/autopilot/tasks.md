@@ -2,6 +2,10 @@
 
 ## 当前唯一队列：SandIAM 完整开源成品（2026-09-12）
 
+### 签名链初审 checkpoint（2026-09-12）
+
+签名链初审为 **3P2**；修复后 Astra **ACCEPT（P0/P1/P2=0）**，helper SHA-256 `78f9…`。临时测试签名仅供非正式测试；受控目录、同 UID TOCTOU、真实密钥信任和 Git 独立重建仍未形成正式证据。正式 signing 未执行，发布 **0/10**、FLOW **28/48**、F/L/D 不变。
+
 > 当前 Goal 直接推进本队列；遗留 Codex/Cursor Autopilot 与 DETECT 均保持关闭。
 > 下方旧队列只作历史证据索引，旧勾选和旧“进行中”不自动计入当前 FLOW。
 
@@ -9,15 +13,15 @@
   - 验收：锁定当前 SandIAM tree、SandAdmin H1 lock、review-only 包摘要、23/23 包内检查、旧循环关闭状态；历史 28/48 不自动继承，当前复核 0/48，发布门槛 0/10。
   - 执行记录：`.codex/autopilot/executions/OSS-00.md`
 - [x] OSS-01 · 审计开源来源、依赖许可证、再分发条件和发布材料缺口
-  - 验收：已形成 `sand-iam-open-source-license-audit.md`；推荐 Apache-2.0、备选 MIT，未发现强 copyleft 依赖。最终 LICENSE、版权主体和 DCO/CLA 等待用户确认，不阻塞其他预门禁。
+  - 验收：已形成 `sand-iam-open-source-license-audit.md`；源码现含 Apache-2.0 `LICENSE`、`NOTICE`、私密漏洞报告入口及唯一 DCO 贡献机制，不再等待 license/DCO 决策。最终候选的来源可追溯性、签名和运行验收仍未完成。
 - [x] OSS-02 · 复核 R01–R09 与 P01–P20 的当前候选证据
   - 验收：当前完整集合 PHP lint 507/507、non-PG/contract 114/114；测试质量 139 项、`SOURCE_MATCH=0`、`heuristic_leads=1`；R08 9/9、PHP/TS/Dart SDK 与 portal 已通过。R=8/9、P=20/20，F/L/D 不变。
 - [x] OSS-03 · 完成不需宿主写入的发布预门禁
-  - 验收：v70 review-only 候选 635 entries，同快照双构建 bit-identical；包内 24/24、发布卫生 11/14。默认关闭的 retention worker 有界处理过期运维状态；目录 Sync outbox 已补有界失败、脱敏查看、幂等人工重试和并发互斥；OIDC back-channel dead 投递也改为保留原证据、重新签发短时令牌并以确定性后继事件收敛并发恢复，管理 OpenAPI `0.13.0-candidate` 已公开精确 DTO/错误码。配置参考/离线预检覆盖 85/85 环境键，24 小时队列/不可恢复积压及两类 retention backlog 均有精确零容忍口径。PostgreSQL 用例未获授权执行，不计运行验收；候选仍无 LICENSE、可信签名、clean provenance 或 F/L/D 证据。
+  - 验收：历史 `0.7.0-v70/v71` 仅作追溯，不能作为 0.7.1 证据。v12 内容自洽，但其旧 verifier 对 `release/unsigned`、clean committed source/hygiene PASS 的自报已被独立 Astra 推翻：它只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件；v12 仅为历史快照，正式来源 REJECT，不能作升级包。当前工作树有 22 项 tracked changes 与 6 个 untracked path roots，final commit/tree/ZIP pending。源码已有 LICENSE、NOTICE、私密漏洞报告入口和 DCO；可信签名、clean provenance、宿主与 F/L/D 证据仍缺。默认关闭的 retention worker、目录 Sync outbox、OIDC back-channel dead 恢复、85/85 环境键预检及 24 小时零容忍口径仅有静态/行为证据；PostgreSQL 用例未获授权执行，不计运行验收。
   - 执行记录：`.codex/autopilot/executions/OSS-03.md`
 - [ ] OSS-04 · 提交首条真实业务链的一次性精确授权清单并执行
   - 验收：一次只推进一条链，按复现 → 权威源码 → 自动回归 → demo 实测 → 独立验收闭合；需要数据库写入、迁移、服务启停或宿主同步时先取得明确授权。
-  - 当前：A/F 独立结论均为 **PARTIAL**；权威源码的 0.7.1 未提交实现已获 Astra **ACCEPT**，但只计静态证据。through037 精确 preflight→原038，迁移 `001–038` 不变、无039，normal 包不含旧 recovery descriptor；safe **114**、PHP lint **507**、包内 **24**、发布卫生 **11/14**。冻结 review-only artifact 为 `.artifacts/sand-iam-0.7.1-v10-20260912T051554Z`，634 entries，archive `38392c9a…`，payload/source snapshot `07b9327c…`；开发记录按 payload policy 排除，不影响摘要，artifact 仍为 `dirty-not-release`，不计 FLOW，不称正式 final release。v71 与 v70 payload 相同但 B 被独立 **REJECT**：rsync size+mtime 假阴性；同步脚本已未提交修复 `--checksum`，尚未重新 apply。历史 `fa344cd`/tree `6465…` 仅是 0.7.0 基线。C 因 runtime `state=1/stage=completed` 不适用；只读 DB 为 86 tables、ledger 38 rows、max revision 37、无038。D/E/H–L 未执行，G 未授权。仍需独立复核和明确的正常升级/同版本切换授权，不得把 checksum 修复或 0.7.1 静态包写成生命周期通过。
+  - 当前：A′ 已按授权提交为 `61a7f13821980deca8479f9c9e5e872be92cf72a`，独立范围复核 **ACCEPT**，未 push；A′ 只包含白名单 43 files（A=4、M=39、D=0），无 migration/Vue/TS/越界路径。当前工作树 non-clean，有 22 项 tracked changes 与 6 个 untracked path roots。v12 内容自洽，但旧 verifier 对 `release/unsigned`、clean committed source/hygiene PASS 的自报已被独立 Astra 推翻：它只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件；v12 仅为历史快照，正式来源 REJECT，不能作升级包。final commit/tree/ZIP pending；主树 integrity **25/26**，唯一失败为 clean/tracked。Composer **58** 与 TypeScript `dist` **4** 已完成双隔离重建及锁校验。两次测试选择器偏差和只读 DB 复核仅能证明时间窗口内未见可见写入，不能证明此前/窗口外未写入：86 tables、ledger 38 rows、max revision 37、revision 038 rows 0、runtime 仍 0.7.0。B′/C′/D′ 尚未执行，G 未授权；不得抬高发布 **0/10**、FLOW **28/48** 或任何业务链计数。
 - [ ] OSS-05 · 完成剩余真实链、外部互操作、独立体验、24 小时稳定性和发布包终验
   - 验收：FLOW 48/48、发布门槛 10/10、无发布阻塞缺陷；不包含 push、正式 Release、部署或线上验证。
   - 当前预备：已增加候选绑定模板、24 小时 runner/独立 verifier、Casdoor 3 旅程 × 双方 2 轮证据门禁、七类标准客户端/真实对端互操作验证器、隔离备份恢复验证器及未参与开发者公开文档交付验证器，回归 114/114；未实际运行，不计通过。记录：`.codex/autopilot/executions/OSS-05-preflight.md`。
@@ -108,3 +112,9 @@
   - 边界：SandAI Adapter 的实际业务 API 放行/拒绝属于 A-01 双插件联调，不把它写成 SandIAM P0 已完成证据。
 - [ ] A-01 · Codex + Cursor · 以 SandAI 真实运行 API 验证 SandIAM Adapter 的放行、拒绝与审计路径
   - 前置：IAM-05、U-03；需要独立的 SandAI 联调夹具和验收授权。
+
+### 2026-09-12 SandIAM 0.7.1 本地提交记录（未 push）
+
+- 已提交：`6e190953dc260f32e7428e751c3c6318dc9fcd8d`（HOST-202609-001）、`a7edcebb37ea06b2da3dc445d5b7307d3111a7ab`（生命周期）、`1aba9b444ae8ec69972faa2c1e6fe8e6ebc32d48`（外部验收）。
+- `a7edceb` 的非 vendor whitespace 检查为零；完整检查仅有 18 个原样纳入第三方 vendor 文件的 whitespace 报告，不作整体通过结论。
+- 7 个备份恢复阻塞文件仍未提交且不计 G：`backup-and-restore.md`、`backup_recovery_evidence_non_pg_test.php`、`backup_restore_command_guard_non_pg_test.php`、`external_acceptance_template_non_pg_test.php`、`validate-backup-recovery.php`、`prepare-external-acceptance.php`、`tools/README.md`。

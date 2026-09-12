@@ -4,9 +4,11 @@
 
 ## 1. 当前结论
 
-当前权威源码是未提交的 0.7.1 实现，Astra 已 ACCEPT：through037 精确 preflight→原038，迁移 `001–038` 不变、无039，normal 包不含旧 recovery descriptor。interim ZIP（文档审阅前）为 634 entries、SHA `38392c9a…`、source snapshot `07b932…`；文档修改会改变最终候选摘要。0.7.0 的 `fa344cd`/tree `6465…`、v70/v71 仅保留为历史证据；v71 与 v70 payload 相同但 B 因 rsync size+mtime 假阴性被独立 REJECT，`--checksum` 修复尚未重新 apply。
+当前 A′ 已提交为 `61a7f13821980deca8479f9c9e5e872be92cf72a`，独立范围复核 ACCEPT，未 push；来源修复仍未提交。Astra 对来源修复最终 ACCEPT（P0/P1/P2=0），但主树 integrity 仅 **25/26**，clean/tracked 检查失败。v12 archive SHA `80293b633e22a9f81cd5aebf2f2b96889851df27ab113182c2b931a59f4ddddb` 内容自洽，却因 62 个 ignored 来源文件缺失于可追溯来源而正式 REJECT；Composer 58 与 TypeScript `dist` 4 已双隔离重建并完成锁校验。
 
-只读 demo 状态为 86 tables、迁移账本 38 rows、max revision 37、无038；C 因 runtime `state=1/stage=completed` 不适用。D/E/H–L 未执行，G 未授权。当前仍未完成宿主生命周期、浏览器、业务闭环、部署或线上验证。
+Endurance v2 已按 `write-gate begin --replace` 归档 checkpoint：v1 审计 **4P1 + 3P2**，v2 三批修复后由 Astra 工具最终 **ACCEPT（P0/P1/P2=0）**。该结果仅是离线 contract/tool 结构 ACCEPT；它受协作式可信环境边界约束，哈希链非签名，Git 未独立重建，collector/probe 真实性仍依赖受控环境、独立保管和可信对端。所有 fixture 均非 86400 秒，真实 24 小时尚未开始（**0**）；external validators fixture 修复的离线结构 ACCEPT 不代表 ready。发布仍 **0/10**，FLOW **28/48**，F/L/D 不变。
+
+只读 demo 状态为 86 tables、迁移账本 38 rows、max revision 37、无038，runtime 仍为 0.7.0；复核时间窗口内未见可见写入，但该只读观察不能证明窗口外或此前无写入。两次测试选择器偏差已保留为证据限制。B′/C′/D′ 尚未执行，G 未授权。当前仍未完成宿主生命周期、浏览器、业务闭环、部署或线上验证。
 
 此前宿主同步、worker、401/503 和前端 200 的记录仍是历史证据，不构成当前宿主验收；本轮未重新验证宿主数据库状态。登录后 HTTP、标准外部 IdP/LDAP/NAS、三角色浏览器、业务闭环、备份恢复和部署均不得判定通过。SandAI 已单独完成 4/4 隔离生命周期，不可据此替代 SandIAM 宿主、浏览器或业务验收。
 
@@ -33,7 +35,7 @@
 | 审计/Webhook | 签名/重试/幂等/轮换、固定事件目录和投递状态已通过 PostgreSQL 集成 | 本地服务级通过，并发 worker/真实 HTTPS/告警出口未验收 | 统一事件、Webhook 事务生产者、保留/归档/恢复和告警出口 |
 | 管理与自助体验 | 控制面页面在实施，自助 API 候选；UX-01 未验收 | 未闭环 | 平台管理员、应用管理员、终端用户三角色真实浏览器闭环；应用品牌、登录/注册/恢复编排完整 |
 | SandAI/业务联调 | Adapter/fail-closed 契约；A-01 未开始 | 未闭环；L03 证据未来从 `sand_ai` 工作区回填，本轮不核验、不计分 | SandAI 真实 API 放行/拒绝/双侧审计；非 AI 应用 SDK 接入 |
-| 发布一致性 | 当前 0.7.1 未提交实现：`001–038`（无039）、normal 包无旧 recovery descriptor；safe 114、PHP 507、package 24、hygiene 11/14；interim ZIP 634 entries（`38392c9a…`，文档审阅前） | 仍非最终候选；`--checksum` 修复未提交且未重新 apply，未完成迁移/数据库/registry/runtime recovery、浏览器与业务闭环 | 当前版本在空隔离宿主完成安装/连续升级/卸载、备份恢复、安全基线和发布包复核 |
+| 发布一致性 | A′ commit `61a7f138…` 已独立 ACCEPT 且未 push；v12 archive `80293b63…` 内容自洽；Composer 58、TS `dist` 4 双隔离重建/锁校验完成；Astra 来源修复 ACCEPT（P0/P1/P2=0） | 正式来源仍 REJECT（62 ignored 来源文件）；主树 integrity 25/26 仅 clean/tracked 失败；B′/C′/D′ 未执行 | 当前版本在空隔离宿主完成安装/连续升级/卸载、备份恢复、安全基线和发布包复核 |
 
 完整 Casdoor 基线复核见[终极能力缺口](sand-iam-casdoor-baseline-gap.md)。T09–T12 未完成前，本表的终极验收不得整体判定通过。
 
@@ -134,3 +136,9 @@
 5. 真实管理端或应用端操作；
 6. 夹具清理和残留查询；
 7. 明确未验证项，不以构建成功替代运行或业务验收。
+
+## 8. 2026-09-12 0.7.1 提交锚点（未 push）
+
+- 当前已提交的授权链：`6e190953dc260f32e7428e751c3c6318dc9fcd8d`（HOST-202609-001）、`a7edcebb37ea06b2da3dc445d5b7307d3111a7ab`（生命周期）和 `1aba9b444ae8ec69972faa2c1e6fe8e6ebc32d48`（外部验收）。它们只固定源码与离线验收材料，F/L/D 数字不变。
+- `a7edceb` 的非 vendor whitespace 检查为零；完整检查仅报 18 个原样第三方 vendor 文件 whitespace，未改写其字节，不能作为完整 diff-check 通过证据。
+- 以下 7 个 BLOCKED-B 备份恢复文件未提交，不计 G：`docs/user-guide/backup-and-restore.md`、`plugin/sand-iam/tests/backup_recovery_evidence_non_pg_test.php`、`plugin/sand-iam/tests/backup_restore_command_guard_non_pg_test.php`、`plugin/sand-iam/tests/external_acceptance_template_non_pg_test.php`、`tools/validate-backup-recovery.php`、`tools/prepare-external-acceptance.php`、`tools/README.md`。
