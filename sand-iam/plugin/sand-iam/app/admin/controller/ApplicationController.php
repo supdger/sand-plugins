@@ -55,7 +55,32 @@ final class ApplicationController extends AdminResourceController
         return $this->success($this->withOrganizationContext($application?->toArray() ?? []));
     }
     #[Permission('SandIAM 接入应用保存', 'sand_iam:application:save')] public function save(Request $request): Response { return parent::save($request); }
-    #[Permission('SandIAM 接入应用更新', 'sand_iam:application:update')] public function update(Request $request): Response { return parent::update($request); }
+    #[Permission('SandIAM 接入应用更新', 'sand_iam:application:update')]
+    public function update(Request $request): Response
+    {
+        $id = (int) $request->input('id', $request->post('id', 0));
+        $model = Application::findOrEmpty($id);
+        if ($id <= 0 || $model->isEmpty()) {
+            throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 未找到目标记录，可能已被删除或当前账号无权访问，请刷新列表后重试', 400);
+        }
+
+        $payload = $this->payload($request, true);
+        unset($payload['code']);
+        $recovering = (int) $model->status === 2 && array_key_exists('status', $payload) && (int) $payload['status'] === 1;
+        if ((int) $model->status === 2 && array_key_exists('status', $payload) && !$recovering) {
+            throw new ApiException('SAND_IAM_APPLICATION_RECOVERY_STATUS_INVALID: 停用接入应用只能恢复为已启用状态', 400);
+        }
+
+        $this->assertUpdatePayloadAccess($payload, $model, $recovering);
+        $payload = $this->normalizePayload($payload, $model);
+        $this->assertReferences($payload, $model);
+        // Keep the post-normalization check on the same recovery path. A
+        // recovery must never fall back to the ordinary active-app guard.
+        $this->assertUpdatePayloadAccess($payload, $model, $recovering);
+        $model->save($payload);
+        $this->audit('update', (int) $model->id, $request);
+        return $this->success('更新成功');
+    }
     #[Permission('SandIAM 接入应用停用', 'sand_iam:application:disable')] public function disable(Request $request): Response { return parent::disable($request); }
     protected function assertReferences(array $payload, ?object $existing = null): void { if (isset($payload['organization_id']) && !Organization::where('id', (int) $payload['organization_id'])->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所属客户主体不存在或已停用', 400); }
 
@@ -88,6 +113,19 @@ final class ApplicationController extends AdminResourceController
             $this->access()->assertOrganization((int) $existing->organization_id);
             $this->access()->assertOrganization($organizationId);
         }
+    }
+
+    /** @param array<string,mixed> $payload */
+    private function assertUpdatePayloadAccess(array $payload, object $model, bool $recovering): void
+    {
+        if (!$recovering) {
+            $this->assertPayloadAccess($payload, $model);
+            return;
+        }
+        if (array_key_exists('organization_id', $payload)) {
+            throw new ApiException('SAND_IAM_APPLICATION_RECOVERY_OWNERSHIP_IMMUTABLE: 恢复停用接入应用时不得变更所属客户主体', 400);
+        }
+        $this->access()->assertApplicationRecovery((int) $model->id);
     }
 
     /**

@@ -84,6 +84,28 @@ final class AdminOrganizationAccess
         throw new ApiException('SAND_IAM_APPLICATION_ACCESS_DENIED: 当前账号未获授该接入应用的管理范围，请联系客户主体管理员授权', 403);
     }
 
+    /**
+     * Recovering a disabled application is intentionally narrower than normal
+     * application access. In particular, an application delegate cannot use
+     * its former application grant to reactivate that application.
+     */
+    public function assertApplicationRecovery(int $applicationId): void
+    {
+        $application = Application::where('id', $applicationId)->find();
+        $organizationId = $application === null ? null : (int) $application->organization_id;
+        $organization = $organizationId === null
+            ? null
+            : Organization::where('id', $organizationId)->where('status', 1)->find();
+        if ($application !== null
+            && (int) $application->status === 2
+            && $organization !== null
+            && ($this->isSuperAdmin() || in_array($organizationId, $this->organizationIds(), true))) {
+            return;
+        }
+        (new AuditWriter())->write('admin', (string) $this->adminId, $organizationId, $applicationId > 0 ? $applicationId : null, 'application.recovery_access', 'application', $applicationId > 0 ? $applicationId : null, 'denied', bin2hex(random_bytes(16)));
+        throw new ApiException('SAND_IAM_APPLICATION_RECOVERY_ACCESS_DENIED: 当前账号无权恢复该停用接入应用，或其所属客户主体未启用', 403);
+    }
+
     public function assertSuperAdmin(): void
     {
         if (!$this->isSuperAdmin()) {
