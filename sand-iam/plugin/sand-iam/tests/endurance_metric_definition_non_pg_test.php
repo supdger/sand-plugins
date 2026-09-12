@@ -24,9 +24,15 @@ foreach (['security_operation_retention_backlog', 'auth_rate_limit_retention_bac
     enduranceMetricDefinitionAssert(str_contains($verifier, "'{$metric}'"), "verifier omits {$metric}");
     enduranceMetricDefinitionAssert(str_contains($guide, "`{$metric}`"), "guide omits {$metric}");
 }
+foreach (['worker_restart_total', 'unauthorized_allow_total', 'data_corruption_total', 'unrecoverable_backlog_total'] as $metric) {
+    enduranceMetricDefinitionAssert(str_contains($generator, "'{$metric}'"), "generator omits {$metric}");
+    enduranceMetricDefinitionAssert(str_contains($runner, "'{$metric}'"), "runner omits {$metric}");
+    enduranceMetricDefinitionAssert(str_contains($verifier, "'{$metric}'"), "verifier omits {$metric}");
+    enduranceMetricDefinitionAssert(str_contains($guide, "`{$metric}`"), "guide omits {$metric}");
+}
 
 enduranceMetricDefinitionAssert(
-    str_contains($guide, '十二个资源、队列、安全与 Worker 指标')
+    str_contains($guide, '十三个资源、队列、安全与 Worker 指标')
         && str_contains($guide, '两个完整维护间隔')
         && str_contains($guide, 'make_interval(days => :retention_days, secs => :interval_seconds * 2)')
         && str_contains($guide, 'make_interval(hours => :retention_hours, secs => :interval_seconds * 2)'),

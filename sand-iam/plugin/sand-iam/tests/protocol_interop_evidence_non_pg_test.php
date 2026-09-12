@@ -55,6 +55,26 @@ try {
     $write($valid);
     [$validStatus, $validOutput] = $run($reportPath);
 
+    $tamperedEvidenceHash = $valid;
+    $tamperedEvidenceHash['cases'][0]['evidence'][0]['sha256'] = str_repeat('f', 64);
+    $write($tamperedEvidenceHash);
+    [$tamperedEvidenceHashStatus, $tamperedEvidenceHashOutput] = $run($reportPath);
+
+    $unclean = $valid;
+    $unclean['cases'][0]['cleanup_verified'] = false;
+    $write($unclean);
+    [$uncleanStatus, $uncleanOutput] = $run($reportPath);
+
+    $missingVersion = $valid;
+    unset($missingVersion['cases'][0]['client']['version']);
+    $write($missingVersion);
+    [$missingVersionStatus, $missingVersionOutput] = $run($reportPath);
+
+    $invalidVersion = $valid;
+    $invalidVersion['cases'][0]['client']['version'] = '';
+    $write($invalidVersion);
+    [$invalidVersionStatus, $invalidVersionOutput] = $run($reportPath);
+
     $invalidClient = $valid;
     $invalidClient['cases'][0]['client']['name'] = 'curl';
     $write($invalidClient);
@@ -85,6 +105,10 @@ try {
     [$linkedStatus, $linkedOutput] = $run($reportPath);
 
     $passed = $validStatus === 0 && str_contains($validOutput, '"cases_passed": 7') && str_contains($validOutput, '"assertions_verified": 37')
+        && $tamperedEvidenceHashStatus !== 0 && str_contains($tamperedEvidenceHashOutput, 'evidence SHA-256 mismatch')
+        && $uncleanStatus !== 0 && str_contains($uncleanOutput, 'did not complete cleanly')
+        && $missingVersionStatus !== 0 && str_contains($missingVersionOutput, 'client is missing keys: version')
+        && $invalidVersionStatus !== 0 && str_contains($invalidVersionOutput, 'client.version is required')
         && $clientStatus !== 0 && str_contains($clientOutput, 'versioned standard client')
         && $assertionStatus !== 0 && str_contains($assertionOutput, 'did not prove ticket_replay_rejected')
         && $tamperedStatus !== 0 && str_contains($tamperedOutput, 'evidence SHA-256 mismatch')

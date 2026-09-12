@@ -47,6 +47,31 @@ try {
     $write($valid);
     [$validStatus, $validOutput] = $run($reportPath);
 
+    $tamperedEvidenceHash = $valid;
+    $tamperedEvidenceHash['steps'][0]['evidence'][0]['sha256'] = str_repeat('f', 64);
+    $write($tamperedEvidenceHash);
+    [$tamperedEvidenceHashStatus, $tamperedEvidenceHashOutput] = $run($reportPath);
+
+    $unclean = $valid;
+    $unclean['assertions']['cleanup_verified'] = false;
+    $write($unclean);
+    [$uncleanStatus, $uncleanOutput] = $run($reportPath);
+
+    $humanSideEffectMissing = $valid;
+    $humanSideEffectMissing['assertions']['human_business_side_effect_verified'] = false;
+    $write($humanSideEffectMissing);
+    [$humanSideEffectStatus, $humanSideEffectOutput] = $run($reportPath);
+
+    $machineSideEffectMissing = $valid;
+    $machineSideEffectMissing['assertions']['machine_business_side_effect_verified'] = false;
+    $write($machineSideEffectMissing);
+    [$machineSideEffectStatus, $machineSideEffectOutput] = $run($reportPath);
+
+    $nonFreshHost = $valid;
+    $nonFreshHost['environment']['fresh_host'] = false;
+    $write($nonFreshHost);
+    [$nonFreshHostStatus, $nonFreshHostOutput] = $run($reportPath);
+
     $assisted = $valid;
     $assisted['participant']['developer_assistance_requests'] = 1;
     $write($assisted);
@@ -68,6 +93,11 @@ try {
     [$outcomeStatus, $outcomeOutput] = $run($reportPath);
 
     $passed = $validStatus === 0 && str_contains($validOutput, '"steps_passed": 8') && str_contains($validOutput, '"assertions_verified": 14')
+        && $tamperedEvidenceHashStatus !== 0 && str_contains($tamperedEvidenceHashOutput, 'evidence SHA-256 mismatch')
+        && $uncleanStatus !== 0 && str_contains($uncleanOutput, 'did not prove cleanup_verified')
+        && $humanSideEffectStatus !== 0 && str_contains($humanSideEffectOutput, 'did not prove human_business_side_effect_verified')
+        && $machineSideEffectStatus !== 0 && str_contains($machineSideEffectOutput, 'did not prove machine_business_side_effect_verified')
+        && $nonFreshHostStatus !== 0 && str_contains($nonFreshHostOutput, 'requires a fresh host')
         && $assistedStatus !== 0 && str_contains($assistedOutput, 'receive no developer assistance')
         && $docsStatus !== 0 && str_contains($docsOutput, 'exact ordered public documentation set')
         && $stepStatus !== 0 && str_contains($stepOutput, 'independent delivery is missing steps: machine-service')

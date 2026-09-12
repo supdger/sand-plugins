@@ -64,6 +64,16 @@ try {
 
     $validReport = $report;
 
+    $tamperedEvidenceHash = $validReport;
+    $tamperedEvidenceHash['journeys'][0]['runs'][0]['evidence'][0]['sha256'] = str_repeat('f', 64);
+    file_put_contents($reportPath, json_encode($tamperedEvidenceHash, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+    [$tamperedEvidenceHashStatus, $tamperedEvidenceHashOutput] = $run($reportPath);
+
+    $uncleanReport = $validReport;
+    $uncleanReport['journeys'][0]['runs'][0]['cleanup_verified'] = false;
+    file_put_contents($reportPath, json_encode($uncleanReport, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+    [$uncleanStatus, $uncleanOutput] = $run($reportPath);
+
     $report['journeys'][0]['runs'][0]['security_equivalent'] = false;
     file_put_contents($reportPath, json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
     [$unsafeStatus, $unsafeOutput] = $run($reportPath);
@@ -84,6 +94,8 @@ try {
     [$invalidTimestampStatus, $invalidTimestampOutput] = $run($reportPath);
 
     $passed = $validStatus === 0 && str_contains($validOutput, '"runs_verified": 12')
+        && $tamperedEvidenceHashStatus !== 0 && str_contains($tamperedEvidenceHashOutput, 'evidence SHA-256 mismatch')
+        && $uncleanStatus !== 0 && str_contains($uncleanOutput, 'did not prove cleanup_verified')
         && $unsafeStatus !== 0 && str_contains($unsafeOutput, 'did not prove security_equivalent')
         && $missingStatus !== 0 && str_contains($missingOutput, 'must contain exactly four runs')
         && $linkedStatus !== 0 && str_contains($linkedOutput, 'path contains a symbolic link')
