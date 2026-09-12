@@ -20,6 +20,10 @@ $checks = [
         'pullPage($config, $cursor, 500)',
         "hash_hmac('sha256',\$connectorId.'|'.\$value,\$pepper)",
         "where('state', 'pending')",
+        'SyncOutboxAttemptPolicy',
+        'SAND_IAM_SYNC_OUTBOX_NOT_RETRYABLE',
+        'SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID',
+        'sync.outbox_retry',
         "array_diff(\$accepted, \$sentIds)",
         'count($accepted) < count($rows)',
         'SAND_IAM_SYNC_DISABLE_THRESHOLD_EXCEEDED',
@@ -40,6 +44,9 @@ $checks = [
         '连接配置已加密保存，之后不回显原值',
         "'config_configured' => !empty(\$item['encrypted_config'])",
         "'cursor_configured' => !empty(\$item['encrypted_cursor'])",
+        "'sand_iam:sync_run:index'",
+        "'sand_iam:sync_run:run'",
+        'outboxPayload',
     ],
     $package . '/app/middleware/SyncSensitiveMiddleware.php' => [
         'connector credentials, cursors and driver responses',
@@ -51,6 +58,8 @@ $checks = [
         'sync-connector/test',
         'sync-connector/run',
         'sync-connector/runs',
+        'sync-connector/outbox',
+        'sync-connector/outbox-retry',
         'SyncSensitiveMiddleware::class',
     ],
     $package . '/app/sync/PostgresIdentitySyncDriver.php' => [
@@ -83,7 +92,7 @@ if (!is_string($controller)) {
     fwrite(STDERR, "sync controller unreadable\n");
     exit(1);
 }
-foreach (["'encrypted_config' =>", "'encrypted_cursor' =>"] as $forbidden) {
+foreach (["'encrypted_config' =>", "'encrypted_cursor' =>", "'encrypted_payload' =>"] as $forbidden) {
     if (str_contains($controller, $forbidden)) {
         fwrite(STDERR, "sync connector DTO exposes {$forbidden}\n");
         exit(1);

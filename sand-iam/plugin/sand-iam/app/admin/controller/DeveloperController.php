@@ -37,7 +37,7 @@ final class DeveloperController extends BaseController
         $this->onboardingAccess($request)->assertOrganization((int) $preview['organization_id']);
         if ($preview['application_id'] !== null) $this->onboardingAccess($request)->assertApplication((int) $preview['application_id']);
         $result = (new OnboardingService())->apply($manifest, trim((string) $request->post('preview_hash', '')), is_array($admin) ? (int) ($admin['id'] ?? 0) : 0, (string) $request->header('X-Request-Id', ''));
-        return $this->success($result, ($result['replayed'] ?? false) ? '请求已处理；凭证明文不会再次显示' : '接入已完成；凭证只显示一次')->withHeader('Cache-Control', 'no-store');
+        return $this->success($result, ($result['replayed'] ?? false) ? '请求已处理；凭证明文不会再次显示' : '接入已完成；凭证只显示一次')->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache');
     }
 
     private function onboardingAccess(Request $request): AdminOrganizationAccess

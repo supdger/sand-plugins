@@ -55,6 +55,7 @@ $migrations = [
     '035_schema_migration_ledger.pgsql',
     '036_acceptance_fixture_support.pgsql',
     '037_initialization_draft.pgsql',
+    '038_auth_rate_limit_retention.pgsql',
 ];
 
 /** @return non-empty-string */
@@ -206,13 +207,14 @@ $installNames = array_slice($migrations, 4);
 $installSource = $base . migrationPayload($sourceDirectory, $installNames);
 // A SandPackage upgrade must never replay historical lifecycle input. 0.7.0
 // is the first ledger-backed release, so its only supported predecessor is
-    // the published 0.6.0 baseline and its update payload is exactly 033-037.
+    // the published 0.6.0 baseline and its update payload is exactly 033-038.
 $updateNames = [
     '033_identity_group_role.pgsql',
     '034_identity_group_role_permission_catalog.pgsql',
     '035_schema_migration_ledger.pgsql',
     '036_acceptance_fixture_support.pgsql',
     '037_initialization_draft.pgsql',
+    '038_auth_rate_limit_retention.pgsql',
 ];
 $updateSource = migrationPayload($sourceDirectory, $updateNames);
 $permissions = controllerPermissions($package);

@@ -57,6 +57,7 @@ require $sandIamRoot . '/plugin/sand-iam/app/functions.php';
 final class T10AcceptanceSyncDriver implements SyncDriverInterface
 {
     public static int $generation = 1;
+    public static string $outboundMode = 'accept';
     /** @var list<array<string,mixed>> */
     public static array $pushed = [];
     public static bool $tested = false;
@@ -93,6 +94,8 @@ final class T10AcceptanceSyncDriver implements SyncDriverInterface
     public static function pushBatch(array $config, array $events): array
     {
         self::$pushed = array_merge(self::$pushed, $events);
+        if (self::$outboundMode === 'reject') return [];
+        if (self::$outboundMode === 'throw') throw new ApiException('SAND_IAM_SYNC_REMOTE_UNAVAILABLE', 503);
         return array_values(array_map(static fn (array $event): string => (string) $event['event_id'], $events));
     }
 
@@ -105,6 +108,7 @@ final class T10AcceptanceSyncDriver implements SyncDriverInterface
     }
 }
 
+putenv('SAND_IAM_SYNC_OUTBOX_MAX_ATTEMPTS=2');
 Config::clear();
 support\App::loadAllConfig(['route']);
 Config::load($sandIamRoot . '/plugin/sand-iam/config', ['route'], 'plugin.sand-iam');
@@ -190,7 +194,55 @@ try {
     $crossOrganizationRejected = str_contains($exception->getMessage(), 'fk_sand_iam_sync_connector_application_organization');
 }
 syncPgAssert($crossOrganizationRejected, 'database accepted a cross-organization sync connector');
-syncPgAssert(AuditLog::where('application_id', (int) $applicationA->id)->where('action', 'sync.run')->where('outcome', 'succeeded')->count() === 3, 'successful sync runs were not audited');
-syncPgAssert(AuditLog::where('application_id', (int) $applicationA->id)->where('action', 'sync.run')->where('outcome', 'failed')->count() === 1, 'failed sync run was not audited');
+
+// Outbound events cannot remain pending forever. Both an explicit rejection
+// and a driver-wide exception become terminal after the configured bound, and
+// only the scoped, audited operator retry resets them for a later run.
+$connector->save(['direction' => 'outbound', 'conflict_policy' => 'manual']);
+$sync->enqueueOutbound((int) $connector->id, (int) $applicationA->id, (int) $identityOne->id, 'update', ['identity_id' => (int) $identityOne->id], 'sync-event-rejected');
+T10AcceptanceSyncDriver::$outboundMode = 'reject';
+syncPgExpect(static fn () => $sync->run((int) $connector->id, (int) $applicationA->id, '1', 't10-sync-reject-1'), 'SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED', 503);
+syncPgExpect(static fn () => $sync->run((int) $connector->id, (int) $applicationA->id, '1', 't10-sync-reject-2'), 'SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED', 503);
+$rejected = SyncOutbox::where('event_id', 'sync-event-rejected')->find();
+syncPgAssert($rejected !== null && (string) $rejected->state === 'failed' && (int) $rejected->attempt_count === 2 && (int) $rejected->status === 2, 'rejected outbound event did not become terminal at the configured bound');
+
+$running = SyncRun::create(['sync_connector_id' => (int) $connector->id, 'application_id' => (int) $applicationA->id, 'connector_config_version' => (int) $connector->config_version, 'state' => 'running', 'start_time' => date('Y-m-d H:i:s'), 'status' => 1]);
+syncPgExpect(static fn () => $sync->retryOutbound((int) $connector->id, (int) $applicationA->id, (int) $rejected->id, '1', 't10-sync-retry-running'), 'SAND_IAM_SYNC_ALREADY_RUNNING', 409);
+$running->save(['state' => 'failed', 'error_code' => 'SAND_IAM_SYNC_TEST_RUNNING_GUARD', 'finish_time' => date('Y-m-d H:i:s'), 'status' => 2]);
+$connector->save(['direction' => 'inbound']);
+syncPgExpect(static fn () => $sync->retryOutbound((int) $connector->id, (int) $applicationA->id, (int) $rejected->id, '1', 't10-sync-retry-inbound'), 'SAND_IAM_SYNC_OUTBOX_NOT_RETRYABLE', 409);
+$connector->save(['direction' => 'outbound']);
+$sync->retryOutbound((int) $connector->id, (int) $applicationA->id, (int) $rejected->id, '1', 't10-sync-retry-rejected');
+$rejected = SyncOutbox::find((int) $rejected->id);
+syncPgAssert($rejected !== null && (string) $rejected->state === 'pending' && (int) $rejected->attempt_count === 0 && $rejected->error_code === null, 'operator retry did not reset the failed outbound event');
+T10AcceptanceSyncDriver::$outboundMode = 'accept';
+$recovered = $sync->run((int) $connector->id, (int) $applicationA->id, '1', 't10-sync-recovered');
+syncPgAssert($recovered['pushed'] === 1 && (string) SyncOutbox::where('event_id', 'sync-event-rejected')->value('state') === 'succeeded', 'retried outbound event was not delivered');
+
+$sync->enqueueOutbound((int) $connector->id, (int) $applicationA->id, (int) $identityOne->id, 'disable', ['identity_id' => (int) $identityOne->id], 'sync-event-driver-error');
+T10AcceptanceSyncDriver::$outboundMode = 'throw';
+syncPgExpect(static fn () => $sync->run((int) $connector->id, (int) $applicationA->id, '1', 't10-sync-driver-1'), 'SAND_IAM_SYNC_REMOTE_UNAVAILABLE', 503);
+syncPgExpect(static fn () => $sync->run((int) $connector->id, (int) $applicationA->id, '1', 't10-sync-driver-2'), 'SAND_IAM_SYNC_REMOTE_UNAVAILABLE', 503);
+$driverFailed = SyncOutbox::where('event_id', 'sync-event-driver-error')->find();
+syncPgAssert($driverFailed !== null && (string) $driverFailed->state === 'failed' && (int) $driverFailed->attempt_count === 2 && (string) $driverFailed->error_code === 'SAND_IAM_SYNC_REMOTE_UNAVAILABLE', 'driver-wide failure did not consume the bounded attempt state safely');
+syncPgExpect(static fn () => $sync->retryOutbound((int) $connector->id, (int) $applicationB->id, (int) $driverFailed->id, '1', 't10-sync-retry-cross-app'), 'SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404);
+
+$sync->enqueueOutbound((int) $connector->id, (int) $applicationA->id, (int) $identityOne->id, 'update', ['identity_id' => (int) $identityOne->id], 'sync-event-corrupt-payload');
+$corrupt = SyncOutbox::where('event_id', 'sync-event-corrupt-payload')->find();
+syncPgAssert($corrupt !== null, 'corrupt-payload fixture was not enqueued');
+$validCiphertext = (string) $corrupt->encrypted_payload;
+$corrupt->save(['encrypted_payload' => 'not-a-valid-sync-envelope']);
+T10AcceptanceSyncDriver::$outboundMode = 'accept';
+syncPgExpect(static fn () => $sync->run((int) $connector->id, (int) $applicationA->id, '1', 't10-sync-payload-1'), 'SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID', 503);
+syncPgExpect(static fn () => $sync->run((int) $connector->id, (int) $applicationA->id, '1', 't10-sync-payload-2'), 'SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID', 503);
+$corrupt = SyncOutbox::find((int) $corrupt->id);
+syncPgAssert($corrupt !== null && (string) $corrupt->state === 'failed' && (string) $corrupt->error_code === 'SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID', 'unreadable outbound payload remained pending');
+$corrupt->save(['encrypted_payload' => $validCiphertext]);
+$sync->retryOutbound((int) $connector->id, (int) $applicationA->id, (int) $corrupt->id, '1', 't10-sync-retry-payload');
+$payloadRecovered = $sync->run((int) $connector->id, (int) $applicationA->id, '1', 't10-sync-payload-recovered');
+syncPgAssert($payloadRecovered['pushed'] === 1 && (string) SyncOutbox::where('event_id', 'sync-event-corrupt-payload')->value('state') === 'succeeded', 'restored payload was not recoverable through the public retry operation');
+syncPgAssert(AuditLog::where('application_id', (int) $applicationA->id)->where('action', 'sync.outbox_retry')->where('resource_id', (int) $rejected->id)->where('outcome', 'succeeded')->count() === 1, 'operator retry audit is missing or duplicated');
+syncPgAssert(AuditLog::where('application_id', (int) $applicationA->id)->where('action', 'sync.run')->where('outcome', 'succeeded')->count() === 5, 'successful sync runs were not audited');
+syncPgAssert(AuditLog::where('application_id', (int) $applicationA->id)->where('action', 'sync.run')->where('outcome', 'failed')->count() === 7, 'failed sync runs were not audited');
 
 fwrite(STDOUT, "IAM-T10 Syncer PostgreSQL integration passed\n");

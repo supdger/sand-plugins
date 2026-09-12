@@ -15,8 +15,8 @@ Future<void> main() async {
     accessToken: () => token,
   );
   await client.authorize(
-    apiCode: sandIamActions['MATTER_READ']!,
-    requestId: 'matter-dart-read-001',
+    apiCode: sandIamActions['WORK_ITEM_READ']!,
+    requestId: 'work-item-dart-read-001',
   );
   stdout.writeln(sandIamAudience);
 }

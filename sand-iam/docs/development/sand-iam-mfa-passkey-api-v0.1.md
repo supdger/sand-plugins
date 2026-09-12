@@ -18,6 +18,13 @@ SandIAM 的 MFA 只服务于某个应用内的人类身份认证。它不读取�
 ## 路由与中文字段
 
 所有路由以 `/api/sand-iam/v1/auth` 为前缀。含密钥、恢复码、挑战令牌或会话令牌的响应统一 `Cache-Control: no-store`。
+TOTP 建立、TOTP 确认和恢复码再生成都要求调用方为同一业务意图保留同一个 `X-Request-Id`：响应超时后以完全相同的请求重试不会再次建立因子、启用因子或替换恢复码。首次成功响应会给出一次性秘密；幂等重放仅返回安全元数据及 `secret_available=false`，不会重放 `secret`、`otpauth_uri` 或 `recovery_codes`。改变请求内容但复用 request id 返回 `SAND_IAM_IDEMPOTENCY_CONFLICT`。
+
+Passkey 注册 finish 同样以应用用户、Credential 响应和 `X-Request-Id` 原子消费 challenge、创建 credential 并写成功审计；相同请求重试只确认首次结果，不重复创建 credential、消费 finish 限流或追加成功审计。不同请求内容复用 request id 返回幂等冲突，已消费 challenge 改用新 request id 仍按重放拒绝。
+
+MFA challenge verify 与 Passkey authentication finish 签发会话时，也会把 challenge 消费、认证器状态更新、会话、成功审计和加密恢复材料放在同一事务。响应丢失后 30 秒内以完全相同的 challenge、Credential/验证码、来源网络和 `X-Request-Id` 重试，可恢复首次签发的 access/refresh token；不会重复消费恢复码、推进 signCount 或创建会话。恢复密文绑定 challenge token、request id、用途和部署 pepper；超过窗口、篡改、跨用途、来源变化或会话已失效均关闭失败。改用新 request id 重放已消费 challenge 仍按挑战重放拒绝。
+
+Passkey authentication options 也要求一次认证意图复用同一 `X-Request-Id` 和来源网络。挑战创建、options 限流、成功审计和只含密文的幂等记录在同一事务提交；相同请求重试返回完全相同的 challenge，不会创建第二条挑战、重复审计或再次消耗限流。请求来源变化会返回幂等冲突；挑战已被使用、过期或恢复密文不匹配时返回 `SAND_IAM_MFA_CHALLENGE_RETRY_UNAVAILABLE`，客户端必须重新开始一次带新 request id 的认证。
 
 | 路由 | 用途 | 关键入参/输出 |
 | --- | --- | --- |
@@ -51,10 +58,10 @@ SandIAM 的 MFA 只服务于某个应用内的人类身份认证。它不读取�
 
 ## 错误与状态
 
-常见稳定错误码：`SAND_IAM_MFA_CONFIGURATION_UNAVAILABLE`、`SAND_IAM_MFA_TOTP_INVALID`、`SAND_IAM_MFA_TOTP_REPLAYED`、`SAND_IAM_MFA_RECOVERY_CODE_INVALID`、`SAND_IAM_MFA_CHALLENGE_INVALID`、`SAND_IAM_PASSKEY_CLIENT_DATA_INVALID`、`SAND_IAM_PASSKEY_RP_ID_MISMATCH`、`SAND_IAM_PASSKEY_SIGNATURE_INVALID`、`SAND_IAM_PASSKEY_SIGN_COUNT_REPLAYED`。
+常见稳定错误码：`SAND_IAM_MFA_CONFIGURATION_UNAVAILABLE`、`SAND_IAM_MFA_TOTP_INVALID`、`SAND_IAM_MFA_TOTP_REPLAYED`、`SAND_IAM_MFA_RECOVERY_CODE_INVALID`、`SAND_IAM_MFA_CHALLENGE_INVALID`、`SAND_IAM_PASSKEY_CLIENT_DATA_INVALID`、`SAND_IAM_PASSKEY_RP_ID_MISMATCH`、`SAND_IAM_PASSKEY_SIGNATURE_INVALID`、`SAND_IAM_PASSKEY_SIGN_COUNT_REPLAYED`、`SAND_IAM_AUTH_SESSION_RETRY_UNAVAILABLE`。
 
 审计记录开始、成功、失败、重放、跨应用拒绝和撤销，但不记录 secret、OTP、恢复码、challenge 原文、私钥、公钥二进制内容或原始 IP。
 
 ## 验收边界
 
-隔离 PostgreSQL 服务级验收覆盖凭证绑定二次认证、TOTP 注册、同时间步重放、密码后 MFA、恢复码单次消费、跨应用挑战、真实 ES256 `fmt=none` 注册和 passwordless assertion，以及错误 origin、RP ID、签名、userHandle、BE/BS、signCount 与 credential 跨应用拒绝。它不代替真实浏览器/Authenticator、已安装宿主 HTTP 和正式部署验收；这些属于 IAM-T07/T08。
+隔离 PostgreSQL 服务级验收覆盖凭证绑定二次认证、TOTP 注册/确认/恢复码再生成的响应丢失重试、同时间步重放、密码后 MFA、恢复码单次消费、跨应用挑战、真实 ES256 `fmt=none` 注册和 passwordless assertion，以及错误 origin、RP ID、签名、userHandle、BE/BS、signCount 与 credential 跨应用拒绝。它不代替真实浏览器/Authenticator、已安装宿主 HTTP 和正式部署验收；这些属于 IAM-T07/T08。

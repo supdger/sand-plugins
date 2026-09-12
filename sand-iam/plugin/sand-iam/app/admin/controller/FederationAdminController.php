@@ -9,6 +9,8 @@ use plugin\SandIam\app\model\Application;
 use plugin\SandIam\app\model\IdentityProvider;
 use plugin\SandIam\app\model\IdentityProviderApplication;
 use plugin\SandIam\app\service\FederationService;
+use plugin\SandIam\app\service\IdempotencyService;
+use plugin\SandIam\app\service\RequestId;
 use plugin\SandIam\app\service\ScimService;
 use plugin\sandadmin\exception\ApiException;
 use plugin\sandadmin\service\Permission;
@@ -83,13 +85,26 @@ final class FederationAdminController
     public function issueScimToken(Request $request): Response
     {
         [$provider, $applicationId] = $this->providerApplication($request, false);
-        return json((new ScimService())->issueToken(
-            (int) $provider->id,
-            $applicationId,
-            (string) $request->post('name', ''),
-            $this->requestId($request),
-            $request->post('expire_time') === null ? null : (string) $request->post('expire_time'),
-        ))->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache');
+        $payload = [
+            'provider_id' => (int) $provider->id,
+            'application_id' => $applicationId,
+            'name' => (string) $request->post('name', ''),
+            'expire_time' => $request->post('expire_time') === null ? null : (string) $request->post('expire_time'),
+        ];
+        $requestId = $this->requestId($request);
+        $result = (new IdempotencyService())->execute(
+            'admin',
+            $this->actor($request),
+            'scim.token_issue',
+            $requestId,
+            IdempotencyService::fingerprint($payload),
+            'scim_token',
+            function () use ($payload, $requestId): array {
+                $issued = (new ScimService())->issueToken($payload['provider_id'], $payload['application_id'], $payload['name'], $requestId, $payload['expire_time'], false);
+                return ['resource_id' => $issued['id'], 'result' => $issued];
+            },
+        );
+        return json($result['result'])->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache');
     }
 
     #[Permission('SandIAM SCIM 令牌列表', 'sand_iam:scim:token_index')]
@@ -103,7 +118,20 @@ final class FederationAdminController
     public function revokeScimToken(Request $request): Response
     {
         [$provider, $applicationId] = $this->providerApplication($request, false);
-        (new ScimService())->revokeToken((int) $provider->id, $applicationId, (int) $request->post('token_id', 0), $this->requestId($request));
+        $tokenId = (int) $request->post('token_id', 0);
+        $requestId = $this->requestId($request);
+        (new IdempotencyService())->execute(
+            'admin',
+            $this->actor($request),
+            'scim.token_revoke',
+            $requestId,
+            IdempotencyService::fingerprint(['provider_id' => (int) $provider->id, 'application_id' => $applicationId, 'token_id' => $tokenId]),
+            'scim_token',
+            function () use ($provider, $applicationId, $tokenId, $requestId): array {
+                (new ScimService())->revokeToken((int) $provider->id, $applicationId, $tokenId, $requestId, false);
+                return ['resource_id' => $tokenId, 'result' => ['token_id' => $tokenId, 'revoked' => true]];
+            },
+        );
         return json(['revoked' => true])->withHeader('Cache-Control', 'no-store');
     }
 
@@ -136,5 +164,6 @@ final class FederationAdminController
     }
 
     private function access(Request $request): AdminOrganizationAccess { $token = $request->header('check_admin', []); return new AdminOrganizationAccess(is_array($token) ? (int) ($token['id'] ?? 0) : 0, is_array($token) ? $token : null); }
-    private function requestId(Request $request): string { return substr((string) $request->header('X-Request-Id', bin2hex(random_bytes(16))), 0, 96); }
+    private function actor(Request $request): string { $token = $request->header('check_admin', []); return is_array($token) ? (string) ($token['id'] ?? 0) : '0'; }
+    private function requestId(Request $request): string { return RequestId::fromRequestCached($request); }
 }

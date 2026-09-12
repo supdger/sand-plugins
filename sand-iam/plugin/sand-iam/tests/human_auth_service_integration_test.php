@@ -5,12 +5,14 @@ declare(strict_types=1);
 use plugin\SandIam\app\model\Application;
 use plugin\SandIam\app\model\AuditLog;
 use plugin\SandIam\app\model\AuthPolicy;
+use plugin\SandIam\app\model\AuthRateLimit;
 use plugin\SandIam\app\model\AuthRefreshToken;
 use plugin\SandIam\app\model\AuthSession;
 use plugin\SandIam\app\model\AuthVerification;
 use plugin\SandIam\app\model\Identity;
 use plugin\SandIam\app\model\IdentityAuth;
 use plugin\SandIam\app\model\Organization;
+use plugin\SandIam\app\model\SecurityOperation;
 use plugin\SandIam\app\service\HumanAuthService;
 use plugin\SandIam\app\service\OrganizationHumanSessionRevoker;
 use plugin\sandadmin\exception\ApiException;
@@ -148,7 +150,14 @@ $service->requestVerification($applicationRefA + [
 ], 't01-verify-missing-destination');
 
 $loginPayload = $applicationRefA + ['identifier' => $email, 'password' => 'wrong-password'];
-for ($attempt = 0; $attempt < 5; $attempt++) {
+$failedRateBefore = (int) AuthRateLimit::where('application_id', (int) $applicationA->id)->where('action', 'login')->sum('attempt_count');
+expectApiException(static fn () => $service->login($loginPayload, '127.0.0.2', 't01-login-failed-0'), 'SAND_IAM_AUTHENTICATION_FAILED');
+expectApiException(static fn () => $service->login($loginPayload, '127.0.0.2', 't01-login-failed-0'), 'SAND_IAM_AUTHENTICATION_FAILED');
+$failedAuth = IdentityAuth::where('id', (int) $identityAuth->id)->find();
+assertTrue($failedAuth !== null && (int) $failedAuth->failed_login_count === 1, 'same failed login request incremented the account failure count twice');
+assertTrue((int) AuthRateLimit::where('application_id', (int) $applicationA->id)->where('action', 'login')->sum('attempt_count') === $failedRateBefore + 1, 'same failed login request consumed the login rate limit twice');
+assertTrue(AuditLog::where('request_id', 't01-login-failed-0')->where('action', 'identity.login')->count() === 1, 'same failed login request duplicated its failure audit');
+for ($attempt = 1; $attempt < 5; $attempt++) {
     expectApiException(static fn () => $service->login($loginPayload, '127.0.0.2', 't01-login-failed-' . $attempt), 'SAND_IAM_AUTHENTICATION_FAILED');
 }
 expectApiException(
@@ -157,7 +166,26 @@ expectApiException(
 );
 IdentityAuth::where('id', (int) $identityAuth->id)->update(['failed_login_count' => 0, 'locked_until' => null]);
 
-$tokens = $service->login($applicationRefA + ['identifier' => $email, 'password' => $initialPassword], '127.0.0.3', 't01-login-success');
+$successfulLoginPayload = $applicationRefA + ['identifier' => $email, 'password' => $initialPassword];
+$loginRateBefore = (int) AuthRateLimit::where('application_id', (int) $applicationA->id)->where('action', 'login')->sum('attempt_count');
+$tokens = $service->login($successfulLoginPayload, '127.0.0.3', 't01-login-success');
+$tokensRetry = $service->login($successfulLoginPayload, '127.0.0.3', 't01-login-success');
+assertTrue($tokensRetry === $tokens, 'same-request password login did not recover the original token response');
+assertTrue((int) AuthRateLimit::where('application_id', (int) $applicationA->id)->where('action', 'login')->sum('attempt_count') === $loginRateBefore + 1, 'completed password login retry consumed the login rate limit twice');
+assertTrue(AuditLog::where('request_id', 't01-login-success')->where('action', 'identity.login')->count() === 1, 'same-request password login duplicated the success audit');
+$loginOperation = SecurityOperation::where('operation', 'identity.login')->where('request_id', 't01-login-success')->find();
+$loginOperationJson = json_encode($loginOperation?->result, JSON_UNESCAPED_SLASHES);
+assertTrue(
+    $loginOperation !== null
+        && is_string($loginOperationJson)
+        && str_contains($loginOperationJson, 'encrypted_replay')
+        && !str_contains($loginOperationJson, $initialPassword)
+        && !str_contains($loginOperationJson, (string) $tokens['access_token'])
+        && !str_contains($loginOperationJson, (string) $tokens['refresh_token']),
+    'password login retry state persisted plaintext credential material or omitted recovery ciphertext',
+);
+expectApiException(static fn () => $service->login($successfulLoginPayload + ['user_agent' => 'changed'], '127.0.0.3', 't01-login-success'), 'SAND_IAM_IDEMPOTENCY_CONFLICT');
+expectApiException(static fn () => $service->login($successfulLoginPayload, '127.0.0.33', 't01-login-success'), 'SAND_IAM_IDEMPOTENCY_CONFLICT');
 $session = AuthSession::find((int) $tokens['session_id']);
 assertTrue($session !== null, 'login did not create a session');
 assertTrue(!hash_equals((string) $session->access_token_hash, (string) $tokens['access_token']), 'access token was stored in plaintext');
@@ -165,6 +193,25 @@ assertTrue(!hash_equals((string) $session->refresh_token_hash, (string) $tokens[
 assertTrue(count($service->sessions((string) $tokens['access_token'])) === 1, 'active session was not listed');
 
 $rotated = $service->refresh((string) $tokens['refresh_token'], '127.0.0.4', 't01-refresh');
+$rotatedRetry = $service->refresh((string) $tokens['refresh_token'], '127.0.0.4', 't01-refresh');
+assertTrue(
+    hash_equals((string) $rotated['access_token'], (string) $rotatedRetry['access_token'])
+        && hash_equals((string) $rotated['refresh_token'], (string) $rotatedRetry['refresh_token']),
+    'same-request refresh retry did not recover the original rotated token response',
+);
+assertTrue(count($service->sessions((string) $rotatedRetry['access_token'])) === 1, 'safe refresh retry revoked the active session');
+$refreshOperation = SecurityOperation::where('actor_type', 'refresh_token')->where('operation', 'identity.refresh')->where('request_id', 't01-refresh')->find();
+$refreshOperationJson = json_encode($refreshOperation?->result, JSON_UNESCAPED_SLASHES);
+assertTrue(
+    $refreshOperation !== null
+        && is_string($refreshOperationJson)
+        && str_contains($refreshOperationJson, 'encrypted_replay')
+        && !str_contains($refreshOperationJson, (string) $tokens['refresh_token'])
+        && !str_contains($refreshOperationJson, (string) $rotated['access_token'])
+        && !str_contains($refreshOperationJson, (string) $rotated['refresh_token']),
+    'refresh retry state persisted plaintext token material or omitted the authenticated ciphertext',
+);
+assertTrue(AuditLog::where('request_id', 't01-refresh')->where('action', 'identity.refresh')->count() === 1, 'same-request refresh retry duplicated the success audit');
 expectApiException(
     static fn () => $service->refresh((string) $tokens['refresh_token'], '127.0.0.4', 't01-refresh-replay'),
     'SAND_IAM_AUTH_REFRESH_REPLAY_DETECTED',

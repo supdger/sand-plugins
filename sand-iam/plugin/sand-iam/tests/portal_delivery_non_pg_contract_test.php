@@ -11,6 +11,7 @@ $portal = $root . '/portal';
 
 $checks = [
     $portal . '/package.json' => ['"typecheck"', '"build"', '"test:contract"', 'esbuild', 'typescript'],
+    $portal . '/pnpm-workspace.yaml' => ['allowBuilds:', 'esbuild: true'],
     $portal . '/scripts/build.mjs' => ['public/account', 'account.js', 'index.html', 'rm(outputDirectory'],
     $portal . '/src/app.ts' => ['submitOAuthDecision', 'submitCasReject', 'startTotp', 'registerPasskey', 'submitPasskeyLogin', 'startExternalLogin', 'completeFederationCallback', 'defaultPasswordExperience', 'isInteractionExperienceUnavailable', 'http === 404', 'http === 503', 'usingDefaultExperience', 'brand-logo', '服务协议', '隐私政策', 'void loadOAuth();', '登录凭据只留在内存'],
     $portal . '/src/runtime.ts' => ['SAND_IAM_PORTAL_OAUTH_BIND', 'SAND_IAM_PORTAL_OAUTH_CONFIRM', 'SAND_IAM_PORTAL_CAS_REJECT', 'startPortalPasskeyLogin', 'startPortalFederationLogin', 'exchangePortalFederationHandoff', 'credentials: "omit"'],

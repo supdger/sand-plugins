@@ -11,7 +11,7 @@ async function main(): Promise<void> {
     applicationCode: sandIam.applicationCode,
     accessToken: () => credential,
   })
-  await client.authorize({ apiCode: sandIam.actions.MATTER_READ, requestId: 'matter-ts-read-001' })
+  await client.authorize({ apiCode: sandIam.actions.WORK_ITEM_READ, requestId: 'work-item-ts-read-001' })
 }
 
 void main()

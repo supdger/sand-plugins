@@ -9,10 +9,12 @@ use plugin\SandIam\app\model\AuthSession;
 use plugin\SandIam\app\model\OAuthClient;
 use plugin\SandIam\app\model\OAuthGrant;
 use plugin\SandIam\app\model\OAuthToken;
+use plugin\SandIam\app\model\OidcLogoutDelivery;
 use plugin\SandIam\app\model\Organization;
 use plugin\SandIam\app\api\controller\OAuthOidcController;
 use plugin\SandIam\app\service\HumanAuthService;
 use plugin\SandIam\app\service\OAuthOidcService;
+use plugin\SandIam\app\service\OidcLogoutTokenCipher;
 use plugin\sandadmin\exception\ApiException;
 use Webman\Config;
 use Webman\ThinkOrm\ThinkOrm;
@@ -111,6 +113,10 @@ putenv('SAND_IAM_OIDC_ISSUER=https://iam.example.test/api/sand-iam/v1');
 putenv('SAND_IAM_OIDC_PRIVATE_KEY_BASE64=' . base64_encode($privatePem));
 putenv('SAND_IAM_OIDC_KID=t03-ephemeral-rsa');
 putenv('SAND_IAM_OIDC_SUBJECT_KEY=t03-subject-key-that-is-longer-than-32-bytes');
+putenv('SAND_IAM_OIDC_BACKCHANNEL_LOGOUT_ENABLED=1');
+putenv('SAND_IAM_OIDC_LOGOUT_ENCRYPTION_KEY=' . base64_encode(random_bytes(SODIUM_CRYPTO_SECRETBOX_KEYBYTES)));
+putenv('SAND_IAM_OIDC_LOGOUT_ENCRYPTION_KEY_VERSION=t03');
+putenv('SAND_IAM_OIDC_LOGOUT_ENCRYPTION_KEYS={}');
 
 $hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
 $sandIamRoot = dirname(__DIR__, 3);
@@ -140,8 +146,8 @@ t03Assert(isset($user['access_token'], $otherUser['access_token']), 'human login
 $clientId = 't03-public-rp';
 $redirect = 'https://rp.example.test/callback';
 $logoutRedirect = 'https://rp.example.test/logout';
-$public = OAuthClient::create(['application_id' => (int) $applicationA->id, 'code' => $clientId, 'name' => 'T03 public RP', 'client_type' => 'public', 'redirect_uris' => [$redirect], 'post_logout_redirect_uris' => [$logoutRedirect], 'allowed_scopes' => ['openid', 'profile', 'email', 'offline_access'], 'allowed_audiences' => [], 'status' => 1]);
-$secondPublic = OAuthClient::create(['application_id' => (int) $applicationA->id, 'code' => 't03-public-rp-2', 'name' => 'T03 second RP', 'client_type' => 'public', 'redirect_uris' => ['https://rp2.example.test/callback'], 'post_logout_redirect_uris' => [], 'allowed_scopes' => ['openid', 'profile'], 'allowed_audiences' => [], 'status' => 1]);
+$public = OAuthClient::create(['application_id' => (int) $applicationA->id, 'code' => $clientId, 'name' => 'T03 public RP', 'client_type' => 'public', 'redirect_uris' => [$redirect], 'post_logout_redirect_uris' => [$logoutRedirect], 'backchannel_logout_uri' => 'https://rp.example.test/backchannel-logout', 'allowed_scopes' => ['openid', 'profile', 'email', 'offline_access'], 'allowed_audiences' => [], 'status' => 1]);
+$secondPublic = OAuthClient::create(['application_id' => (int) $applicationA->id, 'code' => 't03-public-rp-2', 'name' => 'T03 second RP', 'client_type' => 'public', 'redirect_uris' => ['https://rp2.example.test/callback'], 'post_logout_redirect_uris' => [], 'backchannel_logout_uri' => 'https://rp2.example.test/backchannel-logout', 'allowed_scopes' => ['openid', 'profile'], 'allowed_audiences' => [], 'status' => 1]);
 $consentClient = OAuthClient::create(['application_id' => (int) $applicationA->id, 'code' => 't03-consent-rp', 'name' => 'T03 consent RP', 'client_type' => 'public', 'redirect_uris' => ['https://consent.example.test/callback'], 'post_logout_redirect_uris' => [], 'allowed_scopes' => ['openid', 'profile', 'email'], 'allowed_audiences' => [], 'status' => 1]);
 $machineSecret = 't03-machine-secret';
 $machine = OAuthClient::create(['application_id' => (int) $applicationA->id, 'code' => 't03-machine', 'name' => 'T03 machine client', 'client_type' => 'confidential', 'secret_hash' => password_hash(hash_hmac('sha256', 'client-secret:' . $machineSecret, (string) getenv('SAND_IAM_AUTH_PEPPER')), PASSWORD_ARGON2ID), 'secret_version' => 'v1', 'redirect_uris' => [$redirect], 'post_logout_redirect_uris' => [], 'allowed_scopes' => ['inventory.read'], 'allowed_audiences' => ['https://api.example.test/inventory'], 'default_audience' => 'https://api.example.test/inventory', 'status' => 1]);
@@ -271,6 +277,33 @@ t03Assert(($logout === null ? '' : t03Query($logout['redirect_uri'])['state'] ??
 t03Expect(static fn () => $oauth->userinfo((string) $logoutTokens['access_token'], 't03-after-logout'), 'SAND_IAM_OAUTH_TOKEN_INVALID');
 t03Expect(static fn () => $oauth->userinfo((string) $sameSessionTokens['access_token'], 't03-after-logout-same-session-client'), 'SAND_IAM_OAUTH_TOKEN_INVALID');
 t03Assert(count($human->sessions((string) $otherUser['access_token'])) === 1, 'logout revoked an unrelated application session');
+
+$deadDelivery = OidcLogoutDelivery::where('application_id', (int) $applicationA->id)->where('oauth_client_id', (int) $public->id)->order('id', 'desc')->find();
+t03Assert($deadDelivery !== null && (string) $deadDelivery->state === 'pending', 'logout did not enqueue the primary back-channel delivery');
+$deadEnvelope = (string) $deadDelivery->encrypted_logout_token;
+$deadEventId = (string) $deadDelivery->event_id;
+$deadDelivery->save(['state' => 'dead', 'attempt_count' => 5, 'next_attempt_time' => null, 'last_error_code' => 'T03_FORCED_DEAD', 'status' => 2]);
+$reissued = $oauth->reissueBackchannelLogout((int) $public->id, (int) $applicationA->id, (int) $deadDelivery->id, 't03-admin', 't03-backchannel-reissue');
+t03Assert(($reissued['source_delivery_id'] ?? 0) === (int) $deadDelivery->id && ($reissued['state'] ?? '') === 'pending' && ($reissued['already_reissued'] ?? true) === false, 'dead delivery was not reissued as a fresh pending task');
+$deadAfterReissue = OidcLogoutDelivery::find((int) $deadDelivery->id);
+$successor = OidcLogoutDelivery::find((int) ($reissued['delivery_id'] ?? 0));
+t03Assert($deadAfterReissue !== null && (string) $deadAfterReissue->state === 'dead' && (int) $deadAfterReissue->attempt_count === 5 && (string) $deadAfterReissue->encrypted_logout_token === $deadEnvelope && (string) $deadAfterReissue->event_id === $deadEventId, 'reissue mutated terminal source evidence');
+t03Assert($successor !== null && (string) $successor->state === 'pending' && (int) $successor->attempt_count === 0 && (int) $successor->status === 1 && (string) $successor->event_id !== $deadEventId, 'reissue successor state is invalid');
+$successorEnvelope = json_decode((new OidcLogoutTokenCipher())->decrypt((string) $successor->encrypted_logout_token), true, 8, JSON_THROW_ON_ERROR);
+$successorJwt = t03Jwt((string) ($successorEnvelope['logout_token'] ?? ''));
+t03Assert(($successorEnvelope['target_uri'] ?? '') === 'https://rp.example.test/backchannel-logout' && ($successorJwt['header']['typ'] ?? '') === 'logout+jwt' && ($successorJwt['claims']['jti'] ?? '') === (string) $successor->event_id && ($successorJwt['claims']['sid'] ?? '') === (string) $deadDelivery->auth_session_id && ($successorJwt['claims']['aud'] ?? '') === $clientId && (int) ($successorJwt['claims']['exp'] ?? 0) > time() + 9000, 'reissue did not produce a fresh, correctly bound logout token');
+$replayedReissue = $oauth->reissueBackchannelLogout((int) $public->id, (int) $applicationA->id, (int) $deadDelivery->id, 't03-admin', 't03-backchannel-reissue');
+$coalescedReissue = $oauth->reissueBackchannelLogout((int) $public->id, (int) $applicationA->id, (int) $deadDelivery->id, 't03-admin', 't03-backchannel-reissue-distinct');
+t03Assert(($replayedReissue['delivery_id'] ?? 0) === (int) $successor->id && ($coalescedReissue['delivery_id'] ?? 0) === (int) $successor->id && ($coalescedReissue['already_reissued'] ?? false) === true && OidcLogoutDelivery::where('event_id', (string) $successor->event_id)->count() === 1, 'idempotent or distinct-request recovery created duplicate successors');
+t03Expect(static fn () => $oauth->reissueBackchannelLogout((int) $public->id, (int) $applicationA->id, (int) $successor->id, 't03-admin', 't03-backchannel-pending'), 'SAND_IAM_OIDC_LOGOUT_DELIVERY_NOT_RECOVERABLE');
+t03Expect(static fn () => $oauth->reissueBackchannelLogout((int) $secondPublic->id, (int) $applicationA->id, (int) $deadDelivery->id, 't03-admin', 't03-backchannel-cross-client'), 'SAND_IAM_OIDC_LOGOUT_DELIVERY_NOT_FOUND');
+
+$applicationBClient = OAuthClient::create(['application_id' => (int) $applicationB->id, 'code' => 't03-app-b-rp', 'name' => 'T03 app B RP', 'client_type' => 'public', 'redirect_uris' => ['https://app-b-rp.example.test/callback'], 'post_logout_redirect_uris' => [], 'backchannel_logout_uri' => 'https://app-b-rp.example.test/backchannel-logout', 'allowed_scopes' => ['openid'], 'allowed_audiences' => [], 'status' => 1]);
+$activeSessionDelivery = OidcLogoutDelivery::create(['application_id' => (int) $applicationB->id, 'oauth_client_id' => (int) $applicationBClient->id, 'auth_session_id' => (int) $otherUser['session_id'], 'event_id' => 'bcl_' . bin2hex(random_bytes(16)), 'encrypted_logout_token' => (new OidcLogoutTokenCipher())->encrypt('{"test":"active-session"}'), 'state' => 'dead', 'attempt_count' => 5, 'last_error_code' => 'T03_FORCED_DEAD', 'status' => 2]);
+t03Expect(static fn () => $oauth->reissueBackchannelLogout((int) $applicationBClient->id, (int) $applicationB->id, (int) $activeSessionDelivery->id, 't03-admin', 't03-backchannel-active-session'), 'SAND_IAM_OIDC_LOGOUT_SESSION_NOT_REVOKED');
+$public->save(['status' => 2]);
+t03Expect(static fn () => $oauth->reissueBackchannelLogout((int) $public->id, (int) $applicationA->id, (int) $deadDelivery->id, 't03-admin', 't03-backchannel-disabled-client'), 'SAND_IAM_OIDC_BACKCHANNEL_CLIENT_UNAVAILABLE');
+$public->save(['status' => 1]);
 
 $applicationA->save(['status' => 2]);
 t03Expect(static fn () => $oauth->verifyAccessTokenForAudience((string) $machineTokens['access_token'], 'https://api.example.test/inventory'), 'SAND_IAM_OAUTH_TOKEN_INVALID');

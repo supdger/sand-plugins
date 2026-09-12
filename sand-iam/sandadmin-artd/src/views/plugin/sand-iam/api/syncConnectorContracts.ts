@@ -1,10 +1,12 @@
 /**
- * SyncConnectorController::safe 与 SyncRun 表列已冻结。
- * 不解析 encrypted_config、encrypted_cursor、来源 ID、快照或驱动原始响应。
+ * SyncConnectorController::safe、SyncRun 表列与 outboxPayload 已冻结。
+ * 不解析 encrypted_config、encrypted_cursor、encrypted_payload、来源 ID、快照或驱动原始响应。
  */
 
 export type SandIamSyncDirection = 'inbound' | 'outbound' | 'bidirectional'
 export type SandIamSyncRunState = 'running' | 'succeeded' | 'failed'
+export type SandIamSyncOutboxState = 'pending' | 'succeeded' | 'failed'
+export type SandIamSyncOutboxOperation = 'create' | 'update' | 'disable' | 'delete'
 
 export interface SandIamSyncConnectorRow {
   readonly id: number
@@ -35,6 +37,20 @@ export interface SandIamSyncRunRow {
   readonly disabled: number
   readonly conflict: number
   readonly error_code: string | null
+}
+
+/**
+ * 对应 SyncConnectorController::outboxPayload。
+ * 只保留列表与精确重试需要的字段；密文载荷即使出现在响应里也不读取。
+ */
+export interface SandIamSyncOutboxRow {
+  readonly id: number
+  readonly event_id: string
+  readonly operation: SandIamSyncOutboxOperation
+  readonly state: SandIamSyncOutboxState
+  readonly attempt_count: number
+  readonly error_code: string | null
+  readonly time: string | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -161,4 +177,60 @@ export function parseSandIamSyncRuns(value: unknown): SandIamSyncRunRow[] {
   return unwrapList(value)
     .map((item) => parseSandIamSyncRun(item))
     .filter((item): item is SandIamSyncRunRow => item !== null)
+}
+
+export function syncOutboxOperationLabel(operation: SandIamSyncOutboxOperation): string {
+  if (operation === 'create') return '新增'
+  if (operation === 'update') return '更新'
+  if (operation === 'disable') return '停用'
+  return '删除'
+}
+
+export function syncOutboxStateLabel(state: SandIamSyncOutboxState): string {
+  if (state === 'pending') return '待处理'
+  if (state === 'succeeded') return '已完成'
+  return '失败'
+}
+
+/**
+ * 解析单条脱敏出站事件。
+ * 故意不读取 encrypted_payload / payload / ciphertext，避免页面接触密文。
+ */
+export function parseSandIamSyncOutbox(value: unknown): SandIamSyncOutboxRow | null {
+  if (!isRecord(value)) return null
+  const id = readPositiveInt(value.id)
+  const eventId = value.event_id
+  const operation = value.operation
+  const state = value.state
+  const attemptCount = readCount(value.attempt_count)
+  if (
+    id === null ||
+    typeof eventId !== 'string' ||
+    eventId === '' ||
+    (operation !== 'create' &&
+      operation !== 'update' &&
+      operation !== 'disable' &&
+      operation !== 'delete') ||
+    (state !== 'pending' && state !== 'succeeded' && state !== 'failed') ||
+    attemptCount === null
+  ) {
+    return null
+  }
+  const updateTime = typeof value.update_time === 'string' ? value.update_time : null
+  const createTime = typeof value.create_time === 'string' ? value.create_time : null
+  return {
+    id,
+    event_id: eventId,
+    operation,
+    state,
+    attempt_count: attemptCount,
+    error_code: typeof value.error_code === 'string' ? value.error_code : null,
+    time: updateTime ?? createTime
+  }
+}
+
+export function parseSandIamSyncOutboxRows(value: unknown): SandIamSyncOutboxRow[] {
+  return unwrapList(value)
+    .map((item) => parseSandIamSyncOutbox(item))
+    .filter((item): item is SandIamSyncOutboxRow => item !== null)
 }

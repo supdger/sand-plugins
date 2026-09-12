@@ -127,6 +127,7 @@ release070Assert('035 records the required migration identity fields and guards 
     && str_contains($ledger, "WHERE revision <= 35")
     && str_contains($ledger, 'recorded_rows = expected_rows - 1')
     && str_contains($ledger, 'recorded_rows = expected_rows - 2')
+    && str_contains($ledger, 'recorded_rows = expected_rows - 3')
     && str_contains($ledger, "('036_acceptance_fixture_support.pgsql', 36,"));
 $sourceMigrationNames = array_map('basename', glob($migrations . '/*.pgsql') ?: []);
 sort($sourceMigrationNames, SORT_STRING);
@@ -156,6 +157,18 @@ release070Assert('037 is root/package-identical, self-checksummed, append-only i
     && str_contains($draftMigration, 'parent menu SandIAMConnection is missing')
     && str_contains($draftMigration, 'initialization-draft permission fingerprint is incompatible')
     && !str_contains($draftMigration, 'sand_system_role_menu'));
+$retentionMigration = (string) file_get_contents($migrations . '/038_auth_rate_limit_retention.pgsql');
+$packageRetentionMigration = (string) file_get_contents($packageMigrations . '/038_auth_rate_limit_retention.pgsql');
+preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $retentionMigration, $retentionChecksum);
+release070Assert('038 is root/package-identical, self-checksummed, indexed and append-only in the ledger',
+    hash('sha256', $retentionMigration) === hash('sha256', $packageRetentionMigration)
+    && isset($retentionChecksum[1])
+    && hash('sha256', str_replace($retentionChecksum[1], '__SELF_SHA256__', $retentionMigration)) === $retentionChecksum[1]
+    && str_contains($retentionMigration, "SELECT '038_auth_rate_limit_retention.pgsql', 38")
+    && str_contains($retentionMigration, '(SELECT count(*) FROM sand_iam_schema_migration) <> 39')
+    && str_contains($retentionMigration, 'idx_sand_iam_auth_rate_limit_retention')
+    && str_contains($retentionMigration, "pg_get_indexdef(actual_index.indexrelid, 1, true) = 'window_start'")
+    && str_contains($retentionMigration, "pg_get_indexdef(actual_index.indexrelid, 2, true) = 'id'"));
 preg_match('/base_tables text\[\] := ARRAY\[([^;]+)\];/', $ledger, $baseTableMatch);
 preg_match_all("/'(sand_iam_[a-z0-9_]+)'/", $baseTableMatch[1] ?? '', $baseTableMatches);
 $ledgerBaseTables = array_values(array_unique($baseTableMatches[1] ?? []));
@@ -232,13 +245,15 @@ $expectedUpdate = [
     '035_schema_migration_ledger.pgsql',
     '036_acceptance_fixture_support.pgsql',
     '037_initialization_draft.pgsql',
+    '038_auth_rate_limit_retention.pgsql',
 ];
-release070Assert('fresh-install lifecycle is root/package identical and contains the 035 ledger, 036 support, and 037 drafts',
+release070Assert('fresh-install lifecycle is root/package identical and contains the 035-038 release migrations',
     hash('sha256', $install) === hash('sha256', $packageInstall)
     && str_contains($install, '-- lifecycle source: migrations/035_schema_migration_ledger.pgsql')
     && str_contains($install, '-- lifecycle source: migrations/036_acceptance_fixture_support.pgsql')
-    && str_contains($install, '-- lifecycle source: migrations/037_initialization_draft.pgsql'));
-release070Assert('0.6.0 to 0.7.0 update lifecycle is root/package identical and contains exactly 033-037',
+    && str_contains($install, '-- lifecycle source: migrations/037_initialization_draft.pgsql')
+    && str_contains($install, '-- lifecycle source: migrations/038_auth_rate_limit_retention.pgsql'));
+release070Assert('0.6.0 to 0.7.0 update lifecycle is root/package identical and contains exactly 033-038',
     hash('sha256', $update) === hash('sha256', $packageUpdate)
     && release070PayloadSources($update) === $expectedUpdate
     && !str_contains($update, '-- lifecycle source: migrations/021_admin_permission_catalog.pgsql'));
@@ -251,14 +266,14 @@ $packageInfo = parse_ini_file($package . '/info.ini');
 $appConfig = (string) file_get_contents($package . '/config/app.php');
 $portal = json_decode((string) file_get_contents($root . '/portal/package.json'), true);
 $managementCatalog = (string) file_get_contents($package . '/app/developer/ManagementApiCatalog.php');
-release070Assert('0.7.0 release metadata declares matching SandAdmin 6.x support while OpenAPI stays 0.12.0-candidate',
+release070Assert('0.7.0 release metadata declares matching SandAdmin 6.x support while OpenAPI stays 0.13.0-candidate',
     ($rootInfo['version'] ?? null) === '0.7.0'
     && ($packageInfo['version'] ?? null) === '0.7.0'
     && ($rootInfo['support'] ?? null) === '6.x'
     && ($packageInfo['support'] ?? null) === '6.x'
     && str_contains($appConfig, "'version' => '0.7.0'")
     && is_array($portal) && ($portal['version'] ?? null) === '0.7.0'
-    && str_contains($managementCatalog, "'version' => '0.12.0-candidate'"));
+    && str_contains($managementCatalog, "'version' => '0.13.0-candidate'"));
 
 $rootRecovery = (string) file_get_contents($root . '/recovery/failed-upgrade.v2.json');
 $packageRecovery = (string) file_get_contents($package . '/recovery/failed-upgrade.v2.json');

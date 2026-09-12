@@ -121,7 +121,7 @@ $checks = [
     'tool checks composer, SAML runtime and protocol adapter' => static function () use ($tool): bool {
         $source = file_get_contents($tool);
         return is_string($source)
-            && str_contains($source, 'composer declares locked SAML runtime dependency')
+            && str_contains($source, 'composer declares complete platform and locked SAML runtime dependency')
             && str_contains($source, 'SAML dependency resolves through composer autoload')
             && str_contains($source, 'protocol adapter guards and references the declared SAML runtime');
     },
@@ -136,14 +136,22 @@ $checks = [
         return str_contains($source, 'package-payload-policy.php')
             && in_array('plugin/sand-iam/vendor/autoload.php', $payload, true)
             && in_array('docs/user-guide/sand-iam-operator-guide.md', $payload, true)
+            && in_array('plugin/sand-iam/bin/check-runtime-configuration.php', $payload, true)
+            && in_array('plugin/sand-iam/bin/RuntimeConfigurationPreflight.php', $payload, true)
+            && in_array('plugin/sand-iam/bin/check-runtime-requirements.php', $payload, true)
+            && in_array('plugin/sand-iam/bin/RuntimeRequirementsPreflight.php', $payload, true)
+            && in_array('docs/user-guide/configuration-reference.md', $payload, true)
             && !in_array('docs/development/sand-iam-task-board.md', $payload, true)
             && !in_array('plugin/sand-iam/tests/package_integrity_contract_non_pg_test.php', $payload, true)
+            && !in_array('sdk/dart/test/client_test.dart', $payload, true)
+            && !in_array('sdk/dart/test/management_client_test.dart', $payload, true)
             && !in_array('sandadmin-artd/src/views/plugin/sand-iam/getting-started/wizardState.contract.test.ts', $payload, true)
             && !in_array('sandadmin-artd/src/views/plugin/sand-iam/getting-started/getting-started.behavior.ts', $payload, true)
             && str_contains($source, 'admin UI payload')
             && str_contains($source, 'account portal runtime source and packaged assets')
             && str_contains($source, 'public/account/account.js')
             && str_contains($source, 'SDK and user-facing documentation')
+            && str_contains($source, 'CycloneDX SBOM matches committed dependency locks')
             && str_contains($source, 'PostgreSQL SQL has no sa_* business table or MySQL dialect')
             && str_contains($source, 'release metadata versions and host support are consistent')
             && str_contains($source, "'/^\\d+\\.x(?:\\|\\d+\\.x)*$/'")

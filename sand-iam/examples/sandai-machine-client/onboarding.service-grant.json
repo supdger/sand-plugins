@@ -1,9 +1,0 @@
-{
-  "service_grants": [
-    {
-      "service_code": "sand-ai",
-      "action_code": "inference.chat",
-      "audience": "sand-ai"
-    }
-  ]
-}

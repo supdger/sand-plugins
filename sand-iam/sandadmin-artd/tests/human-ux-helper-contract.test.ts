@@ -79,6 +79,7 @@ import {
 } from "../src/views/plugin/sand-iam/api/importContracts";
 import {
   parseSandIamSyncConnectors,
+  parseSandIamSyncOutboxRows,
   syncConfigLabel,
 } from "../src/views/plugin/sand-iam/api/syncConnectorContracts";
 import {
@@ -1597,6 +1598,50 @@ const syncConnector = parseSandIamSyncConnectors({
 assert.equal(syncConnector?.name, "人事库");
 assert.equal(syncConnector !== undefined && "encrypted_config" in syncConnector, false);
 assert.equal(syncConfigLabel(true, 1), "已配置（版本 1）");
+const failedOutbox = parseSandIamSyncOutboxRows({
+  data: [
+    {
+      id: 11,
+      sync_connector_id: 2,
+      application_id: 3,
+      identity_id: 8,
+      event_id: "sync-event-0001",
+      operation: "update",
+      state: "failed",
+      attempt_count: 3,
+      error_code: "SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED",
+      delivered_time: null,
+      create_time: "2026-09-12 08:00:00",
+      update_time: "2026-09-12 08:10:00",
+      encrypted_payload: "must-not-surface",
+      payload: { secret: "must-not-surface" },
+      ciphertext: "must-not-surface",
+    },
+    {
+      id: 12,
+      event_id: "sync-event-pending",
+      operation: "create",
+      state: "pending",
+      attempt_count: 0,
+    },
+  ],
+});
+assert.equal(failedOutbox.length, 2);
+assert.equal(failedOutbox[0]?.event_id, "sync-event-0001");
+assert.equal(failedOutbox[0]?.operation, "update");
+assert.equal(failedOutbox[0]?.state, "failed");
+assert.equal(failedOutbox[0]?.attempt_count, 3);
+assert.equal(failedOutbox[0]?.error_code, "SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED");
+assert.equal(failedOutbox[0]?.time, "2026-09-12 08:10:00");
+assert.equal(failedOutbox[0] !== undefined && "encrypted_payload" in failedOutbox[0], false);
+assert.equal(failedOutbox[0] !== undefined && "payload" in failedOutbox[0], false);
+assert.equal(failedOutbox[0] !== undefined && "ciphertext" in failedOutbox[0], false);
+assert.equal(
+  parseSandIamSyncOutboxRows({
+    data: [{ id: 13, event_id: "bad", operation: "unknown", state: "failed", attempt_count: 1 }],
+  }).length,
+  0,
+);
 
 assert.equal(
   describeRegistrationTokenIssueError("用途", "https://app.example.com", "openid", 24, 1)

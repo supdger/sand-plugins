@@ -63,3 +63,4 @@ Codex `SAND-113C` 此前在 `/Users/code/project` 与 `/Users/supdger/Documents/
 | 2026-08-30 | 协作通道恢复 | 用户要求恢复与 Codex 通信；重跑 `start_goal.sh`、拉起已退出的 DETECT watcher；向 Codex 交付 U-05B/UX-01B/UX-02 Cursor 证据与权威包回同步缺口。 | 交互 Agent 与 Autopilot 通道在线；FLOW 计数不上调 | `.cursor/autopilot/executions/CURSOR-PING-20260830.md`、任务看板 |
 | 2026-08-31 | 协作通道开启 | 用户确认 Codex 已恢复并要求开启协作；重拉 DETECT watcher（pid 14997）；向 Codex 重投 U-05B/UX-01B/UX-02 证据与权威包回同步缺口。 | 交互 Agent 与 Autopilot 通道在线；FLOW 计数不上调 | `.cursor/autopilot/executions/CURSOR-PING-20260831.md`、任务看板 |
 | 2026-08-31 | DETECT 去重 | 用户授权清除重复 watcher：`SIGTERM` 仍存活的 14997，保留值班 99262。未关 Autopilot、未改 backoff、未重拉、未改 Codex 队列。 | 通道仍在线；仅单实例值班 | `.cursor/autopilot/executions/DETECT-01.md`、任务看板 |
+| 2026-09-12 | Codex Goal 对接 | Codex Goal `01a091cd`（完整开源成品交付）已 active，并关闭旧 Autopilot 循环。Cursor 交互 Agent 在线对齐该 Goal；不重开 DETECT watcher；无新冻结前端面。 | 交互通道在线；旧循环保持停止；FLOW 不上调 | `.cursor/autopilot/executions/CURSOR-PING-20260912.md`、任务看板 |

@@ -27,22 +27,22 @@ final class ScimService
     public function __construct(private readonly AuditWriter $audit = new AuditWriter()) {}
 
     /** @return array{token:string,id:int} */
-    public function issueToken(int $providerId, int $applicationId, string $name, string $requestId, ?string $expireTime = null): array
+    public function issueToken(int $providerId, int $applicationId, string $name, string $requestId, ?string $expireTime = null, bool $manageTransaction = true): array
     {
         $provider = $this->provider($providerId, $applicationId);
         if (!preg_match('/^.{1,128}$/u', $name)) throw new ApiException('SAND_IAM_SCIM_TOKEN_NAME_INVALID', 400);
         $plain = 'sisc_' . rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
         try {
-            Db::startTrans();
+            if ($manageTransaction) Db::startTrans();
             $provider = $this->lockedProvider($provider, $applicationId);
             $record = ScimToken::create(['application_id' => $applicationId, 'identity_provider_id' => (int) $provider->id, 'name' => $name, 'token_hash' => $this->tokenHash($plain), 'expire_time' => $this->tokenExpireTime($expireTime), 'status' => 1]);
-            Db::commit();
+            $this->audit($provider, $applicationId, 'scim.token_issue', 'succeeded', $requestId, ['token_id' => (int) $record->id]);
+            if ($manageTransaction) Db::commit();
         } catch (\Throwable $exception) {
-            Db::rollback();
+            if ($manageTransaction) Db::rollback();
             if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SCIM_TOKEN_CONFLICT', 409);
             throw $exception;
         }
-        $this->audit($provider, $applicationId, 'scim.token_issue', 'succeeded', $requestId, ['token_id' => (int) $record->id]);
         return ['token' => $plain, 'id' => (int) $record->id];
     }
 
@@ -63,18 +63,18 @@ final class ScimService
         ], ScimToken::where('identity_provider_id', (int) $provider->id)->where('application_id', $applicationId)->order('id', 'desc')->select()->all());
     }
 
-    public function revokeToken(int $providerId, int $applicationId, int $tokenId, string $requestId): void
+    public function revokeToken(int $providerId, int $applicationId, int $tokenId, string $requestId, bool $manageTransaction = true): void
     {
         $provider = $this->provider($providerId, $applicationId);
-        Db::startTrans();
+        if ($manageTransaction) Db::startTrans();
         try {
             $provider = $this->lockedProvider($provider, $applicationId);
             $token = ScimToken::where('id',$tokenId)->where('identity_provider_id',(int)$provider->id)->where('application_id',$applicationId)->where('status',1)->lock(true)->find();
             if ($token === null) throw new ApiException('SAND_IAM_SCIM_TOKEN_NOT_FOUND',404);
             $token->save(['status'=>2,'revoked_time'=>date('Y-m-d H:i:s')]);
-            Db::commit();
-        } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
-        $this->audit($provider, $applicationId, 'scim.token_revoke','succeeded',$requestId,['token_id'=>$tokenId]);
+            $this->audit($provider, $applicationId, 'scim.token_revoke','succeeded',$requestId,['token_id'=>$tokenId]);
+            if ($manageTransaction) Db::commit();
+        } catch (\Throwable $exception) { if ($manageTransaction) Db::rollback(); throw $exception; }
     }
 
     /** @return array{0:IdentityProvider,1:int} */

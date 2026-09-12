@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+// behavior-test-gate: static-rule
+
 use plugin\SandIam\app\model\OAuthClient;
 use plugin\SandIam\app\oidc\NativeOidcBackchannelHttpAdapter;
 use plugin\SandIam\app\service\OAuthOidcService;
@@ -40,8 +42,32 @@ if ($rotated->decrypt($encrypted) !== $plain || !str_starts_with($rotated->encry
 
 $claimsMethod = new ReflectionMethod(OAuthOidcService::class, 'backchannelLogoutClaims'); $claimsMethod->setAccessible(true);
 $client = new OAuthClient(); $client->code = 'rp-client';
-$claims = $claimsMethod->invoke(new OAuthOidcService(), $client, 'session-100', 'bcl_1234567890abcdef', 1_777_777_777);
+$oauth = new OAuthOidcService();
+$claims = $claimsMethod->invoke($oauth, $client, 'session-100', 'bcl_1234567890abcdef', 1_777_777_777);
 if (($claims['aud'] ?? '') !== 'rp-client' || ($claims['sid'] ?? '') !== 'session-100' || isset($claims['nonce']) || !isset($claims['events']['http://schemas.openid.net/event/backchannel-logout'])) t11BackFail('logout token claims invalid');
+
+$recoveryIdMethod = new ReflectionMethod(OAuthOidcService::class, 'backchannelRecoveryEventId'); $recoveryIdMethod->setAccessible(true);
+$recoveryId = (string) $recoveryIdMethod->invoke($oauth, 'bcl_1234567890abcdef');
+$sameRecoveryId = (string) $recoveryIdMethod->invoke($oauth, 'bcl_1234567890abcdef');
+$nextRecoveryId = (string) $recoveryIdMethod->invoke($oauth, $recoveryId);
+if (!preg_match('/^bcl_r_[a-f0-9]{32}$/', $recoveryId) || !hash_equals($recoveryId, $sameRecoveryId) || hash_equals($recoveryId, $nextRecoveryId)) t11BackFail('recovery event ids are not deterministic, bounded and chainable');
+
+$serviceSource = (string) file_get_contents($root . '/plugin/sand-iam/app/service/OAuthOidcService.php');
+$controllerSource = (string) file_get_contents($root . '/plugin/sand-iam/app/admin/controller/OAuthClientController.php');
+$routeSource = (string) file_get_contents($root . '/plugin/sand-iam/config/route.php');
+foreach ([
+    'function reissueBackchannelLogout(',
+    "(string) \$source->state !== 'dead'",
+    "(int) \$source->status !== 2",
+    "whereNotNull('revoked_time')",
+    "'source_event_digest' => hash('sha256'",
+    "'successor_event_digest' => hash('sha256'",
+    "'state' => 'pending'",
+    "'attempt_count' => 0",
+] as $fragment) if (!str_contains($serviceSource, $fragment)) t11BackFail("recovery service omits {$fragment}");
+foreach (['function logoutDeliveries(', 'function reissueLogoutDelivery(', "'sand_iam:oauth_client:read'", "'sand_iam:oauth_client:update'", 'logoutDeliveryPayload'] as $fragment) if (!str_contains($controllerSource, $fragment)) t11BackFail("recovery controller omits {$fragment}");
+foreach (['/oauth-client/logout-delivery/index', '/oauth-client/logout-delivery/reissue'] as $fragment) if (!str_contains($routeSource, $fragment)) t11BackFail("recovery route omits {$fragment}");
+if (str_contains($controllerSource, "'encrypted_logout_token' =>")) t11BackFail('recovery DTO exposes encrypted logout token');
 
 $destination = new ReflectionMethod(NativeOidcBackchannelHttpAdapter::class, 'destination'); $destination->setAccessible(true);
 t11BackExpect(static fn () => $destination->invoke(new NativeOidcBackchannelHttpAdapter(), 'http://rp.example.test/logout'), 'SAND_IAM_OIDC_BACKCHANNEL_URI_INVALID');

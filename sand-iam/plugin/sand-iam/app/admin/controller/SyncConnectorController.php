@@ -7,8 +7,10 @@ namespace plugin\SandIam\app\admin\controller;
 use plugin\SandIam\app\admin\support\AdminOrganizationAccess;
 use plugin\SandIam\app\model\Application;
 use plugin\SandIam\app\model\SyncConnector;
+use plugin\SandIam\app\model\SyncOutbox;
 use plugin\SandIam\app\model\SyncRun;
 use plugin\SandIam\app\service\AuditWriter;
+use plugin\SandIam\app\service\RequestId;
 use plugin\SandIam\app\service\SyncConnectorService;
 use plugin\sandadmin\basic\BaseController;
 use plugin\sandadmin\exception\ApiException;
@@ -53,11 +55,27 @@ final class SyncConnectorController extends BaseController
     public function run(Request $request): Response { $connector = $this->connector($request); return $this->success((new SyncConnectorService())->run((int) $connector->id, (int) $connector->application_id, $this->actor($request), $this->requestId($request)), '同步执行完成'); }
     #[Permission('SandIAM 同步记录', 'sand_iam:sync_run:index')]
     public function runs(Request $request): Response { $connector = $this->connector($request); return $this->success(SyncRun::where('sync_connector_id', (int) $connector->id)->order('id', 'desc')->paginate(['page' => max(1, (int) $request->input('page', 1)), 'list_rows' => min(100, max(1, (int) $request->input('limit', 20)))])->toArray()); }
+    #[Permission('SandIAM 同步出站事件', 'sand_iam:sync_run:index')]
+    public function outbox(Request $request): Response
+    {
+        $connector = $this->connector($request); $state = trim((string) $request->input('state', ''));
+        if ($state !== '' && !in_array($state, ['pending', 'succeeded', 'failed'], true)) throw new ApiException('SAND_IAM_VALIDATION_ERROR: 同步出站状态无效', 400);
+        $query = SyncOutbox::where('sync_connector_id', (int) $connector->id)->where('application_id', (int) $connector->application_id)->order('id', 'desc'); if ($state !== '') $query->where('state', $state);
+        $result = $query->paginate(['page' => max(1, (int) $request->input('page', 1)), 'list_rows' => min(100, max(1, (int) $request->input('limit', 20)))])->toArray();
+        $result['data'] = array_map(fn (array $item): array => $this->outboxPayload($item), $result['data'] ?? []); return $this->success($result);
+    }
+    #[Permission('SandIAM 同步出站重试', 'sand_iam:sync_run:run')]
+    public function retryOutbox(Request $request): Response
+    {
+        $connector = $this->connector($request); $outboxId = (int) $request->post('outbox_id', 0); if ($outboxId <= 0) throw new ApiException('SAND_IAM_VALIDATION_ERROR: 同步出站事件编号无效', 400);
+        (new SyncConnectorService())->retryOutbound((int) $connector->id, (int) $connector->application_id, $outboxId, $this->actor($request), $this->requestId($request)); return $this->success('同步出站事件已重新排队');
+    }
     private function connector(Request $request): SyncConnector { $connector = SyncConnector::find((int) $request->input('id', $request->post('id', 0))); if ($connector === null) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404); $this->access($request)->assertApplication((int) $connector->application_id); return $connector; }
     /** @param array<string,mixed> $item @return array<string,mixed> */ private function safe(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'application_id' => (int) ($item['application_id'] ?? 0), 'code' => (string) ($item['code'] ?? ''), 'name' => (string) ($item['name'] ?? ''), 'direction' => (string) ($item['direction'] ?? ''), 'driver_code' => (string) ($item['driver_code'] ?? ''), 'conflict_policy' => (string) ($item['conflict_policy'] ?? ''), 'missing_protection_hours' => (int) ($item['missing_protection_hours'] ?? 0), 'disable_threshold_percent' => (int) ($item['disable_threshold_percent'] ?? 0), 'config_version' => (int) ($item['config_version'] ?? 0), 'config_configured' => !empty($item['encrypted_config']), 'cursor_configured' => !empty($item['encrypted_cursor']), 'last_sync_time' => $item['last_sync_time'] ?? null, 'status' => (int) ($item['status'] ?? 0)]; }
+    /** @param array<string,mixed> $item @return array<string,mixed> */ private function outboxPayload(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'sync_connector_id' => (int) ($item['sync_connector_id'] ?? 0), 'application_id' => (int) ($item['application_id'] ?? 0), 'identity_id' => (int) ($item['identity_id'] ?? 0), 'event_id' => (string) ($item['event_id'] ?? ''), 'operation' => (string) ($item['operation'] ?? ''), 'state' => (string) ($item['state'] ?? ''), 'attempt_count' => (int) ($item['attempt_count'] ?? 0), 'error_code' => $item['error_code'] ?? null, 'delivered_time' => $item['delivered_time'] ?? null, 'create_time' => $item['create_time'] ?? null, 'update_time' => $item['update_time'] ?? null]; }
     private function direction(string $value): string { if (!in_array($value, ['inbound', 'outbound', 'bidirectional'], true)) throw new ApiException('SAND_IAM_VALIDATION_ERROR: 同步方向无效', 400); return $value; }
     private function access(Request $request): AdminOrganizationAccess { $token = $request->header('check_admin', []); return new AdminOrganizationAccess(is_array($token) ? (int) ($token['id'] ?? 0) : 0, is_array($token) ? $token : null); }
     private function actor(Request $request): string { $token = $request->header('check_admin', []); return (string) (is_array($token) ? ($token['id'] ?? 0) : 0); }
-    private function requestId(Request $request): string { return substr((string) $request->header('X-Request-Id', ''), 0, 96); }
+    private function requestId(Request $request): string { return RequestId::fromRequestCached($request); }
     private function audit(SyncConnector $connector, string $action, Request $request): void { (new AuditWriter())->write('admin', $this->actor($request), (int) $connector->organization_id, (int) $connector->application_id, $action, 'sync_connector', (int) $connector->id, 'succeeded', $this->requestId($request) ?: bin2hex(random_bytes(16))); }
 }

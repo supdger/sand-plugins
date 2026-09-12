@@ -6,6 +6,7 @@ use plugin\SandIam\app\process\RadiusServerWorker;
 use plugin\SandIam\app\process\RadiusAccountingWorker;
 use plugin\SandIam\app\process\AuditOperationsWorker;
 use plugin\SandIam\app\process\DirectorySyncWorker;
+use plugin\SandIam\app\process\SecurityOperationRetentionWorker;
 
 // Workers are opt-in. An enabled deployment must finish the matching lifecycle
 // migration and operational acceptance before it starts a worker.
@@ -51,6 +52,16 @@ if ((string) env('SAND_IAM_RADIUS_WORKER_ENABLED', '0') === '1') {
 if ((string) env('SAND_IAM_AUDIT_ARCHIVE_WORKER_ENABLED', '0') === '1') {
     $processes['sand_iam_audit_archive_worker'] = [
         'handler' => AuditOperationsWorker::class,
+        'count' => 1,
+        'user' => '',
+        'group' => '',
+        'reloadable' => false,
+        'constructor' => [],
+    ];
+}
+if ((string) env('SAND_IAM_SECURITY_OPERATION_RETENTION_WORKER_ENABLED', '0') === '1') {
+    $processes['sand_iam_security_operation_retention_worker'] = [
+        'handler' => SecurityOperationRetentionWorker::class,
         'count' => 1,
         'user' => '',
         'group' => '',

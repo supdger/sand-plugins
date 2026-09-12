@@ -22,7 +22,7 @@ curl -sS -X POST "$SAND_IAM_BASE_URL/app/sand-iam/admin/developer/onboarding/pre
 
 ```sh
 curl -sS -X POST "$SAND_IAM_BASE_URL/app/sand-iam/admin/developer/onboarding/apply" \
-  -H "Cookie: $SAND_ADMIN_COOKIE" -H 'Content-Type: application/json' -H 'X-Request-Id: matter-onboarding-001' \
+  -H "Cookie: $SAND_ADMIN_COOKIE" -H 'Content-Type: application/json' -H 'X-Request-Id: work-item-onboarding-001' \
   --data "$(jq -n --slurpfile manifest onboarding.manifest.json --arg hash "$PREVIEW_HASH" '{manifest: $manifest[0], preview_hash: $hash, apply: true}')"
 ```
 
@@ -30,25 +30,25 @@ curl -sS -X POST "$SAND_IAM_BASE_URL/app/sand-iam/admin/developer/onboarding/app
 
 ## 业务路由与真实对象
 
-将 `config/route.php`、`app/Matter.php`、`app/MatterRepository.php`、`app/MatterController.php` 放入业务项目并改成自己的命名空间/表名。`MatterRepository::findOrFail()` 是唯一读取 `organization_id` 和 `owner_identity_id` 的位置；路由 resolver 在 handler 前完成此加载和 scope 复核。控制器只消费 `$request->resolvedMatter`，不得用请求体里的 owner 或 organization 替代它。
+将 `config/route.php`、`app/WorkItem.php`、`app/WorkItemRepository.php`、`app/WorkItemController.php` 放入业务项目并改成自己的命名空间/表名。`WorkItemRepository::findOrFail()` 是唯一读取 `organization_id` 和 `owner_identity_id` 的位置；路由 resolver 在 handler 前完成此加载和 scope 复核。控制器只消费 `$request->resolvedWorkItem`，不得用请求体里的 owner 或 organization 替代它。
 
-批量归档使用 `collection` resolver，先把每个 ID 加载为对象，任意一条越权就拒绝，handler 不会执行。创建接口没有新对象可加载时，应让 resolver 读取可信的父组织、项目或案件后再允许写入。
+批量关闭使用 `collection` resolver，先把每个 ID 加载为对象，任意一条越权就拒绝，handler 不会执行。创建接口没有新对象可加载时，应让 resolver 读取可信的父组织或父级业务对象后再允许写入。
 
 ## allow、deny 与审计
 
 下面两次请求必须使用不同 `X-Request-Id`；在管理审计中按对应 request id 查询 `authorize.*`、`scope.*` 和业务结果。
 
 ```sh
-# allow：令牌所属身份须有 matter.read/matter.archive 及目标案件的范围权限
-curl -i -X POST "$BUSINESS_BASE_URL/api/matter/v1/matters/101/archive" \
-  -H "Authorization: Bearer $SAND_IAM_ACCESS_TOKEN" -H 'X-Request-Id: matter-allow-001'
+# allow：令牌所属身份须有 work_item.read/work_item.close 及目标工作项的范围权限
+curl -i -X POST "$BUSINESS_BASE_URL/api/work-items/v1/items/101/close" \
+  -H "Authorization: Bearer $SAND_IAM_ACCESS_TOKEN" -H 'X-Request-Id: work-item-allow-001'
 
-# deny：换成无权限身份或跨组织案件；应为 403，业务记录不能归档
-curl -i -X POST "$BUSINESS_BASE_URL/api/matter/v1/matters/202/archive" \
-  -H "Authorization: Bearer $SAND_IAM_ACCESS_TOKEN_DENY" -H 'X-Request-Id: matter-deny-001'
+# deny：换成无权限身份或跨组织工作项；应为 403，业务记录不能关闭
+curl -i -X POST "$BUSINESS_BASE_URL/api/work-items/v1/items/202/close" \
+  -H "Authorization: Bearer $SAND_IAM_ACCESS_TOKEN_DENY" -H 'X-Request-Id: work-item-deny-001'
 
 # 管理员登录态下核对审计（也可在 SandIAM“审计”页面按 request_id 筛选）
-curl -sS "$SAND_IAM_BASE_URL/app/sand-iam/admin/audit/index?request_id=matter-allow-001" \
+curl -sS "$SAND_IAM_BASE_URL/app/sand-iam/admin/audit/index?request_id=work-item-allow-001" \
   -H "Cookie: $SAND_ADMIN_COOKIE"
 ```
 

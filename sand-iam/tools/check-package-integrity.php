@@ -378,8 +378,9 @@ $assert('generated lifecycle separates full install from 0.6.0 to 0.7.0 update a
         '035_schema_migration_ledger.pgsql',
         '036_acceptance_fixture_support.pgsql',
         '037_initialization_draft.pgsql',
+        '038_auth_rate_limit_retention.pgsql',
     ]) {
-        throw new RuntimeException('0.7.0 update manifest must contain exactly 033-037');
+        throw new RuntimeException('0.7.0 update manifest must contain exactly 033-038');
     }
     foreach ($updateMigrationNames as $name) {
         $source = file_get_contents($root . '/migrations/' . $name);
@@ -498,7 +499,7 @@ $assert('published 0.6.0 migration 021 remains byte-immutable in root and packag
     return true;
 });
 
-$assert('migration ledger catalogs every shipped migration and registers the 037 draft checksum', static function () use ($root, $manifestMigrationNames): bool {
+$assert('migration ledger catalogs every shipped migration and registers the 037/038 checksums', static function () use ($root, $manifestMigrationNames): bool {
     $ledger = (string) file_get_contents($root . '/migrations/035_schema_migration_ledger.pgsql');
     if ($ledger === '' || !str_contains($ledger, 'CREATE TABLE IF NOT EXISTS sand_iam_schema_migration')
         || !str_contains($ledger, 'migration_file varchar(160) PRIMARY KEY')
@@ -533,6 +534,15 @@ $assert('migration ledger catalogs every shipped migration and registers the 037
         || !str_contains($draft, 'sand_iam:initialization:disable')) {
         return false;
     }
+    $retention = (string) file_get_contents($root . '/migrations/038_auth_rate_limit_retention.pgsql');
+    if ($retention === ''
+        || preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $retention, $retentionChecksum) !== 1
+        || hash('sha256', str_replace($retentionChecksum[1], '__SELF_SHA256__', $retention)) !== $retentionChecksum[1]
+        || !str_contains($retention, "SELECT '038_auth_rate_limit_retention.pgsql', 38")
+        || !str_contains($retention, '(SELECT count(*) FROM sand_iam_schema_migration) <> 39')
+        || !str_contains($retention, 'idx_sand_iam_auth_rate_limit_retention')) {
+        return false;
+    }
     return str_contains($ledger, 'migration ledger checksum or package-version conflict; refusing to continue')
         && str_contains($ledger, 'exact legacy or ledger-backed relation fingerprint is incompatible')
         && str_contains($ledger, 'migration ledger contains an unknown migration filename; refusing to continue')
@@ -541,13 +551,19 @@ $assert('migration ledger catalogs every shipped migration and registers the 037
         && str_contains($ledger, 'IF matched_columns <> 30 THEN');
 });
 
-$assert('composer declares locked SAML runtime dependency', static function () use ($package): bool {
+$assert('composer declares complete platform and locked SAML runtime dependency', static function () use ($package): bool {
     $manifest = json_decode((string) file_get_contents($package . '/composer.json'), true);
     $lock = json_decode((string) file_get_contents($package . '/composer.lock'), true);
     if (!is_array($manifest) || !is_array($lock)
         || ($manifest['require']['php'] ?? null) !== '>=8.2'
         || ($manifest['require']['onelogin/php-saml'] ?? null) !== '^4.3.2') {
         return false;
+    }
+    foreach (['ctype', 'curl', 'dom', 'json', 'ldap', 'libxml', 'mbstring', 'openssl', 'pdo', 'pdo_pgsql', 'sodium', 'zip', 'zlib'] as $extension) {
+        $requirement = 'ext-' . $extension;
+        if (($manifest['require'][$requirement] ?? null) !== '*' || ($lock['platform'][$requirement] ?? null) !== '*') {
+            return false;
+        }
     }
     foreach ($lock['packages'] ?? [] as $dependency) {
         if (($dependency['name'] ?? null) === 'onelogin/php-saml' && ($dependency['version'] ?? null) === '4.3.2') {
@@ -583,10 +599,26 @@ $requiredFiles = [
     'validation and authorization runtime' => ['app/runtime/ScopeMatcher.php', 'app/runtime/PolicyAuthorizer.php', 'app/runtime/IdentityContextProvider.php', 'app/runtime/ServiceInvocationFactResolver.php', 'app/runtime/ServiceInvocationFactResolverRegistry.php', 'app/runtime/ResolvedInvocationFacts.php', 'app/runtime/ServiceInvocationAuthorizer.php'],
     'logic services' => ['app/service/HumanAuthService.php', 'app/service/IdempotencyService.php', 'app/service/AuditWriter.php'],
     'API and admin controllers' => ['app/api/controller/AuthController.php', 'app/api/controller/RuntimeContextController.php', 'app/admin/controller/ApplicationController.php'],
-    'route and configuration' => ['config/route.php', 'config/app.php', 'config/process.php', 'config/menu.php'],
+    'route and configuration' => [
+        'config/route.php', 'config/app.php', 'config/process.php', 'config/menu.php',
+        'bin/RuntimeConfigurationPreflight.php', 'bin/check-runtime-configuration.php',
+        'bin/RuntimeRequirementsPreflight.php', 'bin/check-runtime-requirements.php',
+    ],
     'account portal runtime source and packaged assets' => ['../../portal/package.json', '../../portal/pnpm-lock.yaml', '../../portal/scripts/build.mjs', '../../portal/src/app.ts', 'public/account/index.html', 'public/account/account.js'],
     'admin UI payload' => ['../../sandadmin-artd/src/views/plugin/sand-iam/index/index.vue', '../../sandadmin-artd/src/views/plugin/sand-iam/api/types.ts'],
-    'SDK and user-facing documentation' => ['../../sdk/dart/README.md', '../../sdk/php/composer.json', '../../sdk/typescript/package.json', '../../docs/user-guide/sand-iam-operator-guide.md'],
+    'SDK and user-facing documentation' => [
+        '../../sdk/dart/README.md', '../../sdk/php/composer.json', '../../sdk/typescript/package.json',
+        '../../README.md', '../../CONTRIBUTING.md', '../../SECURITY.md', '../../THIRD_PARTY_NOTICES.md',
+        '../../docs/user-guide/sand-iam-first-connection.md',
+        '../../docs/user-guide/sand-iam-operator-guide.md',
+        '../../docs/user-guide/installation-and-upgrade.md',
+        '../../docs/user-guide/configuration-reference.md',
+        '../../docs/user-guide/application-integration.md',
+        '../../docs/user-guide/application-user-guide.md',
+        '../../docs/user-guide/security-hardening.md',
+        '../../docs/user-guide/backup-and-restore.md',
+        '../../docs/user-guide/troubleshooting.md',
+    ],
 ];
 foreach ($requiredFiles as $area => $files) {
     $assert($area . ' required payload exists', static function () use ($package, $files): bool {
@@ -598,6 +630,22 @@ foreach ($requiredFiles as $area => $files) {
         return true;
     });
 }
+
+$assert('CycloneDX SBOM matches committed dependency locks', static function () use ($root): bool {
+    $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($root . '/tools/generate-sbom.php') . ' --check';
+    $output = [];
+    exec($command . ' 2>&1', $output, $status);
+    if ($status !== 0) throw new RuntimeException(implode("\n", $output));
+    $document = json_decode((string) file_get_contents($root . '/SBOM.cdx.json'), true, 512, JSON_THROW_ON_ERROR);
+    if (($document['bomFormat'] ?? null) !== 'CycloneDX' || ($document['specVersion'] ?? null) !== '1.6') return false;
+    $components = is_array($document['components'] ?? null) ? $document['components'] : [];
+    $purls = array_column($components, 'purl');
+    return count($components) >= 6
+        && in_array('pkg:composer/onelogin/php-saml@4.3.2', $purls, true)
+        && in_array('pkg:composer/robrichards/xmlseclibs@3.1.5', $purls, true)
+        && in_array('pkg:npm/typescript@5.9.3', $purls, true)
+        && in_array('pkg:pub/http@1.6.0', $purls, true);
+});
 
 $assert('TypeScript SDK exports resolve to packaged ESM and declaration files only', static function () use ($root, $releaseArtifactFiles): bool {
     $sdkRoot = $root . '/sdk/typescript';

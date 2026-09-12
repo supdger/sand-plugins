@@ -8,7 +8,6 @@ use plugin\SandIam\app\model\Application;
 use plugin\SandIam\app\model\OAuthClient;
 use plugin\SandIam\app\model\OAuthRegistrationToken;
 use plugin\sandadmin\exception\ApiException;
-use think\facade\Db;
 
 final class OAuthDynamicRegistrationService
 {
@@ -77,70 +76,95 @@ final class OAuthDynamicRegistrationService
         $frontchannelSessionRequired = filter_var($metadata['frontchannel_logout_session_required'] ?? true, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true;
         $backchannelSessionRequired = filter_var($metadata['backchannel_logout_session_required'] ?? true, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true;
 
-        Db::startTrans();
-        try {
-            $token = OAuthRegistrationToken::where('token_hash', $this->tokenHash($initialAccessToken))->where('status', 1)->lock(true)->find();
-            if ($token === null || $token->expire_time === null || strtotime((string) $token->expire_time) <= time() || (int) $token->used_count >= (int) $token->max_uses) throw new ApiException('SAND_IAM_DCR_ACCESS_DENIED', 401);
-            $application = Application::where('id', (int) $token->application_id)->where('status', 1)->lock(true)->find();
-            if ($application === null) throw new ApiException('SAND_IAM_DCR_ACCESS_DENIED', 401);
-            $this->assertRedirectHosts($redirectUris, $token->allowed_redirect_hosts);
-            $allowedScopes = is_array($token->allowed_scopes ?? null) ? array_values($token->allowed_scopes) : [];
-            if (array_diff($requestedScopes, $allowedScopes) !== []) throw new ApiException('SAND_IAM_DCR_INVALID_CLIENT_METADATA', 400);
-
-            $clientId = 'dcr_' . bin2hex(random_bytes(16));
-            $secret = $authMethod === 'none' ? null : 'siam_cs_' . bin2hex(random_bytes(32));
-            $client = OAuthClient::create([
-                'application_id' => (int) $application->id,
-                'code' => $clientId,
-                'name' => $name,
-                'client_type' => $authMethod === 'none' ? 'public' : 'confidential',
-                'secret_hash' => $secret === null ? null : $this->secretHash($secret),
-                'secret_version' => $secret === null ? null : 'v1',
-                'redirect_uris' => $redirectUris,
-                'post_logout_redirect_uris' => [],
-                'frontchannel_logout_uri' => $frontchannelLogoutUri,
-                'frontchannel_logout_session_required' => $frontchannelSessionRequired,
-                'backchannel_logout_uri' => $backchannelLogoutUri,
-                'backchannel_logout_session_required' => $backchannelSessionRequired,
-                'allowed_scopes' => $requestedScopes,
-                'allowed_audiences' => [],
-                'default_audience' => null,
-                'registration_source' => 'dynamic',
-                'dynamic_registration_token_id' => (int) $token->id,
-                'status' => 1,
-            ]);
-            $usedCount = (int) $token->used_count + 1;
-            $token->save(['used_count' => $usedCount, 'last_used_time' => date('Y-m-d H:i:s'), 'last_used_ip_hash' => $this->ipHash($ip), 'status' => $usedCount >= (int) $token->max_uses ? 2 : 1]);
-            $this->audit($application, 'oauth.dynamic_registration', (int) $client->id, 'dynamic_client', $requestId, ['token_id' => (int) $token->id, 'grant_types' => $grantTypes, 'auth_method' => $authMethod]);
-            Db::commit();
-        } catch (\Throwable $exception) {
-            Db::rollback();
-            if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_DCR_INVALID_CLIENT_METADATA', 400);
-            throw $exception;
-        }
-
-        $response = [
-            'client_id' => $clientId,
-            'client_id_issued_at' => time(),
-            'client_secret_expires_at' => 0,
+        $tokenRecord = OAuthRegistrationToken::where('token_hash', $this->tokenHash($initialAccessToken))->find();
+        if ($tokenRecord === null) throw new ApiException('SAND_IAM_DCR_ACCESS_DENIED', 401);
+        $requestId = $this->requestId($requestId);
+        $fingerprint = IdempotencyService::fingerprint([
             'redirect_uris' => $redirectUris,
             'grant_types' => $grantTypes,
             'response_types' => $responseTypes,
             'token_endpoint_auth_method' => $authMethod,
             'application_type' => $applicationType,
             'client_name' => $name,
-            'scope' => implode(' ', $requestedScopes),
-        ];
-        if ($secret !== null) $response['client_secret'] = $secret;
-        if ($frontchannelLogoutUri !== null) {
-            $response['frontchannel_logout_uri'] = $frontchannelLogoutUri;
-            $response['frontchannel_logout_session_required'] = $frontchannelSessionRequired;
+            'scope' => $requestedScopes,
+            'frontchannel_logout_uri' => $frontchannelLogoutUri,
+            'frontchannel_logout_session_required' => $frontchannelSessionRequired,
+            'backchannel_logout_uri' => $backchannelLogoutUri,
+            'backchannel_logout_session_required' => $backchannelSessionRequired,
+        ]);
+        try {
+            $result = (new IdempotencyService())->execute(
+                'oauth_dcr_token',
+                (string) $tokenRecord->id,
+                'oauth.dynamic_registration',
+                $requestId,
+                $fingerprint,
+                'oauth_client',
+                function () use ($tokenRecord, $initialAccessToken, $redirectUris, $grantTypes, $responseTypes, $authMethod, $applicationType, $name, $requestedScopes, $frontchannelLogoutUri, $frontchannelSessionRequired, $backchannelLogoutUri, $backchannelSessionRequired, $ip, $requestId): array {
+                    $token = OAuthRegistrationToken::where('id', (int) $tokenRecord->id)->where('token_hash', $this->tokenHash($initialAccessToken))->lock(true)->find();
+                    if ($token === null || (int) $token->status !== 1 || $token->expire_time === null || strtotime((string) $token->expire_time) <= time() || (int) $token->used_count >= (int) $token->max_uses) throw new ApiException('SAND_IAM_DCR_ACCESS_DENIED', 401);
+                    $application = Application::where('id', (int) $token->application_id)->where('status', 1)->lock(true)->find();
+                    if ($application === null) throw new ApiException('SAND_IAM_DCR_ACCESS_DENIED', 401);
+                    $this->assertRedirectHosts($redirectUris, $token->allowed_redirect_hosts);
+                    $allowedScopes = is_array($token->allowed_scopes ?? null) ? array_values($token->allowed_scopes) : [];
+                    if (array_diff($requestedScopes, $allowedScopes) !== []) throw new ApiException('SAND_IAM_DCR_INVALID_CLIENT_METADATA', 400);
+
+                    $clientId = 'dcr_' . bin2hex(random_bytes(16));
+                    $secret = $authMethod === 'none' ? null : 'siam_cs_' . bin2hex(random_bytes(32));
+                    $client = OAuthClient::create([
+                        'application_id' => (int) $application->id,
+                        'code' => $clientId,
+                        'name' => $name,
+                        'client_type' => $authMethod === 'none' ? 'public' : 'confidential',
+                        'secret_hash' => $secret === null ? null : $this->secretHash($secret),
+                        'secret_version' => $secret === null ? null : 'v1',
+                        'redirect_uris' => $redirectUris,
+                        'post_logout_redirect_uris' => [],
+                        'frontchannel_logout_uri' => $frontchannelLogoutUri,
+                        'frontchannel_logout_session_required' => $frontchannelSessionRequired,
+                        'backchannel_logout_uri' => $backchannelLogoutUri,
+                        'backchannel_logout_session_required' => $backchannelSessionRequired,
+                        'allowed_scopes' => $requestedScopes,
+                        'allowed_audiences' => [],
+                        'default_audience' => null,
+                        'registration_source' => 'dynamic',
+                        'dynamic_registration_token_id' => (int) $token->id,
+                        'status' => 1,
+                    ]);
+                    $usedCount = (int) $token->used_count + 1;
+                    $token->save(['used_count' => $usedCount, 'last_used_time' => date('Y-m-d H:i:s'), 'last_used_ip_hash' => $this->ipHash($ip), 'status' => $usedCount >= (int) $token->max_uses ? 2 : 1]);
+                    $this->audit($application, 'oauth.dynamic_registration', (int) $client->id, 'dynamic_client', $requestId, ['token_id' => (int) $token->id, 'grant_types' => $grantTypes, 'auth_method' => $authMethod]);
+
+                    $response = [
+                        'client_id' => $clientId,
+                        'client_id_issued_at' => time(),
+                        'client_secret_expires_at' => 0,
+                        'redirect_uris' => $redirectUris,
+                        'grant_types' => $grantTypes,
+                        'response_types' => $responseTypes,
+                        'token_endpoint_auth_method' => $authMethod,
+                        'application_type' => $applicationType,
+                        'client_name' => $name,
+                        'scope' => implode(' ', $requestedScopes),
+                    ];
+                    if ($secret !== null) $response['client_secret'] = $secret;
+                    if ($frontchannelLogoutUri !== null) {
+                        $response['frontchannel_logout_uri'] = $frontchannelLogoutUri;
+                        $response['frontchannel_logout_session_required'] = $frontchannelSessionRequired;
+                    }
+                    if ($backchannelLogoutUri !== null) {
+                        $response['backchannel_logout_uri'] = $backchannelLogoutUri;
+                        $response['backchannel_logout_session_required'] = $backchannelSessionRequired;
+                    }
+                    return ['resource_id' => (int) $client->id, 'result' => $response];
+                },
+            );
+        } catch (\Throwable $exception) {
+            $message = strtolower($exception->getMessage());
+            if (str_contains($message, '23505') || str_contains($message, 'unique')) throw new ApiException('SAND_IAM_DCR_INVALID_CLIENT_METADATA', 400);
+            throw $exception;
         }
-        if ($backchannelLogoutUri !== null) {
-            $response['backchannel_logout_uri'] = $backchannelLogoutUri;
-            $response['backchannel_logout_session_required'] = $backchannelSessionRequired;
-        }
-        return $response;
+        return $result['result'];
     }
 
     /** @return list<string> */

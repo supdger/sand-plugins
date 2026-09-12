@@ -10,6 +10,38 @@ use think\facade\Db;
 
 final class IdempotencyService
 {
+    /** @var list<string> */
+    private const SENSITIVE_RESULT_KEYS = [
+        'access_token',
+        'authorization',
+        'authorization_code',
+        'cas_ticket',
+        'challenge_token',
+        'client_secret',
+        'code_verifier',
+        'context',
+        'credential',
+        'csrf_token',
+        'current_password',
+        'encrypted_config',
+        'encrypted_private_key',
+        'encrypted_shared_secret',
+        'new_password',
+        'nonce',
+        'password',
+        'private_key',
+        'private_pem',
+        'recovery_codes',
+        'refresh_token',
+        'saml_response',
+        'secret',
+        'seed',
+        'shared_secret',
+        'token',
+        'otpauth_uri',
+        'totp_secret',
+    ];
+
     /** @return array{result:array<string,mixed>,replayed:true} */
     public function replay(string $actorType, string $actorRef, string $operationName, string $requestId, string $requestFingerprint): array
     {
@@ -151,7 +183,7 @@ final class IdempotencyService
     {
         foreach ($result as $key => $value) {
             $normalized = strtolower((string) $key);
-            if (in_array($normalized, ['credential', 'secret', 'token', 'access_token', 'refresh_token', 'context'], true)) {
+            if (in_array($normalized, self::SENSITIVE_RESULT_KEYS, true)) {
                 unset($result[$key]);
             } elseif (is_array($value)) {
                 $result[$key] = $this->redactSecrets($value);

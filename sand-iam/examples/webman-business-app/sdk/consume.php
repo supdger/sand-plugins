@@ -16,9 +16,9 @@ $client = new SandIamClient(
     $config['organization_code'],
     $config['application_code'],
 );
-$loadedMatter = (object) ['organization_id' => 1001, 'owner_identity_id' => 2001]; // Replace with a DB-loaded model.
-$decision = $client->authorizeEntity($token, $config['actions']['MATTER_READ'], $loadedMatter, static fn (object $matter): array => [
-    'organization_id' => $matter->organization_id,
-    'owner_identity_id' => $matter->owner_identity_id,
-], [], 'v1', 'matter-sdk-read-001');
+$loadedWorkItem = (object) ['organization_id' => 1001, 'owner_identity_id' => 2001]; // Replace with a DB-loaded model.
+$decision = $client->authorizeEntity($token, $config['actions']['WORK_ITEM_READ'], $loadedWorkItem, static fn (object $workItem): array => [
+    'organization_id' => $workItem->organization_id,
+    'owner_identity_id' => $workItem->owner_identity_id,
+], [], 'v1', 'work-item-sdk-read-001');
 var_export($decision);

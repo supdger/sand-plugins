@@ -8,6 +8,7 @@ use plugin\SandIam\app\model\Application;
 use plugin\SandIam\app\model\ApplicationExperience;
 use plugin\SandIam\app\model\ApplicationNetworkPolicy;
 use plugin\SandIam\app\model\AuthPolicy;
+use plugin\SandIam\app\model\AuthChallenge;
 use plugin\SandIam\app\model\AuthRateLimit;
 use plugin\SandIam\app\model\AuthRefreshToken;
 use plugin\SandIam\app\model\AuthSession;
@@ -34,6 +35,7 @@ final class HumanAuthService
     private const DEFAULT_LOCK_SECONDS = 900;
     private const DEFAULT_MAX_LOGIN_FAILURES = 5;
     private const DEFAULT_MAX_RATE_ATTEMPTS = 10;
+    private const REFRESH_RESPONSE_RETRY_TTL_SECONDS = 30;
 
     public function __construct(private readonly AuditWriter $auditWriter = new AuditWriter())
     {
@@ -147,48 +149,141 @@ final class HumanAuthService
     public function login(array $payload, string $ip, string $requestId): array
     {
         $this->requirePepper();
+        $requestId = RequestId::normalize($requestId);
         $application = $this->application($payload);
         $this->assertNetworkAllowed($application, $ip);
         $policy = $this->policy((int) $application->id);
         $this->assertExperienceAllows($application, 'login');
         $identifier = $this->identifier((string) ($payload['identifier'] ?? ''));
-        $this->consumeRateLimit((int) $application->id, 'login', $identifier . '|' . $ip, $policy);
-        if ((bool) $policy['require_captcha']) $this->verifyCaptcha($application, (string) ($payload['captcha_token'] ?? ''), 'login', $ip, $requestId);
+        $password = (string) ($payload['password'] ?? '');
+        $operations = new IdempotencyService();
+        $actorRef = 'login:' . (int) $application->id . ':' . substr($this->secretHash('login-identifier:' . $identifier), 0, 64);
+        $attemptFingerprint = IdempotencyService::fingerprint([
+            'application_id' => (int) $application->id,
+            'identifier_proof' => $this->secretHash('login-identifier:' . $identifier),
+            'password_proof' => $this->secretHash('login-password:' . $password),
+            'captcha_token_proof' => $this->secretHash('login-captcha:' . (string) ($payload['captcha_token'] ?? '')),
+            'source_network_proof' => $this->secretHash('login-ip:' . $ip),
+            'user_agent_proof' => $this->secretHash('login-user-agent:' . (string) ($payload['user_agent'] ?? '')),
+        ]);
         $auth = $this->findAuth((int) $application->id, $identifier);
         $identity = $auth ? Identity::where('id', (int) $auth->identity_id)->where('application_id', (int) $application->id)->where('status', 1)->find() : null;
+        $activeAuth = $auth !== null
+            && $identity !== null
+            && (int) $auth->status === 1
+            && $this->pepperVersionMatches((string) ($auth->pepper_version ?? ''));
+        $passwordMatches = $activeAuth && $this->verifyPassword($password, (string) $auth->password_hash);
+        $fingerprint = $activeAuth ? IdempotencyService::fingerprint([
+            'attempt_fingerprint' => $attemptFingerprint,
+            'identity_id' => (int) $identity->id,
+        ]) : '';
+        if ($passwordMatches) {
+            $replay = $operations->replayIfCompleted('application_user', $actorRef, 'identity.login', $requestId, $fingerprint);
+            if ($replay !== null) {
+                return $this->recoverPasswordLoginResponse($replay['result'], $password, $requestId, $application, $identity, $ip);
+            }
+        }
+        $failureReplay = $operations->replayIfCompleted('application_user', $actorRef, 'identity.login.failure', $requestId, $attemptFingerprint);
+        if ($failureReplay !== null) {
+            $error = (string) ($failureReplay['result']['error'] ?? 'SAND_IAM_AUTHENTICATION_FAILED');
+            $status = (int) ($failureReplay['result']['status'] ?? 401);
+            throw new ApiException($error, $status >= 400 && $status <= 599 ? $status : 401);
+        }
+
+        $this->consumeLoginRateOnce($application, $identifier, $ip, $requestId, $actorRef, $attemptFingerprint, $policy);
+        if ((bool) $policy['require_captcha']) {
+            $this->verifyLoginCaptchaOnce(
+                $application,
+                (string) ($payload['captcha_token'] ?? ''),
+                $ip,
+                $requestId,
+                $actorRef,
+                $attemptFingerprint,
+            );
+        }
         if ($auth === null || $identity === null || (int) $auth->status !== 1 || !$this->pepperVersionMatches((string) ($auth->pepper_version ?? ''))) {
-            $this->audit((int) $application->organization_id, (int) $application->id, 'identity.login', 'identity', null, 'failed', $requestId, ['reason' => 'authentication_failed']);
-            throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+            $this->failLoginOnce($application, null, null, $requestId, $actorRef, $attemptFingerprint, $policy, 'SAND_IAM_AUTHENTICATION_FAILED', 401, 'failed', false);
         }
         if ($this->locked($auth->locked_until)) {
-            $this->audit((int) $application->organization_id, (int) $application->id, 'identity.login', 'identity', (int) $identity->id, 'denied', $requestId, ['reason' => 'locked']);
-            throw new ApiException('SAND_IAM_AUTH_ACCOUNT_LOCKED', 423);
+            $this->failLoginOnce($application, $identity, $auth, $requestId, $actorRef, $attemptFingerprint, $policy, 'SAND_IAM_AUTH_ACCOUNT_LOCKED', 423, 'denied', false);
         }
-        if (!$this->verifyPassword((string) ($payload['password'] ?? ''), (string) $auth->password_hash)) {
-            Db::startTrans();
-            try {
-                $lockedAuth = IdentityAuth::where('id', (int) $auth->id)->lock(true)->find();
-                if ($lockedAuth === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
-                $failures = (int) $lockedAuth->failed_login_count + 1;
-                $lockedAuth->save([
-                    'failed_login_count' => $failures,
-                    'locked_until' => $failures >= (int) $policy['max_login_failures'] ? date('Y-m-d H:i:s', time() + (int) $policy['lock_seconds']) : null,
-                ]);
-                Db::commit();
-            } catch (\Throwable $exception) {
-                Db::rollback();
-                throw $exception;
-            }
-            $this->audit((int) $application->organization_id, (int) $application->id, 'identity.login', 'identity', (int) $identity->id, 'failed', $requestId, ['reason' => 'authentication_failed']);
-            throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+        if (!$passwordMatches) {
+            $this->failLoginOnce($application, $identity, $auth, $requestId, $actorRef, $attemptFingerprint, $policy, 'SAND_IAM_AUTHENTICATION_FAILED', 401, 'failed', true);
         }
-        $auth->save(['failed_login_count' => 0, 'locked_until' => null, 'last_login_time' => $this->now()]);
-        $this->audit((int) $application->organization_id, (int) $application->id, 'identity.login', 'identity', (int) $identity->id, 'succeeded', $requestId, [], (string) $identity->id);
-        if (!$this->verificationSatisfied($auth, $policy)) throw new ApiException('SAND_IAM_AUTH_VERIFICATION_REQUIRED', 403);
-        if ((new MfaService())->hasEnabledFactor((int) $application->id, (int) $identity->id)) {
-            return (new MfaService())->beginPasswordLogin($application, $identity, $requestId);
+        $issuedResponse = null;
+        $execution = $operations->execute(
+            'application_user',
+            $actorRef,
+            'identity.login',
+            $requestId,
+            $fingerprint,
+            'authentication_result',
+            function () use (&$application, &$identity, &$issuedResponse, $auth, $password, $ip, $payload, $requestId): array {
+                $application = $this->lockPasswordLoginBoundaryInTransaction($application, $ip);
+                $policy = $this->policy((int) $application->id);
+                $identity = Identity::where('id', (int) $identity->id)
+                    ->where('application_id', (int) $application->id)
+                    ->where('status', 1)
+                    ->lock(true)
+                    ->find();
+                $lockedAuth = $identity === null ? null : IdentityAuth::where('id', (int) $auth->id)
+                    ->where('identity_id', (int) $identity->id)
+                    ->where('application_id', (int) $application->id)
+                    ->where('status', 1)
+                    ->lock(true)
+                    ->find();
+                if (
+                    $identity === null
+                    || $lockedAuth === null
+                    || !$this->pepperVersionMatches((string) ($lockedAuth->pepper_version ?? ''))
+                    || $this->locked($lockedAuth->locked_until)
+                    || !$this->verifyPassword($password, (string) $lockedAuth->password_hash)
+                ) {
+                    throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+                }
+                if (!$this->verificationSatisfied($lockedAuth, $policy)) throw new ApiException('SAND_IAM_AUTH_VERIFICATION_REQUIRED', 403);
+
+                $lockedAuth->save(['failed_login_count' => 0, 'locked_until' => null, 'last_login_time' => $this->now()]);
+                $this->audit((int) $application->organization_id, (int) $application->id, 'identity.login', 'identity', (int) $identity->id, 'succeeded', $requestId, [], (string) $identity->id);
+                $mfa = new MfaService();
+                if ($mfa->hasEnabledFactor((int) $application->id, (int) $identity->id)) {
+                    $issuedResponse = $mfa->beginPasswordLogin($application, $identity, $requestId);
+                    $responseKind = 'mfa_challenge';
+                    $resource = AuthChallenge::where('application_id', (int) $application->id)
+                        ->where('identity_id', (int) $identity->id)
+                        ->where('purpose', 'mfa_login')
+                        ->where('token_hash', $this->secretHash('mfa-token:' . (string) $issuedResponse['challenge_token']))
+                        ->lock(true)
+                        ->find();
+                    $resourceId = $resource === null ? null : (int) $resource->id;
+                } else {
+                    $tokens = $this->createSessionInTransaction($application, $identity, $ip, (string) ($payload['user_agent'] ?? ''), $policy);
+                    $issuedResponse = $this->tokenResponse($tokens, $identity, $policy);
+                    $responseKind = 'session';
+                    $resourceId = (int) $tokens['session_id'];
+                }
+                if ($resourceId === null) throw new ApiException('SAND_IAM_AUTH_LOGIN_RETRY_UNAVAILABLE', 503);
+                return [
+                    'resource_id' => $resourceId,
+                    'result' => [
+                        'response_kind' => $responseKind,
+                        'resource_id' => $resourceId,
+                        'encrypted_replay' => (new SessionTokenResponseReplayCipher())->seal(
+                            $issuedResponse,
+                            $password,
+                            $requestId,
+                            'password-login',
+                            self::REFRESH_RESPONSE_RETRY_TTL_SECONDS,
+                        ),
+                    ],
+                ];
+            },
+        );
+        if ($execution['replayed']) {
+            return $this->recoverPasswordLoginResponse($execution['result'], $password, $requestId, $application, $identity, $ip);
         }
-        return $this->tokenResponse($this->createSession($application, $identity, $auth, $ip, (string) ($payload['user_agent'] ?? ''), $policy), $identity, $policy);
+        if (!is_array($issuedResponse)) throw new ApiException('SAND_IAM_AUTH_LOGIN_RETRY_UNAVAILABLE', 503);
+        return $issuedResponse;
     }
 
     /**
@@ -238,73 +333,92 @@ final class HumanAuthService
         if ($refreshToken === '') {
             throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
         }
+        $requestId = RequestId::normalize($requestId);
         $hash = $this->tokenHash($refreshToken);
-        Db::startTrans();
+        $operations = new IdempotencyService();
+        $fingerprint = IdempotencyService::fingerprint(['refresh_token_proof' => $hash]);
         try {
-            $refresh = AuthRefreshToken::where('token_hash', $hash)->lock(true)->find();
-            if ($refresh === null) {
-                throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
-            }
-            $session = AuthSession::where('id', (int) $refresh->session_id)->lock(true)->find();
-            if ($session === null || (int) $refresh->status !== 1 || $refresh->used_time !== null) {
-                if ($session !== null) {
-                    $session->save(['status' => 2, 'revoked_time' => $this->now()]);
-                    AuthRefreshToken::where('session_id', (int) $session->id)->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
-                    Db::commit();
-                    $this->auditForSession($session, 'identity.refresh_replay', 'denied', $requestId);
-                    throw new ApiException('SAND_IAM_AUTH_REFRESH_REPLAY_DETECTED', 401);
-                }
-                throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
-            }
-            if ((int) $session->status !== 1 || $session->revoked_time !== null || $this->expired($session->refresh_expire_time)) {
-                throw new ApiException('SAND_IAM_AUTH_TOKEN_EXPIRED', 401);
-            }
-            $identity = Identity::where('id', (int) $session->identity_id)->where('application_id', (int) $session->application_id)->where('status', 1)->find();
-            $application = Application::where('id', (int) $session->application_id)->where('status', 1)->find();
-            $organization = $application === null ? null : Organization::where('id', (int) $application->organization_id)->where('status', 1)->find();
-            if ($identity === null || $application === null || $organization === null) {
-                throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
-            }
-            $this->assertNetworkAllowed($application, $ip);
-            if ((string) ($session->auth_method ?? 'local_password') === 'federation') {
-                $binding = IdentityBinding::where('id', (int) $session->identity_binding_id)->lock(true)->find();
-                if ($binding === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
-                try {
-                    $this->assertFederatedBinding($binding, (int) $application->id, (int) $identity->id);
-                } catch (ApiException) {
-                    $session->save(['status' => 2, 'revoked_time' => $this->now()]);
-                    AuthRefreshToken::where('session_id', (int) $session->id)->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
-                    Db::commit();
-                    throw new ApiException('SAND_IAM_AUTH_FEDERATED_SOURCE_REVOKED', 401);
-                }
-            } else {
-                $auth = IdentityAuth::where('identity_id', (int) $identity->id)->where('application_id', (int) $application->id)->where('status', 1)->find();
-                if ($auth === null || !$this->pepperVersionMatches((string) ($auth->pepper_version ?? ''))) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
-            }
-            $policy = $this->policy((int) $application->id);
-            $tokens = $this->newTokens($policy);
-            $refresh->save(['used_time' => $this->now(), 'status' => 2]);
-            AuthRefreshToken::create(['session_id' => (int) $session->id, 'token_hash' => $this->tokenHash($tokens['refresh_token']), 'pepper_version' => $this->pepperVersion(), 'expire_time' => $tokens['refresh_expire_time'], 'status' => 1]);
-            $session->save([
-                'access_token_hash' => $this->tokenHash($tokens['access_token']),
-                'previous_refresh_token_hash' => $session->refresh_token_hash,
-                'refresh_token_hash' => $this->tokenHash($tokens['refresh_token']),
-                'access_expire_time' => $tokens['access_expire_time'],
-                'refresh_expire_time' => $tokens['refresh_expire_time'],
-                'last_used_time' => $this->now(),
-                'ip_hash' => $this->secretHash($ip),
-            ]);
-            Db::commit();
+            $execution = $operations->execute(
+                'refresh_token',
+                $hash,
+                'identity.refresh',
+                $requestId,
+                $fingerprint,
+                'auth_session',
+                function () use ($refreshToken, $hash, $ip, $requestId): array {
+                    $refresh = AuthRefreshToken::where('token_hash', $hash)->lock(true)->find();
+                    if ($refresh === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+                    $session = AuthSession::where('id', (int) $refresh->session_id)->lock(true)->find();
+                    if ($session === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+                    if ((int) $refresh->status !== 1 || $refresh->used_time !== null) {
+                        throw new ApiException('SAND_IAM_AUTH_REFRESH_REPLAY_DETECTED', 401);
+                    }
+                    if ((int) $session->status !== 1 || $session->revoked_time !== null || $this->expired($session->refresh_expire_time)) {
+                        throw new ApiException('SAND_IAM_AUTH_TOKEN_EXPIRED', 401);
+                    }
+                    $identity = Identity::where('id', (int) $session->identity_id)->where('application_id', (int) $session->application_id)->where('status', 1)->find();
+                    $application = Application::where('id', (int) $session->application_id)->where('status', 1)->find();
+                    $organization = $application === null ? null : Organization::where('id', (int) $application->organization_id)->where('status', 1)->find();
+                    if ($identity === null || $application === null || $organization === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+                    $this->assertNetworkAllowed($application, $ip);
+                    if ((string) ($session->auth_method ?? 'local_password') === 'federation') {
+                        $binding = IdentityBinding::where('id', (int) $session->identity_binding_id)->lock(true)->find();
+                        if ($binding === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+                        try {
+                            $this->assertFederatedBinding($binding, (int) $application->id, (int) $identity->id);
+                        } catch (ApiException) {
+                            throw new ApiException('SAND_IAM_AUTH_FEDERATED_SOURCE_REVOKED', 401);
+                        }
+                    } else {
+                        $auth = IdentityAuth::where('identity_id', (int) $identity->id)->where('application_id', (int) $application->id)->where('status', 1)->find();
+                        if ($auth === null || !$this->pepperVersionMatches((string) ($auth->pepper_version ?? ''))) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+                    }
+                    $policy = $this->policy((int) $application->id);
+                    $tokens = $this->newTokens($policy);
+                    $refresh->save(['used_time' => $this->now(), 'status' => 2]);
+                    AuthRefreshToken::create(['session_id' => (int) $session->id, 'token_hash' => $this->tokenHash($tokens['refresh_token']), 'pepper_version' => $this->pepperVersion(), 'expire_time' => $tokens['refresh_expire_time'], 'status' => 1]);
+                    $session->save([
+                        'access_token_hash' => $this->tokenHash($tokens['access_token']),
+                        'previous_refresh_token_hash' => $session->refresh_token_hash,
+                        'refresh_token_hash' => $this->tokenHash($tokens['refresh_token']),
+                        'access_expire_time' => $tokens['access_expire_time'],
+                        'refresh_expire_time' => $tokens['refresh_expire_time'],
+                        'last_used_time' => $this->now(),
+                        'ip_hash' => $this->secretHash($ip),
+                    ]);
+                    $response = $this->tokenResponse($tokens + ['session_id' => (int) $session->id], $identity, $policy);
+                    $this->audit((int) $application->organization_id, (int) $application->id, 'identity.refresh', 'auth_session', (int) $session->id, 'succeeded', $requestId, [], (string) $identity->id);
+                    return [
+                        'resource_id' => (int) $session->id,
+                        'result' => $response + [
+                            'encrypted_replay' => (new SessionTokenResponseReplayCipher())->seal(
+                                $response,
+                                $refreshToken,
+                                $requestId,
+                                'refresh',
+                                self::REFRESH_RESPONSE_RETRY_TTL_SECONDS,
+                            ),
+                        ],
+                    ];
+                },
+            );
         } catch (ApiException $exception) {
-            if (in_array($exception->getMessage(), ['SAND_IAM_AUTH_REFRESH_REPLAY_DETECTED', 'SAND_IAM_AUTH_FEDERATED_SOURCE_REVOKED'], true)) throw $exception;
-            Db::rollback();
-            throw $exception;
-        } catch (\Throwable $exception) {
-            Db::rollback();
+            if (in_array($exception->getMessage(), ['SAND_IAM_AUTH_REFRESH_REPLAY_DETECTED', 'SAND_IAM_AUTH_FEDERATED_SOURCE_REVOKED'], true)) {
+                $this->revokeRefreshFamily($hash, $requestId, $exception->getMessage());
+            }
             throw $exception;
         }
-        $this->audit((int) $application->organization_id, (int) $application->id, 'identity.refresh', 'auth_session', (int) $session->id, 'succeeded', $requestId, [], (string) $identity->id);
-        return $this->tokenResponse($tokens + ['session_id' => (int) $session->id], $identity, $policy);
+        if ($execution['replayed']) {
+            try {
+                return $this->decryptRefreshReplay($execution['result'], $refreshToken, $requestId, $ip);
+            } catch (ApiException $exception) {
+                if ($exception->getMessage() === 'SAND_IAM_AUTH_CONFIGURATION_UNAVAILABLE') throw $exception;
+                $this->revokeRefreshFamily($hash, $requestId, 'SAND_IAM_AUTH_REFRESH_REPLAY_DETECTED');
+            }
+        }
+        $result = $execution['result'];
+        unset($result['encrypted_replay']);
+        return $result;
     }
 
     public function logout(string $accessToken, string $requestId): void
@@ -406,10 +520,30 @@ final class HumanAuthService
     /** Public passkey challenge allocation follows the same live application, network, and rate-limit boundary as login. */
     public function assertPasskeyOptionsAllowed(Application $application, string $ip): Application
     {
-        $this->requirePepper();
-        $live = $this->livePasskeyApplication($application, $ip);
+        $live = $this->assertPasskeyOptionsBoundary($application, $ip);
         $this->consumeRateLimit((int) $live->id, 'passkey_options', $ip, $this->policy((int) $live->id));
         return $live;
+    }
+
+    /** Recheck mutable passkey policy without charging a completed idempotent retry. */
+    public function assertPasskeyOptionsBoundary(Application $application, string $ip): Application
+    {
+        $this->requirePepper();
+        return $this->livePasskeyApplication($application, $ip);
+    }
+
+    /** Consume the options budget inside the caller-owned challenge transaction. */
+    public function consumePasskeyOptionsRateInTransaction(Application $application, string $ip): void
+    {
+        $this->requirePepper();
+        $this->consumeRateLimit(
+            (int) $application->id,
+            'passkey_options',
+            $ip,
+            $this->policy((int) $application->id),
+            0,
+            false,
+        );
     }
 
     /** Passkey completion rechecks the same mutable application boundary without consuming the options budget. */
@@ -488,6 +622,47 @@ final class HumanAuthService
         $tokens = $this->createSessionInTransaction($application, $liveIdentity, $ip, $userAgent, $policy);
         $this->audit((int) $application->organization_id, (int) $application->id, 'identity.mfa_login', 'identity', (int) $liveIdentity->id, 'succeeded', $requestId, [], (string) $liveIdentity->id);
         return $this->tokenResponse($tokens, $liveIdentity, $policy);
+    }
+
+    /** @param array<string,mixed> $response */
+    public function sealSessionTokenResponse(array $response, string $recoverySecret, string $requestId, string $context, int $ttlSeconds = 30): string
+    {
+        return (new SessionTokenResponseReplayCipher())->seal($response, $recoverySecret, RequestId::normalize($requestId), $context, $ttlSeconds);
+    }
+
+    /** @param array<string,mixed> $stored @return array<string,mixed> */
+    public function recoverSessionTokenResponse(
+        array $stored,
+        string $recoverySecret,
+        string $requestId,
+        string $context,
+        string $ip,
+        ?string $previousRefreshToken = null,
+    ): array {
+        $response = (new SessionTokenResponseReplayCipher())->open(
+            (string) ($stored['encrypted_replay'] ?? ''),
+            $recoverySecret,
+            RequestId::normalize($requestId),
+            $context,
+        );
+        $accessToken = (string) ($response['access_token'] ?? '');
+        $nextRefreshToken = (string) ($response['refresh_token'] ?? '');
+        $sessionId = (int) ($response['session_id'] ?? 0);
+        if (!preg_match('/^siam_at_[0-9a-f]{64}$/', $accessToken) || !preg_match('/^siam_rt_[0-9a-f]{64}$/', $nextRefreshToken) || $sessionId < 1) {
+            throw new ApiException('SAND_IAM_AUTH_SESSION_RETRY_UNAVAILABLE', 401);
+        }
+        $session = $this->accessSession($accessToken);
+        if ((int) $session->id !== $sessionId
+            || !hash_equals((string) $session->refresh_token_hash, $this->tokenHash($nextRefreshToken))
+            || !hash_equals((string) $session->ip_hash, $this->secretHash($ip))
+            || ($previousRefreshToken !== null
+                && !hash_equals((string) $session->previous_refresh_token_hash, $this->tokenHash($previousRefreshToken)))) {
+            throw new ApiException('SAND_IAM_AUTH_SESSION_RETRY_UNAVAILABLE', 401);
+        }
+        $application = Application::find((int) $session->application_id);
+        if ($application === null) throw new ApiException('SAND_IAM_AUTH_SESSION_RETRY_UNAVAILABLE', 401);
+        $this->assertNetworkAllowed($application, $ip);
+        return $response;
     }
 
     /** @return array<string,mixed> */
@@ -927,10 +1102,133 @@ final class HumanAuthService
         }
     }
 
-    private function consumeRateLimit(int $applicationId, string $action, string $subject, array $policy, int $retry = 0): void
+    /** @param array<string,int> $policy */
+    private function consumeLoginRateOnce(
+        Application $application,
+        string $identifier,
+        string $ip,
+        string $requestId,
+        string $actorRef,
+        string $fingerprint,
+        array $policy,
+    ): void {
+        (new IdempotencyService())->execute(
+            'application_user',
+            $actorRef,
+            'identity.login.rate_limit',
+            $requestId,
+            $fingerprint,
+            'auth_rate_limit',
+            function () use ($application, $identifier, $ip, $policy): array {
+                $this->consumeRateLimit((int) $application->id, 'login', $identifier . '|' . $ip, $policy, 0, false);
+                return ['result' => ['charged' => true]];
+            },
+        );
+    }
+
+    private function verifyLoginCaptchaOnce(
+        Application $application,
+        string $captchaToken,
+        string $ip,
+        string $requestId,
+        string $actorRef,
+        string $fingerprint,
+    ): void {
+        $execution = (new IdempotencyService())->execute(
+            'application_user',
+            $actorRef,
+            'identity.login.captcha',
+            $requestId,
+            $fingerprint,
+            'captcha_verification',
+            function () use ($application, $captchaToken, $ip, $requestId): array {
+                try {
+                    $this->verifyCaptcha($application, $captchaToken, 'login', $ip, $requestId);
+                    return ['result' => ['accepted' => true]];
+                } catch (ApiException $exception) {
+                    return ['result' => [
+                        'accepted' => false,
+                        'error' => $exception->getMessage(),
+                        'status' => $exception->getCode(),
+                    ]];
+                }
+            },
+        );
+        if (($execution['result']['accepted'] ?? false) === true) return;
+        $error = (string) ($execution['result']['error'] ?? 'SAND_IAM_CAPTCHA_INVALID');
+        $status = (int) ($execution['result']['status'] ?? 400);
+        throw new ApiException($error, $status >= 400 && $status <= 599 ? $status : 400);
+    }
+
+    /** @param array<string,int> $policy */
+    private function failLoginOnce(
+        Application $application,
+        ?Identity $identity,
+        ?IdentityAuth $auth,
+        string $requestId,
+        string $actorRef,
+        string $fingerprint,
+        array $policy,
+        string $error,
+        int $status,
+        string $outcome,
+        bool $incrementFailures,
+    ): never {
+        $execution = (new IdempotencyService())->execute(
+            'application_user',
+            $actorRef,
+            'identity.login.failure',
+            $requestId,
+            $fingerprint,
+            'identity',
+            function () use ($application, $identity, $auth, $requestId, $policy, $error, $status, $outcome, $incrementFailures): array {
+                if ($incrementFailures && $auth !== null) {
+                    $lockedAuth = IdentityAuth::where('id', (int) $auth->id)
+                        ->where('application_id', (int) $application->id)
+                        ->where('status', 1)
+                        ->lock(true)
+                        ->find();
+                    if ($lockedAuth !== null) {
+                        $failures = (int) $lockedAuth->failed_login_count + 1;
+                        $lockedAuth->save([
+                            'failed_login_count' => $failures,
+                            'locked_until' => $failures >= (int) $policy['max_login_failures']
+                                ? date('Y-m-d H:i:s', time() + (int) $policy['lock_seconds'])
+                                : null,
+                        ]);
+                    }
+                }
+                $reason = $error === 'SAND_IAM_AUTH_ACCOUNT_LOCKED' ? 'locked' : 'authentication_failed';
+                $this->audit(
+                    (int) $application->organization_id,
+                    (int) $application->id,
+                    'identity.login',
+                    'identity',
+                    $identity === null ? null : (int) $identity->id,
+                    $outcome,
+                    $requestId,
+                    ['reason' => $reason],
+                    $identity === null ? 'redacted' : (string) $identity->id,
+                );
+                return ['resource_id' => $identity === null ? null : (int) $identity->id, 'result' => ['error' => $error, 'status' => $status]];
+            },
+        );
+        $storedError = (string) ($execution['result']['error'] ?? $error);
+        $storedStatus = (int) ($execution['result']['status'] ?? $status);
+        throw new ApiException($storedError, $storedStatus >= 400 && $storedStatus <= 599 ? $storedStatus : $status);
+    }
+
+    private function consumeRateLimit(
+        int $applicationId,
+        string $action,
+        string $subject,
+        array $policy,
+        int $retry = 0,
+        bool $manageTransaction = true,
+    ): void
     {
         $hash = $this->secretHash($subject);
-        Db::startTrans();
+        if ($manageTransaction) Db::startTrans();
         try {
             $row = AuthRateLimit::where('application_id', $applicationId)->where('action', $action)->where('subject_hash', $hash)->lock(true)->find();
             if ($row === null || strtotime((string) $row->window_start) <= time() - 60) {
@@ -943,11 +1241,12 @@ final class HumanAuthService
                 if ((int) $row->attempt_count >= (int) $policy['rate_limit_per_minute']) throw new ApiException('SAND_IAM_AUTH_RATE_LIMITED', 429);
                 $row->save(['attempt_count' => (int) $row->attempt_count + 1]);
             }
-            Db::commit();
+            if ($manageTransaction) Db::commit();
         } catch (\Throwable $exception) {
-            Db::rollback();
+            if ($manageTransaction) Db::rollback();
             if ($retry === 0 && (str_contains($exception->getMessage(), '23505') || str_contains($exception->getMessage(), 'unique'))) {
-                $this->consumeRateLimit($applicationId, $action, $subject, $policy, 1);
+                if (!$manageTransaction) throw $exception;
+                $this->consumeRateLimit($applicationId, $action, $subject, $policy, 1, true);
                 return;
             }
             throw $exception;
@@ -967,6 +1266,128 @@ final class HumanAuthService
     }
 
     private function auditRequestId(string $requestId): string { return $requestId !== '' ? substr($requestId, 0, 96) : bin2hex(random_bytes(16)); }
+
+    /** @param array<string,mixed> $stored @return array<string,mixed> */
+    private function recoverPasswordLoginResponse(
+        array $stored,
+        string $password,
+        string $requestId,
+        Application $application,
+        Identity $identity,
+        string $ip,
+    ): array {
+        try {
+            if (($stored['response_kind'] ?? null) === 'session') {
+                return $this->recoverSessionTokenResponse($stored, $password, $requestId, 'password-login', $ip);
+            }
+            if (($stored['response_kind'] ?? null) !== 'mfa_challenge') {
+                throw new \RuntimeException('unknown login replay kind');
+            }
+            $response = (new SessionTokenResponseReplayCipher())->open(
+                (string) ($stored['encrypted_replay'] ?? ''),
+                $password,
+                $requestId,
+                'password-login',
+            );
+            $challengeToken = $response['challenge_token'] ?? null;
+            $methods = $response['methods'] ?? null;
+            $resourceId = (int) ($stored['resource_id'] ?? 0);
+            if (
+                ($response['mfa_required'] ?? null) !== true
+                || !is_string($challengeToken)
+                || !is_array($methods)
+                || $methods === []
+                || $resourceId < 1
+            ) {
+                throw new \RuntimeException('invalid MFA login replay');
+            }
+
+            Db::startTrans();
+            try {
+                $application = $this->lockPasswordLoginBoundaryInTransaction($application, $ip);
+                $identity = Identity::where('id', (int) $identity->id)
+                    ->where('application_id', (int) $application->id)
+                    ->where('status', 1)
+                    ->lock(true)
+                    ->find();
+                $auth = $identity === null ? null : IdentityAuth::where('identity_id', (int) $identity->id)
+                    ->where('application_id', (int) $application->id)
+                    ->where('status', 1)
+                    ->lock(true)
+                    ->find();
+                $policy = $this->policy((int) $application->id);
+                if (
+                    $auth === null
+                    || !$this->pepperVersionMatches((string) ($auth->pepper_version ?? ''))
+                    || $this->locked($auth->locked_until)
+                    || !$this->verifyPassword($password, (string) $auth->password_hash)
+                    || !$this->verificationSatisfied($auth, $policy)
+                ) {
+                    throw new \RuntimeException('inactive password login replay');
+                }
+                $challenge = AuthChallenge::where('id', $resourceId)
+                    ->where('application_id', (int) $application->id)
+                    ->where('identity_id', (int) $identity->id)
+                    ->where('purpose', 'mfa_login')
+                    ->where('token_hash', $this->secretHash('mfa-token:' . $challengeToken))
+                    ->where('status', 1)
+                    ->whereNull('consumed_time')
+                    ->lock(true)
+                    ->find();
+                if ($challenge === null || strtotime((string) $challenge->expire_time) <= time()) {
+                    throw new \RuntimeException('inactive MFA login replay');
+                }
+                Db::commit();
+            } catch (\Throwable $exception) {
+                Db::rollback();
+                throw $exception;
+            }
+            return $response;
+        } catch (\Throwable $exception) {
+            if ($exception instanceof ApiException && $exception->getMessage() === 'SAND_IAM_AUTH_CONFIGURATION_UNAVAILABLE') {
+                throw $exception;
+            }
+            throw new ApiException('SAND_IAM_AUTH_LOGIN_RETRY_UNAVAILABLE', 401);
+        }
+    }
+
+    /** @param array<string,mixed> $stored @return array<string,mixed> */
+    private function decryptRefreshReplay(array $stored, string $refreshToken, string $requestId, string $ip): array
+    {
+        try {
+            return $this->recoverSessionTokenResponse(
+                $stored,
+                $refreshToken,
+                $requestId,
+                'refresh',
+                $ip,
+                $refreshToken,
+            );
+        } catch (\Throwable $exception) {
+            if ($exception instanceof ApiException && in_array($exception->getMessage(), ['SAND_IAM_AUTH_NETWORK_DENIED', 'SAND_IAM_AUTH_CONFIGURATION_UNAVAILABLE'], true)) throw $exception;
+            throw new ApiException('SAND_IAM_AUTH_REFRESH_RETRY_UNAVAILABLE', 401);
+        }
+    }
+
+    private function revokeRefreshFamily(string $tokenHash, string $requestId, string $error): never
+    {
+        Db::startTrans();
+        try {
+            $refresh = AuthRefreshToken::where('token_hash', $tokenHash)->lock(true)->find();
+            $session = $refresh === null ? null : AuthSession::where('id', (int) $refresh->session_id)->lock(true)->find();
+            if ($session !== null && (int) $session->status === 1 && $session->revoked_time === null) {
+                $session->save(['status' => 2, 'revoked_time' => $this->now()]);
+                AuthRefreshToken::where('session_id', (int) $session->id)->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
+                $action = $error === 'SAND_IAM_AUTH_FEDERATED_SOURCE_REVOKED' ? 'identity.refresh_source_revoked' : 'identity.refresh_replay';
+                $this->auditForSession($session, $action, 'denied', $requestId);
+            }
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
+        throw new ApiException($error, 401);
+    }
     private function requirePepper(): void { if ((string) config('plugin.sand-iam.app.auth_pepper', '') === '') throw new ApiException('SAND_IAM_AUTH_CONFIGURATION_UNAVAILABLE', 503); }
     private function pepper(): string { return (string) config('plugin.sand-iam.app.auth_pepper', ''); }
     private function pepperVersion(): string { return (string) config('plugin.sand-iam.app.auth_pepper_version', 'v1'); }
@@ -999,8 +1420,13 @@ final class HumanAuthService
     }
     private function assertExperienceAllows(Application $application, string $action): void
     {
-        if ((int) config('plugin.sand-iam.app.application_experience_enabled', 0) !== 1) return;
         $experience = ApplicationExperience::where('application_id', (int) $application->id)->where('status', 1)->find();
+        $this->assertExperienceRecordAllows($experience, $action);
+    }
+
+    private function assertExperienceRecordAllows(?ApplicationExperience $experience, string $action): void
+    {
+        if ((int) config('plugin.sand-iam.app.application_experience_enabled', 0) !== 1) return;
         if ($experience === null) return;
         $methods = $this->configuredStrings($experience->login_methods ?? null);
         $method = $action === 'login' || $action === 'register' ? 'password' : $action;
@@ -1015,6 +1441,17 @@ final class HumanAuthService
         if ($live === null || $organization === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
         $this->assertNetworkAllowed($live, $ip);
         $this->assertExperienceAllows($live, 'passkey');
+        return $live;
+    }
+
+    private function lockPasswordLoginBoundaryInTransaction(Application $application, string $ip): Application
+    {
+        $live = $this->lockActiveApplicationInTransaction($application);
+        $experience = ApplicationExperience::where('application_id', (int) $live->id)->lock(true)->find();
+        $networkPolicy = ApplicationNetworkPolicy::where('application_id', (int) $live->id)->lock(true)->find();
+        AuthPolicy::where('application_id', (int) $live->id)->where('status', 1)->lock(true)->find();
+        $this->assertExperienceRecordAllows($experience, 'login');
+        $this->assertNetworkAllowedForRecord($live, $networkPolicy, $ip);
         return $live;
     }
 

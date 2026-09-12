@@ -1,7 +1,8 @@
 <?php
 
 return [
-    'debug' => true,
+    // Never expose plugin debug behavior by default in a distributable build.
+    'debug' => (int) env('SAND_IAM_DEBUG', 0) === 1,
     'controller_suffix' => 'Controller',
     'controller_reuse' => false,
     'version' => '0.7.0',
@@ -44,6 +45,9 @@ return [
     'sync_encryption_keys' => env('SAND_IAM_SYNC_ENCRYPTION_KEYS', ''),
     'sync_drivers' => env('SAND_IAM_SYNC_DRIVERS', ''),
     'sync_reference_pepper' => env('SAND_IAM_SYNC_REFERENCE_PEPPER', ''),
+    // Rejected or failed outbound events become operator-retryable terminal
+    // records instead of remaining pending forever.
+    'sync_outbox_max_attempts' => max(1, min(100, (int) env('SAND_IAM_SYNC_OUTBOX_MAX_ATTEMPTS', 10))),
     // The directory-sync process itself is separately opt-in in process.php.
     // These bounds apply only after both lifecycle and worker switches are on.
     'directory_sync_worker_interval_seconds' => max(1, (int) env('SAND_IAM_DIRECTORY_SYNC_WORKER_INTERVAL_SECONDS', 60)),
@@ -58,6 +62,14 @@ return [
     'audit_purge_enabled' => (int) env('SAND_IAM_AUDIT_PURGE_ENABLED', 0),
     'audit_archive_interval_seconds' => (int) env('SAND_IAM_AUDIT_ARCHIVE_INTERVAL_SECONDS', 3600),
     'audit_archive_batch_size' => (int) env('SAND_IAM_AUDIT_ARCHIVE_BATCH_SIZE', 200),
+    // Idempotency records are operational state, not audit evidence. Retain
+    // them for at least 30 days and prune only succeeded rows in bounded batches.
+    'security_operation_retention_days' => max(30, min(3650, (int) env('SAND_IAM_SECURITY_OPERATION_RETENTION_DAYS', 30))),
+    'security_operation_retention_interval_seconds' => max(300, (int) env('SAND_IAM_SECURITY_OPERATION_RETENTION_INTERVAL_SECONDS', 3600)),
+    'security_operation_retention_batch_size' => max(1, min(1000, (int) env('SAND_IAM_SECURITY_OPERATION_RETENTION_BATCH_SIZE', 200))),
+    // Authentication throttling windows last 60 seconds. Keep expired rows for
+    // at least one hour so cleanup cannot race an active or slightly skewed host.
+    'auth_rate_limit_retention_hours' => max(1, min(168, (int) env('SAND_IAM_AUTH_RATE_LIMIT_RETENTION_HOURS', 24))),
     'oauth_dynamic_registration_enabled' => (int) env('SAND_IAM_OAUTH_DYNAMIC_REGISTRATION_ENABLED', 0),
     'oidc_frontchannel_logout_enabled' => (int) env('SAND_IAM_OIDC_FRONTCHANNEL_LOGOUT_ENABLED', 0),
     'oidc_backchannel_logout_enabled' => (int) env('SAND_IAM_OIDC_BACKCHANNEL_LOGOUT_ENABLED', 0),

@@ -10,6 +10,7 @@ declare(strict_types=1);
  *
  * Usage:
  *   php sand-iam/tools/build-review-candidate.php
+ *   php sand-iam/tools/build-review-candidate.php --release-unsigned
  *   php sand-iam/tools/build-review-candidate.php --artifact-root=/absolute/path
  *   php sand-iam/tools/build-review-candidate.php --rebuild-from=/absolute/artifact/snapshot/package --output=/absolute/rebuild
  */
@@ -29,6 +30,7 @@ $arguments = array_slice($argv, 1);
 $artifactRoot = $workspace . '/.artifacts';
 $rebuildFrom = null;
 $output = null;
+$releaseUnsigned = false;
 foreach ($arguments as $argument) {
     if (str_starts_with($argument, '--artifact-root=')) {
         $artifactRoot = substr($argument, strlen('--artifact-root='));
@@ -36,8 +38,67 @@ foreach ($arguments as $argument) {
         $rebuildFrom = substr($argument, strlen('--rebuild-from='));
     } elseif (str_starts_with($argument, '--output=')) {
         $output = substr($argument, strlen('--output='));
+    } elseif ($argument === '--release-unsigned') {
+        $releaseUnsigned = true;
     } else {
         throw new InvalidArgumentException('Unsupported argument: ' . $argument);
+    }
+}
+
+if ($releaseUnsigned && ($rebuildFrom !== null || $output !== null)) {
+    throw new InvalidArgumentException('--release-unsigned cannot be combined with rebuild arguments');
+}
+
+/** @return string */
+function checkedCommand(array $arguments, string $failure): string
+{
+    $command = implode(' ', array_map('escapeshellarg', $arguments));
+    $output = [];
+    exec($command . ' 2>&1', $output, $status);
+    $text = trim(implode(PHP_EOL, $output));
+    if ($status !== 0) {
+        throw new RuntimeException($failure . ($text === '' ? '' : ': ' . $text));
+    }
+    return $text;
+}
+
+/** @return array{commit:string,tree:string} Git revision bound to a clean SandIAM source subtree. */
+function assertUnsignedReleasePrerequisites(string $workspace, string $source): array
+{
+    if (!is_file($source . '/LICENSE')) {
+        throw new RuntimeException('unsigned release candidate requires an approved project LICENSE');
+    }
+    $status = checkedCommand(
+        ['git', '-C', $workspace, 'status', '--porcelain=v1', '--untracked-files=all', '--', 'sand-iam'],
+        'cannot inspect SandIAM source cleanliness',
+    );
+    if ($status !== '') {
+        throw new RuntimeException('unsigned release candidate requires a clean committed sand-iam/ source subtree');
+    }
+    checkedCommand([PHP_BINARY, $source . '/tools/generate-sbom.php', '--check'], 'unsigned release candidate SBOM gate failed');
+    checkedCommand([PHP_BINARY, $source . '/tools/check-release-payload.php'], 'unsigned release candidate payload hygiene gate failed');
+    checkedCommand([PHP_BINARY, $source . '/tools/check-package-integrity.php'], 'unsigned release candidate package integrity gate failed');
+    $revision = checkedCommand(['git', '-C', $workspace, 'rev-parse', 'HEAD'], 'cannot resolve SandIAM source revision');
+    if (preg_match('/^[0-9a-f]{40,64}$/', $revision) !== 1) {
+        throw new RuntimeException('resolved SandIAM source revision is invalid');
+    }
+    $tree = checkedCommand(['git', '-C', $workspace, 'rev-parse', 'HEAD:sand-iam'], 'cannot resolve committed SandIAM tree');
+    if (preg_match('/^[0-9a-f]{40,64}$/', $tree) !== 1) {
+        throw new RuntimeException('resolved SandIAM source tree is invalid');
+    }
+    return ['commit' => $revision, 'tree' => $tree];
+}
+
+function assertExternalArtifactRoot(string $artifactRoot, string $source): void
+{
+    $parent = realpath(dirname($artifactRoot));
+    $sourceRoot = realpath($source);
+    if (!is_string($parent) || !is_string($sourceRoot)) {
+        throw new RuntimeException('unsigned release artifact root must have an existing parent');
+    }
+    $target = $parent . '/' . basename($artifactRoot);
+    if ($target === $sourceRoot || str_starts_with($target, $sourceRoot . '/')) {
+        throw new RuntimeException('unsigned release artifact root must remain outside sand-iam/');
     }
 }
 
@@ -334,6 +395,9 @@ if ($rebuildFrom !== null) {
     exit(0);
 }
 
+$sourceRevision = $releaseUnsigned ? assertUnsignedReleasePrerequisites($workspace, $source) : null;
+if ($releaseUnsigned) assertExternalArtifactRoot($artifactRoot, $source);
+
 createDirectory($artifactRoot);
 $version = '0.7.0';
 $next = 10;
@@ -363,7 +427,8 @@ $snapshotRecord = [
     'files' => $sourceSnapshot['files'],
 ];
 file_put_contents($artifact . '/source-snapshot.json', json_encode($snapshotRecord, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . PHP_EOL);
-$result = buildFromSnapshot($snapshot, $artifact, $artifactName . '-candidate-dirty-not-release.zip', $baseFiles);
+$archiveSuffix = $releaseUnsigned ? '-release-unsigned.zip' : '-candidate-dirty-not-release.zip';
+$result = buildFromSnapshot($snapshot, $artifact, $artifactName . $archiveSuffix, $baseFiles);
 assertGeneratedDescriptorParity([$source, $snapshot, $artifact . '/stage/package']);
 
 $repeat = $artifact . '/reproducibility/rebuild';
@@ -378,9 +443,9 @@ if (!$repeatOk) {
 }
 
 $manifest = [
-    'schema' => 'sand-iam.artifact-manifest/v5',
-    'kind' => 'candidate-review-only',
-    'release_state' => 'candidate/dirty-not-release',
+    'schema' => 'sand-iam.artifact-manifest/v6',
+    'kind' => $releaseUnsigned ? 'release-candidate-unsigned' : 'candidate-review-only',
+    'release_state' => $releaseUnsigned ? 'release/unsigned' : 'candidate/dirty-not-release',
     'package' => ['app' => 'sand-iam', 'version' => $version, 'archive' => basename($result['archive']), 'sha256' => $result['archive_sha256'], 'bytes' => $result['archive_bytes'], 'entry_count' => count($result['entry_files'])],
     'source_snapshot' => ['file_count' => count($sourceSnapshot['files']), 'sha256' => $sourceSnapshot['digest'], 'path' => 'snapshot/package'],
     'archive_authority_parity' => ['missing' => [], 'unexpected' => [], 'mismatch_non_generated' => [], 'generated_descriptors' => ['recovery/failed-upgrade.v2.json', 'plugin/sand-iam/recovery/failed-upgrade.v2.json'], 'generated_descriptors_source_snapshot_stage_identical' => true, 'passed' => true],
@@ -388,6 +453,12 @@ $manifest = [
     'reproducibility' => ['same_snapshot_archive_sha256' => $repeatResult['archive_sha256'], 'bit_identical_zip' => $repeatOk, 'entry_list_identical' => true, 'descriptor_identical' => true],
     'files' => $result['entry_files'],
 ];
+if ($sourceRevision !== null) {
+    $manifest['source_revision'] = [
+        'vcs' => 'git', 'commit' => $sourceRevision['commit'], 'tree' => $sourceRevision['tree'],
+        'subtree' => 'sand-iam/', 'clean' => true,
+    ];
+}
 file_put_contents($artifact . '/manifest.json', json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . PHP_EOL);
 file_put_contents($artifact . '/SHA256SUMS', $result['archive_sha256'] . '  ' . basename($result['archive']) . PHP_EOL);
 $command = 'php sand-iam/tools/build-review-candidate.php --rebuild-from=' . $artifact . '/snapshot/package --output=' . $artifact . '/reproducibility/manual-rebuild';
@@ -399,10 +470,14 @@ $validationReport = "# Candidate build validation\n\n"
     . "- ZIP path, content, CRC/reader, and staged-entry parity: PASS (" . count($result['entry_files']) . " entries).\n"
     . "- Source, immutable snapshot, staged payload, and ZIP payload are byte-identical, including both generated recovery descriptors: PASS.\n"
     . "- Repeat build from the identical snapshot: PASS (bit-identical ZIP SHA-256).\n\n"
-    . "This report is package construction evidence only. Lifecycle, database, host, browser, business-loop, deployment, and release-provenance acceptance are not run by this builder.\n";
+    . ($releaseUnsigned ? "- Clean committed SandIAM source, approved LICENSE, current SBOM, release hygiene, and package integrity prerequisites: PASS.\n\n" : "\n")
+    . "This report is package construction evidence only. Lifecycle, database, host, browser, business-loop, deployment, and signed release-provenance acceptance are not run by this builder.\n";
 file_put_contents($artifact . '/validation-report.md', $validationReport);
-$provenance = "# SandIAM {$version} v{$next} local review candidate\n\n"
-    . "State: `candidate/dirty-not-release`. This artifact was built from the immutable local snapshot at `snapshot/package`; it was not registered, uploaded, synchronized, installed, or deployed.\n\n"
+$state = $releaseUnsigned ? 'release/unsigned' : 'candidate/dirty-not-release';
+$title = $releaseUnsigned ? 'unsigned release candidate' : 'local review candidate';
+$provenance = "# SandIAM {$version} v{$next} {$title}\n\n"
+    . "State: `{$state}`. This artifact was built from the immutable local snapshot at `snapshot/package`; it was not registered, uploaded, synchronized, installed, signed, or deployed.\n\n"
+    . ($sourceRevision === null ? '' : "- Clean source commit: `{$sourceRevision['commit']}`.\n- Committed SandIAM tree: `{$sourceRevision['tree']}`.\n")
     . "- Source snapshot: " . count($sourceSnapshot['files']) . " files; SHA-256 `{$sourceSnapshot['digest']}`.\n"
     . "- ZIP: " . count($result['entry_files']) . " entries; SHA-256 `{$result['archive_sha256']}`.\n"
     . "- Archive-authority parity: 0 missing, 0 unexpected, 0 non-generated mismatches; source, snapshot, stage, and ZIP include byte-identical generated recovery descriptors.\n"

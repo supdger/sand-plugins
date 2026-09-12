@@ -1,0 +1,9 @@
+{
+  "service_grants": [
+    {
+      "service_code": "document-service",
+      "action_code": "document.read",
+      "audience": "document-service"
+    }
+  ]
+}

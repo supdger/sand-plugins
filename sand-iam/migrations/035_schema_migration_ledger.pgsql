@@ -329,7 +329,7 @@ BEGIN
         package_version varchar(32) NOT NULL
     ) ON COMMIT DROP;
 
-WITH self_checksum(checksum) AS (VALUES ('4372ad7731e2dae60e51b7b2448a95971c5b22db06fc9678fb1d076d6e28ea25')),
+WITH self_checksum(checksum) AS (VALUES ('7365abe0bbaa0134c018a291a65a4a420b2b145e0c7c3d184ac0123405ae0e12')),
     expected(migration_file, revision, checksum, package_version) AS (
         VALUES
             ('001_iam04_admin_organization_grant.pgsql', 1, 'd214397c680631150f4cc1199d0af27063e968211b13b24a1e857ec9f0ceb5f6', '0.6.0'),
@@ -368,7 +368,8 @@ WITH self_checksum(checksum) AS (VALUES ('4372ad7731e2dae60e51b7b2448a95971c5b22
             ('033_identity_group_role.pgsql', 33, '161352617d1e46205a2abbf3b074ab7276e9dd691d151b61a2d8d146de26fd68', '0.7.0'),
         ('034_identity_group_role_permission_catalog.pgsql', 34, '97ab44356d905eb0e1c13ca3101a3dd0b8a4af3264cecb81310e1f522dfc2485', '0.7.0'),
         ('036_acceptance_fixture_support.pgsql', 36, '403f0fbadaf54436b81d8ff9d9eb2c14cbe83b5a26c3d13594241f2b40e17a3b', '0.7.0'),
-        ('037_initialization_draft.pgsql', 37, 'cf7013ee42f9bd6319e8c23524f274e382901af7fbb32fa947732cd8beeb640c', '0.7.0')
+        ('037_initialization_draft.pgsql', 37, 'cf7013ee42f9bd6319e8c23524f274e382901af7fbb32fa947732cd8beeb640c', '0.7.0'),
+        ('038_auth_rate_limit_retention.pgsql', 38, '2765bed31eb3a8c5e894c0758e80120f6926f90b4f5a1a9ea39609dd608fe2c3', '0.7.0')
         UNION ALL
         SELECT '035_schema_migration_ledger.pgsql', 35, self_checksum.checksum, '0.7.0'
         FROM self_checksum
@@ -422,8 +423,8 @@ WITH self_checksum(checksum) AS (VALUES ('4372ad7731e2dae60e51b7b2448a95971c5b22
                 WHERE expected.revision <= 35
                   AND recorded.migration_file IS NULL
             )
-            AND EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision = 36)
-            AND NOT EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision = 37)
+            AND EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision = 37)
+            AND NOT EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision = 38)
         )
         OR (
             recorded_rows = expected_rows - 2
@@ -435,7 +436,20 @@ WITH self_checksum(checksum) AS (VALUES ('4372ad7731e2dae60e51b7b2448a95971c5b22
                 WHERE expected.revision <= 35
                   AND recorded.migration_file IS NULL
             )
-            AND NOT EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision IN (36, 37))
+            AND EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision = 36)
+            AND NOT EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision IN (37, 38))
+        )
+        OR (
+            recorded_rows = expected_rows - 3
+            AND total_recorded_rows = expected_rows - 3
+            AND NOT EXISTS (
+                SELECT 1
+                FROM pg_temp.sand_iam_schema_migration_expected expected
+                LEFT JOIN sand_iam_schema_migration recorded ON recorded.migration_file = expected.migration_file
+                WHERE expected.revision <= 35
+                  AND recorded.migration_file IS NULL
+            )
+            AND NOT EXISTS (SELECT 1 FROM sand_iam_schema_migration WHERE revision IN (36, 37, 38))
         )
     ) THEN
         RAISE EXCEPTION 'SandIAM migration ledger is partial; refusing to adopt or overwrite missing baseline records';

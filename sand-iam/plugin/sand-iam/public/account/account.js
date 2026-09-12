@@ -1,4 +1,4 @@
-// sand-iam/portal/src/experienceContracts.ts
+// src/experienceContracts.ts
 var REGISTRATION_FIELD_LABELS = {
   username: "\u7528\u6237\u540D",
   display_name: "\u663E\u793A\u540D\u79F0",
@@ -123,7 +123,7 @@ function parsePortalAuthResult(value) {
   };
 }
 
-// sand-iam/portal/src/meContracts.ts
+// src/meContracts.ts
 function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -265,7 +265,7 @@ function portalRequestHeaders(accessToken, requestId, hasBody) {
   return headers;
 }
 
-// sand-iam/portal/src/casContracts.ts
+// src/casContracts.ts
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -307,7 +307,7 @@ function casRequestLooksValid(request) {
   return /^CRT-[A-Za-z0-9_-]{48}$/.test(request);
 }
 
-// sand-iam/portal/src/oauthContracts.ts
+// src/oauthContracts.ts
 function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -366,7 +366,7 @@ function parseOAuthDecision(value) {
   return redirectUri === "" ? null : { redirectUri };
 }
 
-// sand-iam/portal/src/mfaContracts.ts
+// src/mfaContracts.ts
 function isRecord5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -521,7 +521,7 @@ async function getPasskeyAssertion(options) {
   };
 }
 
-// sand-iam/portal/src/invitationContracts.ts
+// src/invitationContracts.ts
 function isRecord6(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -536,7 +536,7 @@ function parseInvitationAcceptResult(value) {
   return { displayName: displayName.trim() };
 }
 
-// sand-iam/portal/src/runtime.ts
+// src/runtime.ts
 var SAND_IAM_PORTAL_AUTH_PREFIX = "/api/sand-iam/v1/auth";
 var SAND_IAM_PORTAL_ME_PREFIX = "/api/sand-iam/v1/me";
 var SAND_IAM_PORTAL_EXPERIENCE = "/api/sand-iam/v1/experience";
@@ -1210,7 +1210,7 @@ function describePortalError(error) {
   return { title: "\u8BF7\u6C42\u672A\u5B8C\u6210", detail, http };
 }
 
-// sand-iam/portal/src/app.ts
+// src/app.ts
 var params = new URLSearchParams(window.location.search);
 function takeInvitationToken() {
   const token = params.get("token") ?? "";

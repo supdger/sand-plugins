@@ -143,6 +143,8 @@ Route::group('/app/sand-iam/admin', static function (): void {
     Route::post('/credential/rotate', [CredentialController::class, 'rotate']);
     Route::post('/credential/revoke', [CredentialController::class, 'revoke']);
     Route::post('/oauth-client/secret/rotate', [OAuthClientController::class, 'rotateSecret']);
+    Route::get('/oauth-client/logout-delivery/index', [OAuthClientController::class, 'logoutDeliveries']);
+    Route::post('/oauth-client/logout-delivery/reissue', [OAuthClientController::class, 'reissueLogoutDelivery']);
     Route::post('/federation/provider/create', [FederationAdminController::class, 'createProvider']);
     Route::get('/identity-provider-preset/index', [IdentityProviderPresetController::class, 'index']);
     Route::get('/identity-provider-preset/read', [IdentityProviderPresetController::class, 'read']);
@@ -205,6 +207,8 @@ Route::group('/app/sand-iam/admin', static function (): void {
     Route::post('/sync-connector/disable', [SyncConnectorController::class, 'disable']);
     Route::post('/sync-connector/run', [SyncConnectorController::class, 'run']);
     Route::get('/sync-connector/runs', [SyncConnectorController::class, 'runs']);
+    Route::get('/sync-connector/outbox', [SyncConnectorController::class, 'outbox']);
+    Route::post('/sync-connector/outbox-retry', [SyncConnectorController::class, 'retryOutbox']);
     Route::get('/developer/openapi', [DeveloperController::class, 'openApi']);
     Route::get('/developer/events', [DeveloperController::class, 'events']);
 })->middleware([CheckLogin::class, CheckAuth::class, SystemLog::class]);

@@ -201,7 +201,7 @@ final class DirectorySyncScheduler
     private function retryable(string $errorCode): bool
     {
         return str_starts_with($errorCode, 'SAND_IAM_SYNC_REMOTE_')
-            || in_array($errorCode, ['SAND_IAM_SYNC_DRIVER_RESPONSE_INVALID', 'SAND_IAM_SYNC_RUN_FAILED'], true);
+            || in_array($errorCode, ['SAND_IAM_SYNC_DRIVER_RESPONSE_INVALID', 'SAND_IAM_SYNC_OUTBOUND_FAILED', 'SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED', 'SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID', 'SAND_IAM_SYNC_RUN_FAILED'], true);
     }
 
     /** @param array<int,list<array{id:int,organization_id:int,application_id:int,status:int,config_configured:bool}>> $byOrganization @return list<int> */

@@ -115,6 +115,40 @@ namespace {
     $otherActor = $service->execute('admin', '8', 'credential.issue', 'caller-req_20260822', $fingerprint, 'credential', $operation);
     tP0($otherActor['replayed'] === false && $calls === 2, 'request id was incorrectly shared across security actors');
 
+    $oauthCalls = 0;
+    $oauthFingerprint = IdempotencyService::fingerprint(['id' => 77]);
+    $oauthOperation = static function () use (&$oauthCalls): array {
+        $oauthCalls++;
+        return ['resource_id' => 77, 'result' => ['client_id' => 'controlled-client', 'client_secret' => 'siam_cs_secret_once']];
+    };
+    $oauthFirst = $service->execute('admin', '7', 'oauth_client.secret_rotate', 'oauth-rotate-20260912', $oauthFingerprint, 'oauth_client', $oauthOperation);
+    tP0($oauthFirst['replayed'] === false && ($oauthFirst['result']['client_secret'] ?? null) === 'siam_cs_secret_once', 'initial OAuth rotation did not return its one-time client secret');
+    $oauthReplay = $service->execute('admin', '7', 'oauth_client.secret_rotate', 'oauth-rotate-20260912', $oauthFingerprint, 'oauth_client', $oauthOperation);
+    tP0($oauthReplay['replayed'] === true && $oauthCalls === 1 && !isset($oauthReplay['result']['client_secret']) && ($oauthReplay['result']['secret_available'] ?? true) === false, 'OAuth rotation replay exposed or regenerated the client secret');
+
+    $sensitiveFingerprint = IdempotencyService::fingerprint(['scope' => 'recursive-redaction']);
+    $sensitiveOperation = static fn (): array => [
+        'resource_id' => 81,
+        'result' => [
+            'id' => 81,
+            'recovery_codes' => ['recovery-secret'],
+            'private_key' => 'private-secret',
+            'otpauth_uri' => 'otpauth://totp/example?secret=totp-secret',
+            'challenge_token' => 'siam_mc_challenge-secret',
+            'nested' => [
+                'shared_secret' => 'shared-secret',
+                'authorization' => 'Bearer secret',
+                'credential_id' => 82,
+                'secret_version' => 'v2',
+            ],
+        ],
+    ];
+    $sensitiveFirst = $service->execute('admin', '7', 'security.material.rotate', 'security-material-20260912', $sensitiveFingerprint, 'security_material', $sensitiveOperation);
+    tP0(isset($sensitiveFirst['result']['recovery_codes'], $sensitiveFirst['result']['private_key'], $sensitiveFirst['result']['nested']['shared_secret']), 'initial response lost caller-owned one-time security material');
+    $sensitiveReplay = $service->execute('admin', '7', 'security.material.rotate', 'security-material-20260912', $sensitiveFingerprint, 'security_material', $sensitiveOperation);
+    tP0(!isset($sensitiveReplay['result']['recovery_codes'], $sensitiveReplay['result']['private_key'], $sensitiveReplay['result']['otpauth_uri'], $sensitiveReplay['result']['challenge_token'], $sensitiveReplay['result']['nested']['shared_secret'], $sensitiveReplay['result']['nested']['authorization']), 'recursive idempotency replay exposed security material');
+    tP0(($sensitiveReplay['result']['nested']['credential_id'] ?? null) === 82 && ($sensitiveReplay['result']['nested']['secret_version'] ?? null) === 'v2', 'recursive idempotency redaction removed safe resource metadata');
+
     $pendingFingerprint = IdempotencyService::fingerprint(['operation' => 'onboarding.apply', 'scope' => 'same-admin']);
     $pending = SecurityOperation::create([
         'actor_type' => 'admin', 'actor_ref' => '9', 'operation' => 'onboarding.apply', 'request_id' => 'onboarding-concurrent-20260823',

@@ -2,7 +2,7 @@
 
 > 状态：**冻结，可供管理端消费**。v0.3 将身份源作用域明确为两种：`scope_type=application` 是应用私有实例；`scope_type=organization` 是组织持有实例，并通过 application mount 决定可用范围。旧身份绑定页面仍可提交 `provider_code`，但只会解析同组织且已挂载的既有身份源，绝不隐式创建记录或猜测作用域。Cursor 只修改 `sandadmin-artd/src/views/plugin/sand-iam/`，不得自行增改字段、路由、权限码或错误码。
 
-> **版本口径：** 插件包候选版本为 `0.7.0`（根与插件 `info.ini`、运行配置的可安装发行版本）；OpenAPI 目录的 `0.12.0-candidate` 是管理 API 契约目录版本。两者独立演进，前者不能由后者推导，后者的 `candidate` 也不构成插件发布或 API 稳定性声明。
+> **版本口径：** 插件包候选版本为 `0.7.0`（根与插件 `info.ini`、运行配置的可安装发行版本）；OpenAPI 目录的 `0.13.0-candidate` 是管理 API 契约目录版本。两者独立演进，前者不能由后者推导，后者的 `candidate` 也不构成插件发布或 API 稳定性声明。`0.13.0-candidate` 新增 OIDC 后通道登出失败恢复的精确分页参数、请求/响应 DTO、稳定错误码和 404/503 响应声明；运行端点保持向后兼容。
 
 所有管理路由前缀为 `/app/sand-iam/admin`，均需要宿主登录、权限与操作日志中间件。除非另有注明：
 

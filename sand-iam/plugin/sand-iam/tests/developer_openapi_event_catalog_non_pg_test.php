@@ -105,7 +105,7 @@ $root = dirname($plugin, 2);
 $rootInfo = parse_ini_file($root . '/info.ini');
 $pluginInfo = parse_ini_file($plugin . '/info.ini');
 if (($rootInfo['version'] ?? null) !== '0.7.0' || ($pluginInfo['version'] ?? null) !== '0.7.0') t12DeveloperFail('plugin package version is not consistently 0.7.0');
-if (($openApi['info']['version'] ?? null) !== '0.12.0-candidate') t12DeveloperFail('management OpenAPI contract version drifted');
+if (($openApi['info']['version'] ?? null) !== '0.13.0-candidate') t12DeveloperFail('management OpenAPI contract version drifted');
 $managementContract = file_get_contents($root . '/docs/development/sand-iam-management-api-v0.1.md');
 $packageContract = file_get_contents($root . '/docs/development/sand-iam-package-integrity.md');
 if (!is_string($managementContract) || !is_string($packageContract) || !str_contains($managementContract, '两者独立演进') || !str_contains($packageContract, '独立的接口契约版本')) t12DeveloperFail('package and management API version boundary is undocumented');
@@ -135,5 +135,65 @@ $policySimulation = $openApi['paths']['/policy/simulate']['post'] ?? null;
 if (!is_array($policySimulation) || ($policySimulation['x-sand-iam-permission'] ?? null) !== 'sand_iam:policy:read') t12DeveloperFail('policy simulation OpenAPI permission is missing or incorrect');
 $policyRollback = $openApi['paths']['/policy/rollback']['post'] ?? null;
 if (!is_array($policyRollback) || ($policyRollback['x-sand-iam-permission'] ?? null) !== 'sand_iam:policy:publish') t12DeveloperFail('policy rollback OpenAPI permission is missing or incorrect');
+
+$logoutList = $openApi['paths']['/oauth-client/logout-delivery/index']['get'] ?? null;
+$logoutReissue = $openApi['paths']['/oauth-client/logout-delivery/reissue']['post'] ?? null;
+$schemas = $openApi['components']['schemas'] ?? [];
+if (!is_array($logoutList) || !is_array($logoutReissue) || !is_array($schemas)) t12DeveloperFail('OIDC logout recovery OpenAPI operations are missing');
+$listParameters = [];
+foreach ($logoutList['parameters'] ?? [] as $parameter) {
+    if (is_array($parameter) && is_string($parameter['name'] ?? null)) $listParameters[$parameter['name']] = $parameter;
+}
+if (($listParameters['id']['required'] ?? false) !== true
+    || ($listParameters['id']['schema']['minimum'] ?? null) !== 1
+    || ($listParameters['state']['schema']['enum'] ?? null) !== ['pending', 'sending', 'delivered', 'dead']
+    || ($listParameters['limit']['schema']['maximum'] ?? null) !== 100) {
+    t12DeveloperFail('OIDC logout delivery list query contract is incomplete');
+}
+if (($logoutList['responses']['200']['content']['application/json']['schema']['$ref'] ?? null) !== '#/components/schemas/OidcLogoutDeliveryListEnvelope'
+    || ($logoutList['responses']['404']['$ref'] ?? null) !== '#/components/responses/NotFound') {
+    t12DeveloperFail('OIDC logout delivery list response contract is incomplete');
+}
+$reissueHeader = $logoutReissue['parameters'][0] ?? null;
+if (!is_array($reissueHeader) || ($reissueHeader['name'] ?? null) !== 'X-Request-Id' || ($reissueHeader['required'] ?? false) !== true) {
+    t12DeveloperFail('OIDC logout recovery does not require X-Request-Id');
+}
+if (($logoutReissue['requestBody']['content']['application/json']['schema']['$ref'] ?? null) !== '#/components/schemas/OidcLogoutDeliveryReissueInput'
+    || ($logoutReissue['responses']['200']['content']['application/json']['schema']['$ref'] ?? null) !== '#/components/schemas/OidcLogoutDeliveryReissueEnvelope'
+    || ($logoutReissue['responses']['404']['$ref'] ?? null) !== '#/components/responses/NotFound'
+    || ($logoutReissue['responses']['503']['$ref'] ?? null) !== '#/components/responses/Unavailable') {
+    t12DeveloperFail('OIDC logout recovery request or response schema is incomplete');
+}
+$reissueInput = $schemas['OidcLogoutDeliveryReissueInput'] ?? null;
+$reissueResult = $schemas['OidcLogoutDeliveryReissueResult'] ?? null;
+$listItem = $schemas['OidcLogoutDeliveryListItem'] ?? null;
+if (!is_array($reissueInput) || ($reissueInput['required'] ?? null) !== ['id', 'delivery_id'] || ($reissueInput['additionalProperties'] ?? true) !== false) {
+    t12DeveloperFail('OIDC logout recovery input is not closed and exact');
+}
+if (!is_array($reissueResult)
+    || ($reissueResult['required'] ?? null) !== ['source_delivery_id', 'delivery_id', 'event_id', 'state', 'already_reissued']
+    || ($reissueResult['additionalProperties'] ?? true) !== false) {
+    t12DeveloperFail('OIDC logout recovery result is not closed and exact');
+}
+if (!is_array($listItem)
+    || array_key_exists('encrypted_logout_token', $listItem['properties'] ?? [])
+    || array_key_exists('logout_token', $listItem['properties'] ?? [])
+    || array_key_exists('encrypted_logout_token', $reissueResult['properties'] ?? [])
+    || array_key_exists('logout_token', $reissueResult['properties'] ?? [])) {
+    t12DeveloperFail('OIDC logout recovery OpenAPI exposes logout token material');
+}
+$recoveryErrors = $logoutReissue['x-sand-iam-error-codes'] ?? [];
+foreach ([
+    'SAND_IAM_OIDC_BACKCHANNEL_LOGOUT_DISABLED',
+    'SAND_IAM_OIDC_BACKCHANNEL_CLIENT_UNAVAILABLE',
+    'SAND_IAM_OIDC_BACKCHANNEL_URI_UNAVAILABLE',
+    'SAND_IAM_OIDC_LOGOUT_DELIVERY_NOT_FOUND',
+    'SAND_IAM_OIDC_LOGOUT_DELIVERY_NOT_RECOVERABLE',
+    'SAND_IAM_OIDC_LOGOUT_SESSION_NOT_REVOKED',
+    'SAND_IAM_OIDC_LOGOUT_RECOVERY_CONFLICT',
+    'SAND_IAM_IDEMPOTENCY_CONFLICT',
+] as $errorCode) {
+    if (!in_array($errorCode, $recoveryErrors, true)) t12DeveloperFail("OIDC logout recovery OpenAPI omits {$errorCode}");
+}
 
 echo 'developer OpenAPI and event catalog non-PG checks passed' . PHP_EOL;

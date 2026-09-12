@@ -1,9 +1,9 @@
 export const sandIam = {
   organizationCode: 'demoorg',
-  applicationCode: 'matter-demo',
-  audience: 'matter-api',
+  applicationCode: 'work-item-demo',
+  audience: 'work-item-api',
   actions: {
-    MATTER_ARCHIVE: 'matter.archive',
-    MATTER_READ: 'matter.read',
+    WORK_ITEM_CLOSE: 'work_item.close',
+    WORK_ITEM_READ: 'work_item.read',
   },
 } as const

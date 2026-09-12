@@ -344,6 +344,101 @@ final class OAuthOidcService
         return ['redirect_uri' => $redirectUri, 'frontchannel_uris' => $frontchannelUris];
     }
 
+    /**
+     * Reissues a fresh logout token for one terminally failed delivery while
+     * retaining the dead row as immutable operational evidence.
+     *
+     * @return array{source_delivery_id:int,delivery_id:int,event_id:string,state:string,already_reissued:bool}
+     */
+    public function reissueBackchannelLogout(int $clientId, int $applicationId, int $deliveryId, string $actor, string $requestId): array
+    {
+        $this->requireConfiguration();
+        if ((int) config('plugin.sand-iam.app.oidc_backchannel_logout_enabled', 0) !== 1) {
+            throw new ApiException('SAND_IAM_OIDC_BACKCHANNEL_LOGOUT_DISABLED', 503);
+        }
+        $payload = ['client_id' => $clientId, 'application_id' => $applicationId, 'delivery_id' => $deliveryId];
+        $result = (new IdempotencyService())->execute(
+            'admin',
+            $actor,
+            'oidc.backchannel_logout_reissue',
+            $requestId,
+            IdempotencyService::fingerprint($payload),
+            'oidc_logout_delivery',
+            function () use ($clientId, $applicationId, $deliveryId, $actor, $requestId): array {
+                $client = OAuthClient::where('id', $clientId)->where('application_id', $applicationId)->where('status', 1)->lock(true)->find();
+                if ($client === null || !$this->clientApplicationActive($client)) {
+                    throw new ApiException('SAND_IAM_OIDC_BACKCHANNEL_CLIENT_UNAVAILABLE', 400);
+                }
+                $targetUri = $this->backchannelLogoutUri($client);
+                if ($targetUri === null) throw new ApiException('SAND_IAM_OIDC_BACKCHANNEL_URI_UNAVAILABLE', 400);
+
+                $source = OidcLogoutDelivery::where('id', $deliveryId)
+                    ->where('application_id', $applicationId)
+                    ->where('oauth_client_id', $clientId)
+                    ->lock(true)
+                    ->find();
+                if ($source === null) throw new ApiException('SAND_IAM_OIDC_LOGOUT_DELIVERY_NOT_FOUND', 404);
+                if ((string) $source->state !== 'dead' || (int) $source->status !== 2) {
+                    throw new ApiException('SAND_IAM_OIDC_LOGOUT_DELIVERY_NOT_RECOVERABLE', 409);
+                }
+                $session = AuthSession::where('id', (int) $source->auth_session_id)
+                    ->where('application_id', $applicationId)
+                    ->where('status', 2)
+                    ->whereNotNull('revoked_time')
+                    ->lock(true)
+                    ->find();
+                if ($session === null) throw new ApiException('SAND_IAM_OIDC_LOGOUT_SESSION_NOT_REVOKED', 409);
+
+                // A deterministic successor jti turns the existing unique
+                // event constraint into a durable one-successor-per-dead-row
+                // concurrency guard. A successor that later dies can itself
+                // be recovered, producing a new link in the chain.
+                $eventId = $this->backchannelRecoveryEventId((string) $source->event_id);
+                $delivery = OidcLogoutDelivery::where('event_id', $eventId)->find();
+                $alreadyReissued = $delivery !== null;
+                if ($delivery !== null) {
+                    if ((int) $delivery->application_id !== $applicationId
+                        || (int) $delivery->oauth_client_id !== $clientId
+                        || (int) $delivery->auth_session_id !== (int) $source->auth_session_id) {
+                        throw new ApiException('SAND_IAM_OIDC_LOGOUT_RECOVERY_CONFLICT', 409);
+                    }
+                } else {
+                    $delivery = $this->createBackchannelLogoutDelivery($client, (string) $source->auth_session_id, $eventId, $targetUri);
+                    $application = Application::find($applicationId);
+                    $this->auditWriter->write(
+                        'admin',
+                        $actor,
+                        $application ? (int) $application->organization_id : null,
+                        $applicationId,
+                        'oidc.backchannel_logout_reissue',
+                        'oidc_logout_delivery',
+                        (int) $delivery->id,
+                        'succeeded',
+                        RequestId::normalize($requestId),
+                        [
+                            'oauth_client_id' => $clientId,
+                            'source_delivery_id' => $deliveryId,
+                            'source_event_digest' => hash('sha256', (string) $source->event_id),
+                            'successor_event_digest' => hash('sha256', $eventId),
+                        ],
+                    );
+                }
+                $response = [
+                    'source_delivery_id' => $deliveryId,
+                    'delivery_id' => (int) $delivery->id,
+                    'event_id' => $eventId,
+                    'state' => (string) $delivery->state,
+                    'already_reissued' => $alreadyReissued,
+                ];
+                return ['resource_id' => (int) $delivery->id, 'result' => $response];
+            },
+        );
+        $response = $result['result'];
+        unset($response['secret_available']);
+        /** @var array{source_delivery_id:int,delivery_id:int,event_id:string,state:string,already_reissued:bool} $response */
+        return $response;
+    }
+
     /** @param array<string,mixed> $payload @return array<string,mixed> */
     private function exchangeAuthorizationCode(array $payload, string $requestId): array
     {
@@ -588,21 +683,24 @@ final class OAuthOidcService
     private function enqueueBackchannelLogout(OAuthClient $client, string $sessionId): bool
     {
         if ((int) config('plugin.sand-iam.app.oidc_backchannel_logout_enabled', 0) !== 1) return false;
-        $uri = trim((string) ($client->backchannel_logout_uri ?? ''));
-        if ($uri === '' || strlen($uri) > 2048 || !filter_var($uri, FILTER_VALIDATE_URL)) return false;
-        $parts = parse_url($uri);
-        if (($parts['scheme'] ?? '') !== 'https' || !isset($parts['host']) || isset($parts['user']) || isset($parts['pass']) || isset($parts['fragment'])) return false;
-        $now = time();
+        $uri = $this->backchannelLogoutUri($client);
+        if ($uri === null) return false;
         $eventId = 'bcl_' . bin2hex(random_bytes(16));
-        $claims = $this->backchannelLogoutClaims($client, $sessionId, $eventId, $now);
+        $this->createBackchannelLogoutDelivery($client, $sessionId, $eventId, $uri);
+        return true;
+    }
+
+    private function createBackchannelLogoutDelivery(OAuthClient $client, string $sessionId, string $eventId, string $targetUri): OidcLogoutDelivery
+    {
+        $claims = $this->backchannelLogoutClaims($client, $sessionId, $eventId, time());
         $logoutToken = $this->jwt($claims, 'logout+jwt');
-        OidcLogoutDelivery::create([
+        return OidcLogoutDelivery::create([
             'application_id' => (int) $client->application_id,
             'oauth_client_id' => (int) $client->id,
             'auth_session_id' => (int) $sessionId,
             'event_id' => $eventId,
             'encrypted_logout_token' => (new OidcLogoutTokenCipher())->encrypt(json_encode([
-                'target_uri' => $uri,
+                'target_uri' => $targetUri,
                 'logout_token' => $logoutToken,
             ], JSON_THROW_ON_ERROR)),
             'state' => 'pending',
@@ -610,7 +708,20 @@ final class OAuthOidcService
             'next_attempt_time' => $this->now(),
             'status' => 1,
         ]);
-        return true;
+    }
+
+    private function backchannelLogoutUri(OAuthClient $client): ?string
+    {
+        $uri = trim((string) ($client->backchannel_logout_uri ?? ''));
+        if ($uri === '' || strlen($uri) > 2048 || !filter_var($uri, FILTER_VALIDATE_URL)) return null;
+        $parts = parse_url($uri);
+        if (($parts['scheme'] ?? '') !== 'https' || !isset($parts['host']) || isset($parts['user']) || isset($parts['pass']) || isset($parts['fragment'])) return null;
+        return $uri;
+    }
+
+    private function backchannelRecoveryEventId(string $sourceEventId): string
+    {
+        return 'bcl_r_' . substr(hash('sha256', "sand-iam:oidc-backchannel-reissue\0" . $sourceEventId), 0, 32);
     }
 
     /** @return array{iss:string,aud:string,iat:int,exp:int,jti:string,sid:string,events:array<string,\stdClass>} */

@@ -1,6 +1,6 @@
 # SandIAM 开发者旅程验收
 
-> 口径日期：2026-08-23。本文把“比直接使用 Casdoor 更顺手”改成可计时、可失败、可复核的验收问题。目标值不是已通过结论；必须由同一名具备 Webman 基础经验但未参与两边实现的开发者，在同等干净环境分别执行并保留证据后才能比较。
+> 口径日期：2026-08-23；2026-09-12 按独立 SandIAM Goal 更新非 AI 机器服务与结构化证据门禁。本文把“比直接使用 Casdoor 更顺手”改成可计时、可失败、可复核的验收问题。目标值不是已通过结论；必须由同一名具备 Webman 基础经验但未参与两边实现的开发者，在同等干净环境分别执行并保留证据后才能比较。
 
 > 当前 FLOW 严格口径为 **8/9、20/20、0/7、0/4、0/8**，即 **28/48（58.3%）**；030 机器调用约束、P14 目录同步运行与 P19 初始化草稿均已按各自模块证据计分，SandLicense 仍是独立领域边界。本文只冻结旅程方法，不提供任何一次真实旅程通过证据，因此不能提升正式验收或业务闭环。静态与隔离实现证据不替代当前候选的 PostgreSQL 生命周期、真实宿主和浏览器闭环。
 
@@ -21,7 +21,7 @@ Casdoor 对照必须使用其官方支持的安装和 SDK/协议文档，选择�
 ### 输入
 
 - 一个已登录但没有预制业务对象的 SandAdmin 管理账号；
-- 一个可运行的最小 Webman API，含 `GET /matters/{id}` 和 `POST /matters`；
+- 一个可运行的最小 Webman API，含 `GET /work-items/{id}` 和 `POST /work-items`；
 - 一份只含方法、路由模板、中文名称和风险等级的 OpenAPI 文件；
 - 两个测试身份：一人应允许读取，另一人应被拒绝；
 - SandIAM PHP SDK/中间件文档入口。
@@ -32,7 +32,7 @@ Casdoor 对照必须使用其官方支持的安装和 SDK/协议文档，选择�
 
 1. 创建或选择客户主体、接入应用和测试环境；
 2. 导入 OpenAPI 接口目录；
-3. 将两条路由绑定到稳定的 `matter.read`、`matter.create` 语义动作；
+3. 将两条路由绑定到稳定的 `work_item.read`、`work_item.create` 语义动作；
 4. 建立角色/策略和数据范围；
 5. 在 Webman 接入 SDK/中间件；
 6. 以允许身份请求读接口并得到成功；
@@ -44,7 +44,7 @@ Casdoor 对照必须使用其官方支持的安装和 SDK/协议文档，选择�
 - OpenAPI 导入摘要、路由绑定和语义动作截图或脱敏响应；
 - 允许/拒绝 HTTP 状态、稳定错误码、互不相同的 `allow_request_id` 与 `deny_request_id`，以及聚合本次验收的 `acceptance_run_id`；
 - 审计中可读的应用、身份、资源、动作、结果和拒绝原因；
-- 将 URL 从 `/matters/{id}` 改成 `/v2/matters/{id}` 后，只改路由绑定、不改策略键即可再次得到相同决策。
+- 将 URL 从 `/work-items/{id}` 改成 `/v2/work-items/{id}` 后，只改路由绑定、不改策略键即可再次得到相同决策。
 
 ### 错误与清理
 
@@ -92,12 +92,12 @@ Casdoor 对照必须使用其官方支持的安装和 SDK/协议文档，选择�
 
 在相同邮箱、TOTP、浏览器和业务 API 条件下，通过 Casdoor 官方用户门户和 OIDC/SDK 完成相同流程，记录首次可发现入口、总时间、人工操作数、失败恢复次数和业务代码改动点。没有双方实测前，只能写“目标不劣于 Casdoor”，不能写“已经更好”。
 
-## 4. 旅程三：机器凭证到 SandAI 语义动作
+## 4. 旅程三：机器凭证到非 AI 服务语义动作
 
 ### 输入
 
 - 一个已登记的客户主体、接入应用和测试环境；
-- 已由 SandAI 清单登记的 `sand_ai.chat.complete` 动作；
+- 已由受控文档处理服务登记的 `document.convert` 动作；
 - 一个最小服务端调用程序；
 - 一名仅拥有该应用管理范围的应用管理员。
 
@@ -106,19 +106,19 @@ Casdoor 对照必须使用其官方支持的安装和 SDK/协议文档，选择�
 目标为 **15 分钟内、最多 8 次人工操作、凭证明文只出现一次**：
 
 1. 创建工作负载客户端；
-2. 向测试环境授予 `sand_ai.chat.complete`，设置正确 audience 和短有效期；
+2. 向测试环境授予 `document.convert`，设置正确 audience 和短有效期；
 3. 签发并安全保存一次性凭证；
 4. 用凭证取得短期机器上下文；
-5. 调用 SandAI chat action 并成功；
+5. 调用文档转换动作并产生一条可核对、可清理的真实业务结果；
 6. 用错误 audience 或未授权 action 调用并稳定拒绝；
 7. 撤销凭证后再次取得上下文并稳定拒绝；
-8. 通过各 HTTP 请求唯一的 `request_id` 在 SandIAM 与 SandAI 两侧核对允许、拒绝和撤销审计，并以独立 `acceptance_run_id` 聚合本次验收。
+8. 通过各 HTTP 请求唯一的 `request_id` 在 SandIAM 与文档服务两侧核对允许、拒绝和撤销审计，并以独立 `acceptance_run_id` 聚合本次验收。
 
 ### 必须证据
 
 - 名称优先的客户端、环境、服务和动作配置；
 - 凭证仅一次展示、日志脱敏、短期上下文的 audience/action/expiry；
-- SandAI 允许与至少两个拒绝响应、稳定错误码、各请求在双侧一致且请求之间互不复用的 `request_id`，以及聚合本次验收的 `acceptance_run_id`；
+- 文档服务允许与至少两个拒绝响应、稳定错误码、各请求在双侧一致且请求之间互不复用的 `request_id`，以及聚合本次验收的 `acceptance_run_id`；
 - 应用管理员无法为自己增加其他应用或其他动作范围。
 
 ### 错误与清理
@@ -127,9 +127,34 @@ Casdoor 对照必须使用其官方支持的安装和 SDK/协议文档，选择�
 
 ### Casdoor 对照
 
-Casdoor 没有与 SandAI 完全相同的 Sand 原生 `service → action → environment → workload client` 模型，因此对照结果定义为“让机器客户端只能调用一个语义动作，并能审计允许、拒绝和撤销”的最短官方方案。记录是否需要把 HTTP URL 作为长期权限键、是否需要业务侧自建额度/环境映射、总时间、人工操作数和代码改动。差异必须如实列出，不能把模型不同直接写成 SandIAM 已胜出。
+Casdoor 没有与 SandIAM 完全相同的 Sand 原生 `service → action → environment → workload client` 模型，因此对照结果定义为“让机器客户端只能调用一个文档处理语义动作，并能审计允许、拒绝和撤销”的最短官方方案。记录是否需要把 HTTP URL 作为长期权限键、是否需要业务侧自建额度/环境映射、总时间、人工操作数和代码改动。差异必须如实列出，不能把模型不同直接写成 SandIAM 已胜出。
 
-## 5. 判定和发布用语
+## 5. 结构化证据门禁
+
+最终 unsigned release candidate 生成后，先创建绑定其 ZIP 与 manifest 摘要的包外模板：
+
+```bash
+php sand-iam/tools/prepare-external-acceptance.php \
+  --kind=casdoor \
+  --artifact-manifest=/controlled/candidate/manifest.json \
+  --output=/controlled/evidence/casdoor-comparison.json
+```
+
+模板包含完整 12 个 run 槽位，但 reviewer、环境、时间、指标、布尔结论和证据摘要均故意保持
+`__REQUIRED_*`、负数或 `false`；未由独立开发者逐项填写前必定拒绝。三条旅程完成后，把
+同一候选、独立开发者、同环境指纹、双方各两轮指标和逐轮原始证据摘要填入该 JSON，并运行：
+
+```bash
+php sand-iam/tools/validate-casdoor-comparison.php --report=/controlled/evidence/casdoor-comparison.json
+```
+
+每轮证据必须是报告目录内不重复的相对路径并携带 SHA-256。校验器要求总计 12 轮全部完成、
+安全和结果等价、零未解决失败、清理完成；SandIAM 两轮均达到本节既定时间/操作数上限，且每条
+旅程的两轮均值至少一个维度优于 Casdoor、另一个不回退。报告或证据缺失、复用、越界、篡改、
+含高置信秘密或由参与开发者执行都会关闭失败。通过只证明证据结构满足发布门禁，仍须人工复核
+截图、HTTP、审计和清理内容确实对应同一环境。
+
+## 6. 判定和发布用语
 
 - 三条旅程均未实测时：只能写“已定义开发者体验目标”。
 - 单条双方实测通过时：只能对该旅程写结论，并附原始证据。

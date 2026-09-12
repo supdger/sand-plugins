@@ -18,7 +18,7 @@ function sandIamWithIsolatedFixture(string $authorityRoot, callable $callback): 
     }
 
     $fixtureRoot = $seed . '/sand-iam';
-    $excludedSegments = ['.git', '.pnpm-store', '.dart_tool', 'artifacts', 'build', 'coverage', 'dist', 'node_modules', 'test-results', 'tests'];
+    $excludedSegments = ['.git', '.pnpm-store', '.dart_tool', 'artifacts', 'build', 'coverage', 'dist', 'node_modules', 'test-results', 'test', 'tests'];
     try {
         $iterator = new RecursiveIteratorIterator(
             new RecursiveDirectoryIterator($authorityRoot, FilesystemIterator::SKIP_DOTS),

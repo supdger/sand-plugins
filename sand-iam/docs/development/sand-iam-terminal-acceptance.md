@@ -4,7 +4,7 @@
 
 ## 1. 当前结论
 
-当前权威源码的计划候选是 `v24 review candidate`（`candidate/dirty-not-release`），迁移范围为 `001–037`：37 个修订号、38 个迁移文件。SandPackage 6.1.4 demo static gate 已 ACCEPT：**`DEMO_SYNC_6_1_4_STATIC_PASS`**（lifecycle 10/10、lint 3/3、vue-tsc PASS、关键 SHA 5/5；digest `dbdec85c3558592f2af196a689a28fdaa89f9ce56e8e38ecfcf93e6f3de5f34f`，白名单外不变）。正式 identity-bound Gate A 已 **PASS**：既有 replacement `8ecc5cec…f9e9f` 以真实 backup/archive/payload `52e7c…25f1c`/descriptor/update identity 返回 `retry_safe`、101/101、空 failed assertions、`audit_written=false`、非空 fingerprint，并确认 READ ONLY + REPEATABLE READ + ROLLBACK 与连接复用。active registry 仍 failed state=8，未 replace/retry 或写 DB/registry；Gate A PASS 不等同恢复、浏览器、业务闭环或部署完成。
+当前权威源码的计划候选是 `v70 review-only`（`candidate/dirty-not-release`），迁移范围为 `001–038`：38 个修订号、39 个迁移文件。SandPackage 6.1.4 demo static gate 与 identity-bound Gate A 是更早候选的历史证据：既有 replacement 当时返回 `retry_safe`、101/101、空 failed assertions、`audit_written=false`，但 active registry 仍 failed state=8，未 replace/retry 或写 DB/registry。本轮尚未把 v70 同步 demo，也未执行迁移 038；历史 Gate A PASS 不等同当前恢复、浏览器、业务闭环或部署完成。
 
 此前宿主同步、worker、401/503 和前端 200 的记录仍是历史证据，不构成当前宿主验收；本轮未重新验证宿主数据库状态。登录后 HTTP、标准外部 IdP/LDAP/NAS、三角色浏览器、业务闭环、备份恢复和部署均不得判定通过。SandAI 已单独完成 4/4 隔离生命周期，不可据此替代 SandIAM 宿主、浏览器或业务验收。
 
@@ -31,7 +31,7 @@
 | 审计/Webhook | 签名/重试/幂等/轮换、固定事件目录和投递状态已通过 PostgreSQL 集成 | 本地服务级通过，并发 worker/真实 HTTPS/告警出口未验收 | 统一事件、Webhook 事务生产者、保留/归档/恢复和告警出口 |
 | 管理与自助体验 | 控制面页面在实施，自助 API 候选；UX-01 未验收 | 未闭环 | 平台管理员、应用管理员、终端用户三角色真实浏览器闭环；应用品牌、登录/注册/恢复编排完整 |
 | SandAI/业务联调 | Adapter/fail-closed 契约；A-01 未开始 | 未闭环；L03 证据未来从 `sand_ai` 工作区回填，本轮不核验、不计分 | SandAI 真实 API 放行/拒绝/双侧审计；非 AI 应用 SDK 接入 |
-| 发布一致性 | 计划 v24 审阅候选为 `001–037`（37 个修订号、38 个文件），目标 86 张 `sand_iam_*` 表；离线 package/descriptor/合同检查以当前源码复验为准 | v24 仍为 `candidate/dirty-not-release`；`17-file demo` 静态白名单同步不等同于隔离生命周期，且正式 Gate A、数据库、registry、runtime recovery、浏览器与业务闭环未执行 | 当前版本在空隔离宿主完成安装/连续升级/卸载、备份恢复、安全基线和发布包复核 |
+| 发布一致性 | v70 review-only 候选为 `001–038`（38 个修订号、39 个文件），目标 86 张 `sand_iam_*` 表；离线 package/descriptor/合同检查以当前源码复验为准 | v70 仍为 `candidate/dirty-not-release`；未同步 demo、未执行迁移/数据库/registry/runtime recovery、浏览器与业务闭环 | 当前版本在空隔离宿主完成安装/连续升级/卸载、备份恢复、安全基线和发布包复核 |
 
 完整 Casdoor 基线复核见[终极能力缺口](sand-iam-casdoor-baseline-gap.md)。T09–T12 未完成前，本表的终极验收不得整体判定通过。
 
@@ -116,8 +116,8 @@
 
 ### 6.1 当前阻断与独立待办
 
-- **静态复验：** 当前源码包完整性 **23/23** 已通过；迁移范围为 `001–037`（37 个修订号、38 个文件），根/插件生成载荷一致，目标 86 张 `sand_iam_*` 表。较早的 19/19、`001–033`、83 张表只作为历史候选口径保留。
-- **动态 PostgreSQL：** 82 表记录早于 033；83 表、无迁移账本和 `baseline_060`/`prefix_033_034` 是 2026-09-07 实际恢复记录中的最新保留证据，本轮未重新读取。当前 `001–037` 尚未完成隔离安装、升级和卸载，因此不能声称当前生命周期通过。
+- **静态复验：** 当前源码包完整性 **24/24** 已通过；迁移范围为 `001–038`（38 个修订号、39 个文件），根/插件生成载荷一致，目标仍为 86 张 `sand_iam_*` 表。较早的 23/23、`001–037`、83 张表只作为历史候选口径保留。
+- **动态 PostgreSQL：** 82 表记录早于 033；83 表、无迁移账本和 `baseline_060`/`prefix_033_034` 是 2026-09-07 实际恢复记录中的最新保留证据，本轮未重新读取。当前 `001–038` 尚未完成隔离安装、升级和卸载，因此不能声称当前生命周期通过。
 - **产品端：** v16 的前端静态/组装门禁已通过，但演示宿主未同步 v16，旧实现记录和旧浏览器截图都不是当前宿主验收。这里不再把旧调度开关、监视进程或登录页观察写成当前状态。
 - **宿主恢复：** REC01 只读预检和 REC02 运行文件恢复通过，当前为 **2/8**；REC03 官方核验仍返回 `FAILED_UPGRADE_RECOVERY_BLOCKED`。当前源码 descriptor 与 package checker **23/23** 已通过；候选替换、重试、数据库生命周期、浏览器、七链和部署均未通过，宿主问题已通过仓库级交接文档移交 SandAdmin/SandPackage 维护者。
 

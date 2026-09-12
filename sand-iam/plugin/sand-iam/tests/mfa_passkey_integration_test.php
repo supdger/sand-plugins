@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 use plugin\SandIam\app\model\Application;
 use plugin\SandIam\app\model\AuthPolicy;
+use plugin\SandIam\app\model\AuditLog;
 use plugin\SandIam\app\model\WebauthnCredential;
 use plugin\SandIam\app\model\Organization;
+use plugin\SandIam\app\model\SecurityOperation;
 use plugin\SandIam\app\service\HumanAuthService;
 use plugin\SandIam\app\service\MfaService;
 use plugin\sandadmin\exception\ApiException;
@@ -60,19 +62,65 @@ $token = (string) $registered['access_token'];
 
 t02Expect(static fn () => $mfa->totpStart($token, '攻击者验证器', 'wrong-password', 't02-totp-step-up-rejected', '127.0.0.1'), 'SAND_IAM_AUTH_CURRENT_PASSWORD_INVALID');
 $totpStart = $mfa->totpStart($token, '我的验证器', $password, 't02-totp-start', '127.0.0.1');
+$totpStartReplay = $mfa->totpStart($token, '我的验证器', $password, 't02-totp-start', '127.0.0.1');
+t02Assert(
+    ($totpStartReplay['factor_id'] ?? null) === $totpStart['factor_id']
+        && ($totpStartReplay['secret_available'] ?? true) === false
+        && !isset($totpStartReplay['secret'], $totpStartReplay['otpauth_uri']),
+    'TOTP start replay regenerated or exposed enrollment secret material',
+);
 $secret = t02Base32Decode((string) $totpStart['secret']);
 $counter = intdiv(time(), 30) - 1;
-$confirmed = $mfa->totpConfirm($token, (int) $totpStart['factor_id'], t02Hotp($secret, $counter), 't02-totp-confirm');
+$confirmCode = t02Hotp($secret, $counter);
+$confirmed = $mfa->totpConfirm($token, (int) $totpStart['factor_id'], $confirmCode, 't02-totp-confirm');
 t02Assert(count($confirmed['recovery_codes']) === 10, 'TOTP confirmation did not return ten one-time recovery codes');
+$confirmedReplay = $mfa->totpConfirm($token, (int) $totpStart['factor_id'], $confirmCode, 't02-totp-confirm');
+t02Assert(
+    ($confirmedReplay['enabled'] ?? false) === true
+        && ($confirmedReplay['secret_available'] ?? true) === false
+        && !isset($confirmedReplay['recovery_codes']),
+    'TOTP confirmation replay regenerated or exposed recovery codes',
+);
 t02Expect(static fn () => $mfa->totpConfirm($token, (int) $totpStart['factor_id'], t02Hotp($secret, $counter), 't02-totp-replay'), 'SAND_IAM_MFA_TOTP_REPLAYED');
+$regenerated = $mfa->regenerateRecoveryCodes($token, $password, 't02-recovery-regenerate', '127.0.0.1');
+t02Assert(count($regenerated['recovery_codes']) === 10, 'recovery regeneration did not return ten one-time recovery codes');
+$regeneratedReplay = $mfa->regenerateRecoveryCodes($token, $password, 't02-recovery-regenerate', '127.0.0.1');
+t02Assert(
+    ($regeneratedReplay['secret_available'] ?? true) === false && !isset($regeneratedReplay['recovery_codes']),
+    'recovery regeneration replay exposed or replaced recovery codes',
+);
 
 $passwordLogin = $auth->login($refA + ['identifier' => 't02@example.test', 'password' => $password], '127.0.0.2', 't02-password-login');
+$passwordLoginRetry = $auth->login($refA + ['identifier' => 't02@example.test', 'password' => $password], '127.0.0.2', 't02-password-login');
 t02Assert(($passwordLogin['mfa_required'] ?? false) === true && !isset($passwordLogin['access_token']), 'password login issued a session without MFA');
+t02Assert($passwordLoginRetry === $passwordLogin, 'same-request password login did not recover the original MFA challenge');
+t02Assert(AuditLog::where('request_id', 't02-password-login')->where('action', 'identity.login')->count() === 1, 'same-request password login duplicated its success audit');
+t02Assert(AuditLog::where('request_id', 't02-password-login')->where('action', 'identity.mfa_login_start')->count() === 1, 'same-request password login duplicated its MFA challenge audit');
+$passwordLoginOperation = SecurityOperation::where('operation', 'identity.login')->where('request_id', 't02-password-login')->find();
+$passwordLoginOperationJson = json_encode($passwordLoginOperation?->result, JSON_UNESCAPED_SLASHES);
+t02Assert(
+    $passwordLoginOperation !== null
+        && is_string($passwordLoginOperationJson)
+        && str_contains($passwordLoginOperationJson, 'encrypted_replay')
+        && !str_contains($passwordLoginOperationJson, $password)
+        && !str_contains($passwordLoginOperationJson, (string) $passwordLogin['challenge_token']),
+    'password-to-MFA login persisted plaintext challenge material or omitted recovery ciphertext',
+);
 t02Expect(static fn () => $mfa->verifyLoginChallenge($refB + ['challenge_token' => $passwordLogin['challenge_token'], 'method' => 'totp', 'code' => t02Hotp($secret, intdiv(time(), 30))], '127.0.0.2', 't02-cross-app-challenge'), 'SAND_IAM_MFA_CHALLENGE_INVALID');
-$mfaTokens = $mfa->verifyLoginChallenge($refA + ['challenge_token' => $passwordLogin['challenge_token'], 'method' => 'totp', 'code' => t02Hotp($secret, intdiv(time(), 30))], '127.0.0.2', 't02-mfa-totp');
+$mfaVerifyPayload = $refA + ['challenge_token' => $passwordLogin['challenge_token'], 'method' => 'totp', 'code' => t02Hotp($secret, intdiv(time(), 30))];
+$mfaTokens = $mfa->verifyLoginChallenge($mfaVerifyPayload, '127.0.0.2', 't02-mfa-totp');
+$mfaTokensRetry = $mfa->verifyLoginChallenge($mfaVerifyPayload, '127.0.0.2', 't02-mfa-totp');
 t02Assert(isset($mfaTokens['access_token'], $mfaTokens['refresh_token']), 'TOTP MFA did not issue a session');
+t02Assert($mfaTokensRetry === $mfaTokens, 'same-request MFA finish did not recover its original token response');
+t02Expect(static fn () => $mfa->verifyLoginChallenge(array_merge($mfaVerifyPayload, ['method' => 'recovery_code']), '127.0.0.2', 't02-mfa-totp'), 'SAND_IAM_IDEMPOTENCY_CONFLICT');
+t02Expect(static fn () => $mfa->verifyLoginChallenge($mfaVerifyPayload, '127.0.0.2', 't02-mfa-totp-replay'), 'SAND_IAM_MFA_CHALLENGE_INVALID');
+t02Assert(AuditLog::where('request_id', 't02-mfa-totp')->where('action', 'identity.mfa_login_verify')->count() === 1, 'same-request MFA finish duplicated its success audit');
+t02Expect(static fn () => $auth->login($refA + ['identifier' => 't02@example.test', 'password' => $password], '127.0.0.2', 't02-password-login'), 'SAND_IAM_AUTH_LOGIN_RETRY_UNAVAILABLE');
+$mfaOperation = SecurityOperation::where('operation', 'identity.mfa_challenge_verify')->where('request_id', 't02-mfa-totp')->find();
+$mfaOperationJson = json_encode($mfaOperation?->result, JSON_UNESCAPED_SLASHES);
+t02Assert($mfaOperation !== null && is_string($mfaOperationJson) && str_contains($mfaOperationJson, 'encrypted_replay') && !str_contains($mfaOperationJson, (string) $mfaTokens['access_token']) && !str_contains($mfaOperationJson, (string) $mfaTokens['refresh_token']), 'MFA finish persisted plaintext session tokens or omitted recovery ciphertext');
 
-$recovery = (string) $confirmed['recovery_codes'][0];
+$recovery = (string) $regenerated['recovery_codes'][0];
 $recoveryLogin = $auth->login($refA + ['identifier' => 't02@example.test', 'password' => $password], '127.0.0.3', 't02-recovery-login');
 $mfa->verifyLoginChallenge($refA + ['challenge_token' => $recoveryLogin['challenge_token'], 'method' => 'recovery_code', 'code' => $recovery], '127.0.0.3', 't02-recovery-use');
 $recoveryReplay = $auth->login($refA + ['identifier' => 't02@example.test', 'password' => $password], '127.0.0.3', 't02-recovery-replay-login');
@@ -86,9 +134,13 @@ t02Expect(static fn () => $mfa->passkeyRegistrationOptions($token, '攻击者通
 $registration = $mfa->passkeyRegistrationOptions($token, 'MacBook 通行密钥', $password, 't02-passkey-options', '127.0.0.1');
 $cose = t02CborMap([1 => 2, 3 => -7, -1 => 1, -2 => $x, -3 => $y]);
 $attestation = t02CborMap(['fmt' => 'none', 'authData' => t02AuthData('app-a.example.test', 1, true, $credential, $cose), 'attStmt' => []]);
-$mfa->passkeyRegistrationFinish($token, ['challenge_token' => $registration['challenge_token'], 'rawId' => t02B64($credential), 'response' => ['clientDataJSON' => t02ClientData('webauthn.create', $registration['public_key']['challenge'], 'https://app-a.example.test'), 'attestationObject' => t02B64($attestation)]], 't02-passkey-finish', '127.0.0.1');
+$registrationFinish = ['challenge_token' => $registration['challenge_token'], 'rawId' => t02B64($credential), 'response' => ['clientDataJSON' => t02ClientData('webauthn.create', $registration['public_key']['challenge'], 'https://app-a.example.test'), 'attestationObject' => t02B64($attestation)]];
+$mfa->passkeyRegistrationFinish($token, $registrationFinish, 't02-passkey-finish', '127.0.0.1');
+$mfa->passkeyRegistrationFinish($token, $registrationFinish, 't02-passkey-finish', '127.0.0.1');
 $factor = WebauthnCredential::where('application_id', (int) $appA->id)->where('credential_id', t02B64($credential))->find();
 t02Assert($factor !== null && (int) $factor->sign_count === 1, 'real ES256 attestation was not persisted');
+t02Assert(WebauthnCredential::where('application_id', (int) $appA->id)->where('credential_id', t02B64($credential))->count() === 1, 'same-request registration finish created a duplicate credential');
+t02Assert(AuditLog::where('request_id', 't02-passkey-finish')->where('action', 'identity.passkey_register_finish')->count() === 1, 'same-request registration finish duplicated its success audit');
 $userHandle = (string) $factor->user_handle;
 
 $badOrigin = $mfa->passkeyAuthenticationOptions($refA, 't02-bad-origin-options');
@@ -101,9 +153,33 @@ $badUserHandle = $mfa->passkeyAuthenticationOptions($refA, 't02-bad-user-handle-
 t02Expect(static fn () => $mfa->passkeyAuthenticationFinish($refA + t02Assertion($badUserHandle, 'app-a.example.test', $credential, $key, 2, t02B64(random_bytes(32))), '127.0.0.4', 't02-bad-user-handle'), 'SAND_IAM_PASSKEY_USER_HANDLE_INVALID');
 $badBackupState = $mfa->passkeyAuthenticationOptions($refA, 't02-bad-backup-state-options');
 t02Expect(static fn () => $mfa->passkeyAuthenticationFinish($refA + t02Assertion($badBackupState, 'app-a.example.test', $credential, $key, 2, $userHandle, 'https://app-a.example.test', false, 0x15), '127.0.0.4', 't02-bad-backup-state'), 'SAND_IAM_PASSKEY_BACKUP_STATE_INVALID');
-$assertionOptions = $mfa->passkeyAuthenticationOptions($refA, 't02-passkey-auth-options');
-$passkeyTokens = $mfa->passkeyAuthenticationFinish($refA + t02Assertion($assertionOptions, 'app-a.example.test', $credential, $key, 2, $userHandle, 'https://app-a.example.test', false, 0x0d), '127.0.0.4', 't02-passkey-auth');
+$assertionOptions = $mfa->passkeyAuthenticationOptions($refA, 't02-passkey-auth-options', '127.0.0.4');
+$assertionOptionsRetry = $mfa->passkeyAuthenticationOptions($refA, 't02-passkey-auth-options', '127.0.0.4');
+t02Assert($assertionOptionsRetry === $assertionOptions, 'same-request passkey options did not recover the original challenge');
+t02Expect(static fn () => $mfa->passkeyAuthenticationOptions($refA, 't02-passkey-auth-options', '127.0.0.44'), 'SAND_IAM_IDEMPOTENCY_CONFLICT');
+t02Assert(AuditLog::where('request_id', 't02-passkey-auth-options')->where('action', 'identity.passkey_auth_start')->count() === 1, 'same-request passkey options duplicated its success audit');
+$passkeyOptionsOperation = SecurityOperation::where('operation', 'identity.passkey_auth_options')->where('request_id', 't02-passkey-auth-options')->find();
+$passkeyOptionsOperationJson = json_encode($passkeyOptionsOperation?->result, JSON_UNESCAPED_SLASHES);
+t02Assert(
+    $passkeyOptionsOperation !== null
+        && is_string($passkeyOptionsOperationJson)
+        && str_contains($passkeyOptionsOperationJson, 'encrypted_replay')
+        && !str_contains($passkeyOptionsOperationJson, (string) $assertionOptions['challenge_token'])
+        && !str_contains($passkeyOptionsOperationJson, (string) $assertionOptions['public_key']['challenge']),
+    'passkey options persisted plaintext challenge material or omitted recovery ciphertext',
+);
+$passkeyFinishPayload = $refA + t02Assertion($assertionOptions, 'app-a.example.test', $credential, $key, 2, $userHandle, 'https://app-a.example.test', false, 0x0d);
+$passkeyTokens = $mfa->passkeyAuthenticationFinish($passkeyFinishPayload, '127.0.0.4', 't02-passkey-auth');
+$passkeyTokensRetry = $mfa->passkeyAuthenticationFinish($passkeyFinishPayload, '127.0.0.4', 't02-passkey-auth');
 t02Assert(isset($passkeyTokens['access_token']), 'passkey passwordless flow did not issue session');
+t02Assert($passkeyTokensRetry === $passkeyTokens, 'same-request passkey finish did not recover its original token response');
+t02Expect(static fn () => $mfa->passkeyAuthenticationFinish($passkeyFinishPayload + ['user_agent' => 'changed'], '127.0.0.4', 't02-passkey-auth'), 'SAND_IAM_IDEMPOTENCY_CONFLICT');
+t02Expect(static fn () => $mfa->passkeyAuthenticationFinish($passkeyFinishPayload, '127.0.0.4', 't02-passkey-auth-replay'), 'SAND_IAM_MFA_CHALLENGE_INVALID');
+t02Assert(AuditLog::where('request_id', 't02-passkey-auth')->where('action', 'identity.passkey_auth_finish')->count() === 1, 'same-request passkey finish duplicated its success audit');
+$passkeyOperation = SecurityOperation::where('operation', 'identity.passkey_auth_finish')->where('request_id', 't02-passkey-auth')->find();
+$passkeyOperationJson = json_encode($passkeyOperation?->result, JSON_UNESCAPED_SLASHES);
+t02Assert($passkeyOperation !== null && is_string($passkeyOperationJson) && str_contains($passkeyOperationJson, 'encrypted_replay') && !str_contains($passkeyOperationJson, (string) $passkeyTokens['access_token']) && !str_contains($passkeyOperationJson, (string) $passkeyTokens['refresh_token']), 'passkey finish persisted plaintext session tokens or omitted recovery ciphertext');
+t02Expect(static fn () => $mfa->passkeyAuthenticationOptions($refA, 't02-passkey-auth-options', '127.0.0.4'), 'SAND_IAM_MFA_CHALLENGE_RETRY_UNAVAILABLE');
 $backupAssertion = $mfa->passkeyAuthenticationOptions($refA, 't02-passkey-backup-options');
 $mfa->passkeyAuthenticationFinish($refA + t02Assertion($backupAssertion, 'app-a.example.test', $credential, $key, 3, $userHandle, 'https://app-a.example.test', false, 0x1d), '127.0.0.4', 't02-passkey-backup');
 $signReplay = $mfa->passkeyAuthenticationOptions($refA, 't02-sign-count-options');
@@ -114,6 +190,7 @@ t02Expect(static fn () => $mfa->passkeyAuthenticationFinish($refB + t02Assertion
 $policyB = AuthPolicy::where('application_id', (int) $appB->id)->find();
 t02Assert($policyB !== null, 'passkey rate-limit policy is missing');
 $policyB->save(['rate_limit_per_minute' => 2]);
+$mfa->passkeyAuthenticationOptions($refB, 't02-passkey-rate-one', '127.0.0.88');
 $mfa->passkeyAuthenticationOptions($refB, 't02-passkey-rate-one', '127.0.0.88');
 $mfa->passkeyAuthenticationOptions($refB, 't02-passkey-rate-two', '127.0.0.88');
 t02Expect(static fn () => $mfa->passkeyAuthenticationOptions($refB, 't02-passkey-rate-three', '127.0.0.88'), 'SAND_IAM_AUTH_RATE_LIMITED');

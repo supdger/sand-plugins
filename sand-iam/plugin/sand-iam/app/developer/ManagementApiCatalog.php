@@ -81,6 +81,8 @@ final class ManagementApiCatalog
         'GET /identity-group-role/role-index' => 'sand_iam:identity_group_role:index',
         'GET /identity-import/rows' => 'sand_iam:identity_import:read',
         'POST /oauth-client/secret/rotate' => 'sand_iam:oauth_client:rotate',
+        'GET /oauth-client/logout-delivery/index' => 'sand_iam:oauth_client:read',
+        'POST /oauth-client/logout-delivery/reissue' => 'sand_iam:oauth_client:update',
         'GET /oidc-signing-key/index' => 'sand_iam:oauth_client:index',
         'GET /oidc-signing-key/status' => 'sand_iam:oauth_client:read',
         'POST /oidc-signing-key/rotate' => 'sand_iam:oauth_client:rotate',
@@ -91,6 +93,8 @@ final class ManagementApiCatalog
         'POST /identity-provider-preset/draft' => 'sand_iam:identity_provider:read',
         'GET /sync-connector/runs' => 'sand_iam:sync_run:index',
         'POST /sync-connector/run' => 'sand_iam:sync_run:run',
+        'GET /sync-connector/outbox' => 'sand_iam:sync_run:index',
+        'POST /sync-connector/outbox-retry' => 'sand_iam:sync_run:run',
         'GET /initialization/draft-index' => 'sand_iam:initialization:index',
         'GET /initialization/draft-read' => 'sand_iam:initialization:read',
     ];
@@ -151,13 +155,43 @@ final class ManagementApiCatalog
                     'content' => ['application/json' => ['schema' => ['$ref' => '#/components/schemas/ManagementInput']]],
                 ];
             }
+            if ($route['path'] === '/oauth-client/logout-delivery/index') {
+                $operation['parameters'] = array_merge($operation['parameters'], [
+                    self::queryParameter('id', true, ['type' => 'integer', 'minimum' => 1], 'OAuth 客户端主键。'),
+                    self::queryParameter('state', false, ['type' => 'string', 'enum' => ['pending', 'sending', 'delivered', 'dead']], '可选投递状态；恢复页面使用 dead。'),
+                    self::queryParameter('page', false, ['type' => 'integer', 'minimum' => 1, 'default' => 1], '页码。'),
+                    self::queryParameter('limit', false, ['type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'default' => 20], '每页记录数。'),
+                ]);
+                $operation['responses']['200'] = self::jsonResponse('OIDC 后通道登出投递分页结果', '#/components/schemas/OidcLogoutDeliveryListEnvelope');
+                $operation['responses']['404'] = ['$ref' => '#/components/responses/NotFound'];
+            }
+            if ($route['path'] === '/oauth-client/logout-delivery/reissue') {
+                $operation['parameters'][0]['required'] = true;
+                $operation['requestBody'] = [
+                    'required' => true,
+                    'content' => ['application/json' => ['schema' => ['$ref' => '#/components/schemas/OidcLogoutDeliveryReissueInput']]],
+                ];
+                $operation['responses']['200'] = self::jsonResponse('OIDC 后通道登出恢复任务', '#/components/schemas/OidcLogoutDeliveryReissueEnvelope');
+                $operation['responses']['404'] = ['$ref' => '#/components/responses/NotFound'];
+                $operation['responses']['503'] = ['$ref' => '#/components/responses/Unavailable'];
+                $operation['x-sand-iam-error-codes'] = [
+                    'SAND_IAM_OIDC_BACKCHANNEL_LOGOUT_DISABLED',
+                    'SAND_IAM_OIDC_BACKCHANNEL_CLIENT_UNAVAILABLE',
+                    'SAND_IAM_OIDC_BACKCHANNEL_URI_UNAVAILABLE',
+                    'SAND_IAM_OIDC_LOGOUT_DELIVERY_NOT_FOUND',
+                    'SAND_IAM_OIDC_LOGOUT_DELIVERY_NOT_RECOVERABLE',
+                    'SAND_IAM_OIDC_LOGOUT_SESSION_NOT_REVOKED',
+                    'SAND_IAM_OIDC_LOGOUT_RECOVERY_CONFLICT',
+                    'SAND_IAM_IDEMPOTENCY_CONFLICT',
+                ];
+            }
             $paths[$route['path']][strtolower($route['method'])] = $operation;
         }
         return [
             'openapi' => '3.1.0',
             'info' => [
                 'title' => 'SandIAM 管理 API',
-                'version' => '0.12.0-candidate',
+                'version' => '0.13.0-candidate',
                 'description' => 'SandAdmin 管理平面的完整路由目录。稳定权限码、敏感输入标记和错误响应可用于生成客户端与权限审查。',
             ],
             'servers' => [['url' => $serverUrl]],
@@ -168,6 +202,74 @@ final class ManagementApiCatalog
                 ],
                 'schemas' => [
                     'ManagementInput' => ['type' => 'object', 'additionalProperties' => true, 'description' => '控制器按白名单字段校验；密钥只允许发送到敏感输入接口。'],
+                    'OidcLogoutDeliveryListItem' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['id', 'application_id', 'oauth_client_id', 'auth_session_id', 'event_id', 'state', 'attempt_count', 'status'],
+                        'properties' => [
+                            'id' => ['type' => 'integer', 'minimum' => 1],
+                            'application_id' => ['type' => 'integer', 'minimum' => 1],
+                            'oauth_client_id' => ['type' => 'integer', 'minimum' => 1],
+                            'auth_session_id' => ['type' => 'integer', 'minimum' => 1, 'description' => '内部关联字段；管理页面不得展示。'],
+                            'event_id' => ['type' => 'string'],
+                            'state' => ['type' => 'string', 'enum' => ['pending', 'sending', 'delivered', 'dead']],
+                            'attempt_count' => ['type' => 'integer', 'minimum' => 0],
+                            'next_attempt_time' => ['type' => ['string', 'null']],
+                            'delivered_time' => ['type' => ['string', 'null']],
+                            'response_status' => ['type' => ['integer', 'null']],
+                            'response_digest' => ['type' => ['string', 'null'], 'description' => '内部响应摘要；管理页面不得展示。'],
+                            'last_error_code' => ['type' => ['string', 'null']],
+                            'status' => ['type' => 'integer', 'enum' => [1, 2]],
+                            'create_time' => ['type' => ['string', 'null']],
+                            'update_time' => ['type' => ['string', 'null']],
+                        ],
+                    ],
+                    'OidcLogoutDeliveryListEnvelope' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['code', 'msg', 'data'],
+                        'properties' => [
+                            'code' => ['type' => 'integer'],
+                            'msg' => ['type' => 'string'],
+                            'data' => [
+                                'type' => 'object',
+                                'required' => ['data'],
+                                'additionalProperties' => true,
+                                'properties' => ['data' => ['type' => 'array', 'items' => ['$ref' => '#/components/schemas/OidcLogoutDeliveryListItem']]],
+                            ],
+                        ],
+                    ],
+                    'OidcLogoutDeliveryReissueInput' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['id', 'delivery_id'],
+                        'properties' => [
+                            'id' => ['type' => 'integer', 'minimum' => 1, 'description' => 'OAuth 客户端主键。'],
+                            'delivery_id' => ['type' => 'integer', 'minimum' => 1, 'description' => '原 dead 投递主键。'],
+                        ],
+                    ],
+                    'OidcLogoutDeliveryReissueResult' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['source_delivery_id', 'delivery_id', 'event_id', 'state', 'already_reissued'],
+                        'properties' => [
+                            'source_delivery_id' => ['type' => 'integer', 'minimum' => 1],
+                            'delivery_id' => ['type' => 'integer', 'minimum' => 1],
+                            'event_id' => ['type' => 'string'],
+                            'state' => ['type' => 'string', 'enum' => ['pending', 'sending', 'delivered', 'dead']],
+                            'already_reissued' => ['type' => 'boolean'],
+                        ],
+                    ],
+                    'OidcLogoutDeliveryReissueEnvelope' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['code', 'msg', 'data'],
+                        'properties' => [
+                            'code' => ['type' => 'integer'],
+                            'msg' => ['type' => 'string'],
+                            'data' => ['$ref' => '#/components/schemas/OidcLogoutDeliveryReissueResult'],
+                        ],
+                    ],
                     'Envelope' => [
                         'type' => 'object',
                         'required' => ['code', 'msg', 'data'],
@@ -180,6 +282,8 @@ final class ManagementApiCatalog
                     'Unauthenticated' => self::response('SandAdmin 登录态无效'),
                     'Forbidden' => self::response('当前管理员没有所需权限或管理范围'),
                     'Conflict' => self::response('资源版本、唯一键或当前状态冲突'),
+                    'NotFound' => self::response('指定资源不存在或不在当前管理范围'),
+                    'Unavailable' => self::response('所需安全配置或协议能力未启用'),
                 ],
             ],
         ];
@@ -206,8 +310,9 @@ final class ManagementApiCatalog
             '/identity-import/index' => '查看用户导入任务', '/identity-import/rows' => '查看导入明细',
             '/identity-export/masked' => '导出脱敏用户', '/identity-export/sensitive' => '导出敏感用户信息',
             '/oauth-registration-token/index' => '查看动态注册令牌',
+            '/oauth-client/logout-delivery/index' => '查看 OIDC 后通道登出投递',
             '/oidc-signing-key/index' => '查看 OIDC 签名密钥状态', '/oidc-signing-key/status' => '查看 OIDC 当前签名密钥状态',
-            '/sync-connector/index' => '查看目录连接', '/sync-connector/read' => '查看目录连接详情', '/sync-connector/runs' => '查看目录同步记录',
+            '/sync-connector/index' => '查看目录连接', '/sync-connector/read' => '查看目录连接详情', '/sync-connector/runs' => '查看目录同步记录', '/sync-connector/outbox' => '查看目录同步出站事件',
             '/developer/openapi' => '获取管理 API OpenAPI', '/developer/events' => '获取事件目录',
             '/security-alert/index' => '查看安全告警', '/security-alert/read' => '查看安全告警详情',
             '/initialization/index' => '查看初始化记录', '/initialization/read' => '查看初始化记录详情', '/initialization/draft-index' => '查看初始化草稿列表', '/initialization/draft-read' => '查看初始化草稿详情', '/initialization/export' => '导出初始化包',
@@ -220,6 +325,7 @@ final class ManagementApiCatalog
             '/identity-user-type/grant' => '分配用户类型', '/identity-user-type/revoke' => '撤销用户类型',
             '/credential/issue' => '签发调用凭证', '/credential/rotate' => '轮换调用凭证', '/credential/revoke' => '撤销调用凭证',
             '/oauth-client/secret/rotate' => '轮换 OAuth 客户端密钥',
+            '/oauth-client/logout-delivery/reissue' => '为失败的 OIDC 后通道登出重新签发令牌',
             '/oidc-signing-key/rotate' => '轮换 OIDC issuer 签名密钥', '/oidc-signing-key/retire' => '退役已过验证宽限期的 OIDC 签名密钥',
             '/federation/provider/create' => '新增联合身份源', '/federation/mount' => '挂载联合身份源', '/federation/sync' => '同步联合身份目录',
             '/scim/token/issue' => '签发 SCIM 令牌',
@@ -233,7 +339,7 @@ final class ManagementApiCatalog
             '/identity-group-role/grant' => '为用户组授予角色', '/identity-group-role/revoke' => '撤销用户组角色',
             '/identity-invitation/resend' => '重新发送邀请', '/identity-invitation/revoke' => '撤销邀请',
             '/identity-import/confirm' => '确认用户导入', '/oauth-registration-token/revoke' => '撤销动态注册令牌',
-            '/sync-connector/save' => '新增目录连接', '/sync-connector/update' => '修改目录连接', '/sync-connector/disable' => '停用目录连接', '/sync-connector/run' => '运行目录同步',
+            '/sync-connector/save' => '新增目录连接', '/sync-connector/update' => '修改目录连接', '/sync-connector/disable' => '停用目录连接', '/sync-connector/run' => '运行目录同步', '/sync-connector/outbox-retry' => '重新排队失败的同步出站事件',
             '/security-alert/resolve' => '处理安全告警',
             '/acceptance-fixture/cleanup' => '清理本轮受控验收数据',
             '/acceptance-fixture/webhook-event' => '仅向本轮受控 Webhook 端点生成验收事件',
@@ -274,6 +380,21 @@ final class ManagementApiCatalog
             'identity-group-role' => '用户组角色',
             default => $segment,
         });
+    }
+
+    /** @param array<string,mixed> $schema @return array<string,mixed> */
+    private static function queryParameter(string $name, bool $required, array $schema, string $description): array
+    {
+        return ['name' => $name, 'in' => 'query', 'required' => $required, 'schema' => $schema, 'description' => $description];
+    }
+
+    /** @return array<string,mixed> */
+    private static function jsonResponse(string $description, string $schemaRef): array
+    {
+        return [
+            'description' => $description,
+            'content' => ['application/json' => ['schema' => ['$ref' => $schemaRef]]],
+        ];
     }
 
     /** @return array<string,mixed> */

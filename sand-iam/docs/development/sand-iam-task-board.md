@@ -1,5 +1,61 @@
 # SandIAM 任务看板
 
+## 2026-09-12 完整开源成品 Goal
+
+- 当前 Goal 是唯一活跃执行目标；2026-09-08 及更早的 SandIAM/Cursor/Codex Autopilot 任务均为历史输入，不恢复其循环。
+- 2026-09-12 当前态复核：Codex 任务列表中本工作区仅本 Goal 为 `active`，旧 SandIAM 任务均为 `notLoaded`；本机 automation 配置中没有 SandIAM/sand_plugins 定时项。该结论来自本轮只读任务列表与配置扫描，没有修改外部状态。
+- 旧任务状态不得自动计入当前通过。可复用证据先绑定当前源码树、候选摘要和适用环境，再回写同一[终极验收原子账本](sand-iam-terminal-acceptance-ledger.md)。
+- 当前复核计分：需求 **8/9**、模块 **20/20**、正式 FLOW **0/7**、本地业务闭环 **0/4**、可上线部署 **0/8**，合计 **28/48**；发布门槛 **0/10**。这是本轮逐原子复核后的新结论，不是旧任务自动继承。
+- 已只读锁定：变更前 SandIAM tree `24af41dd869e2ac64fcc7b71ea64e255dcda86a4`、当前 v70 review-only descriptor-excluded payload digest `4bbf92897537f663e80c42e5dc31ae54c85df5ad17eb7741760929688d2a7035`、SandAdmin H1 clean revision `558d92959947230ee562f29e015c62566be58c8e`、包内检查 **24/24 PASS**。
+- 当前仓库整体 dirty；已生成本轮 review-only ZIP，但尚无最终 LICENSE、可信签名或运行验收证据，因此不可发布。
+
+### 当前执行顺序
+
+1. **OSS-00 基线与开源材料审计**：复核 48 个 FLOW 原子的可继承证据；完成依赖来源/许可证/再分发清单，提交宽松许可证方案供用户确认；修正文档中的过时状态。
+2. **OSS-01 候选冻结与静态回归**：在不触碰数据库/宿主的前提下完成源码、依赖、包内容、默认关闭验收接口、秘密/本机路径/内部材料扫描和可复现构建预验收。
+3. **OSS-02 起逐链执行**：每批只取一条完整业务链，先提交所需数据库写入、迁移、服务启停和宿主同步的精确一次性授权清单；完成后才进入下一链。
+4. **OSS-03 外部与人工门槛**：标准客户端/真实受控对端、Casdoor 三旅程各两轮、未参与开发者公开文档安装接入、最终候选 24 小时稳定性。
+5. **OSS-04 发布包终验**：10/10 发布门槛、独立终验、无阻塞缺陷；终点不含 push、正式 Release、部署或线上验证。
+
+当前进展：OSS-00 已完成；OSS-01 依赖/许可证审计已完成并推荐 Apache-2.0，最终
+`LICENSE`、版权主体与 DCO/CLA 等待用户确认。该决策只阻塞发布许可门槛，不阻塞 OSS-02/OSS-03。
+
+OSS-02/OSS-03 已完成；OSS-05 的外部门槛只完成 runner 预备：PHP lint **507/507**、
+non-PG/contract **114/114**、测试质量扫描 `tests=139, SOURCE_MATCH=0, heuristic_leads=1`
+（唯一 heuristic 已人工确认是执行生产
+`RouteBindingSynchronizer` 的内存仓储行为夹具，不复制生产算法）、R08 **9/9**、PHP SDK、
+portal 契约与 TypeScript SDK 均通过。Dart SDK 先复现 3 个 analyze error，修复
+`onboardingPreview` 的 async 返回与私有命名参数后，`dart analyze` 0 问题、测试 **11/11**。
+管理端源码与 demo dry-run 无差异；宿主全量 `vue-tsc` 仍被 SandPackage 自身的
+`failed-upgrade-recovery.vite.config.mts` 模块解析错误阻断，不计 SandIAM 失败，也不计发布构建通过。
+v70 review-only 候选为 635 entries、双构建 bit-identical、archive SHA-256
+`6cae3a2f9880ef1a2818d04edc28dde4c65afc69a8f632a4b718b59cfd97cf82`；发布卫生 **11/14**，
+失败项为项目 `LICENSE`、具体私密漏洞报告入口及 DCO/CLA 二选一贡献机制尚未确认。包外 Ed25519 签名/验签、篡改与符号链接拒绝回归已通过；
+`--release-unsigned` 因三项发布治理输入未齐在产物创建前关闭失败。该工件仍为 dirty candidate，不计 F/L/D 或发布门槛。
+机器服务示例已增加 HTTPS、HTTP 状态、JSON/data 结构及 service/audience/action 的关闭失败校验，成功结果不再输出短期 context；尚未进行真实 HTTP 调用，不计业务接入通过。
+公开备份恢复指南已补齐 PostgreSQL 归档列表/摘要、预建隔离库、源/恢复 DSN 防同库和单事务失败即停命令；未实际执行备份或恢复，不计恢复门槛通过。
+公开配置参考和随包离线预检已覆盖 `app.php`/`process.php` 的 85/85 个 `SAND_IAM_*` 环境键，明确密钥格式、keyring、默认关闭和 worker 双开关；插件 debug 已从硬编码开启改为部署开关且发布默认 `0`。默认关闭的运维 retention worker 现以有限批次处理过期 succeeded 幂等记录与过期认证限流窗口，迁移 038 提供时间索引，两类 backlog 均纳入 24 小时零容忍指标。目录 Sync outbox 已补有界失败终态、脱敏查看、同应用幂等重试和 running 并发互斥；24 小时队列/不可恢复积压也已绑定具体状态公式。预检不输出秘密、不连接数据库，行为测试 8/8；迁移、worker 与 PostgreSQL 夹具均未执行，不计运行配置通过。
+24 小时 runner、Casdoor 同环境 12 轮证据校验器，以及 OIDC/SAML/LDAP/SCIM/CAS/
+Kerberos-SPNEGO/RADIUS 七类标准客户端与真实对端互操作验证器已经关闭失败回归，但尚无任何
+真实长跑、双方旅程或协议运行原始记录，因此 R09、D04、24 小时和 Casdoor 发布门槛仍为未通过。
+隔离备份恢复也已有候选绑定模板和关闭失败验证器，覆盖同库误操作、危险 restore flags、撤销状态
+复活、审计/逻辑状态不一致及证据缺失；没有实际 `pg_dump/pg_restore`，D06 仍未通过。
+未参与开发者仅依靠十二份公开材料的八步交付也已有候选绑定模板和关闭失败验证器，覆盖包验签、预检、
+安装、配置、人类/机器双接入、失败恢复和卸载清理；没有真实独立参与者执行，不计发布门槛通过。
+运行代码缺口扫描未发现 TODO、占位实现、调试输出或明显默认放行；敏感序列化门禁已由手工子集补全为
+自动发现全部 35 个 `$hidden` 模型、61 个字段，并逐模型执行 `toArray()`/JSON 泄漏验证。
+一次性秘密响应审计发现并修复 OAuth 机密客户端创建/轮换缺少禁止缓存头；机器凭证、动态注册令牌、
+开发者接入以及登录/MFA 令牌响应也统一为 `Cache-Control: no-store` 与 `Pragma: no-cache`，七控制器契约通过。
+继续审计发现 OAuth 客户端创建/轮换在响应丢失后会重复执行，且通用幂等结果脱敏漏掉 `client_secret`；
+现已按同一 `X-Request-Id` 事务化、轮换时锁定客户端，重放不再次执行且只返回 `secret_available=false`，公开文档同步说明重试规则。
+RFC 7591 动态注册、DCR 初始令牌和 SCIM 令牌的签发/撤销也已纳入同一幂等事务；初始访问令牌额度、
+客户端创建、令牌状态、审计与脱敏结果共同提交。递归脱敏覆盖当前已知协议秘密并保留安全元数据。
+TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Request-Id` 在同一事务提交状态、审计和脱敏结果；重放不创建第二因子、不重复启用或覆盖恢复码，也不再次返回 seed、URI 或恢复码。当前密码和 TOTP code 仅以部署 pepper 的 HMAC proof 参与指纹，不持久化明文或裸摘要。PostgreSQL 集成用例已补响应丢失重试断言，但本轮没有数据库授权，未执行，故不冒充 MFA 运行验收通过。
+当前依赖漏洞公告查询也尚未完成：官方 Composer audit 因会发送锁定包名/版本而被安全审批拒绝，
+没有改用第三方服务绕过；只读外部元数据范围已加入 OSS-04 F 授权项。
+
+> 下文保留旧看板作为历史证据索引，其中“进行中”“已完成”均不代表当前 Goal 已复核通过。
+
 ## 当前唯一产品主线／目标纠偏（2026-09-08）
 
 - SandIAM 权威源码的完成标准是七条真实业务闭环 **F01–F07 全部 7/7**，并继续完成适用的 **L/D** 关口；当前模块 **20/20** 只代表实现，不代表插件完成。
@@ -17,7 +73,7 @@
 
 > FLOW 严格口径：需求/架构/票据 **8/9**、模块实现 **20/20**、正式 FLOW 验收 **0/7**、本地业务闭环 **0/4**、可上线部署 **0/8**，合计 **28/48（58.3%）**。2026-09-08 已在[终极验收原子账本](sand-iam-terminal-acceptance-ledger.md)完成基线重建，冻结 R01–R09、P01–P20、F01–F07、L01–L04、D01–D08 的稳定名称、完成定义和证据边界；R08 的[T09–T12 末端验收规格冻结](sand-iam-t09-t12-terminal-spec-freeze.md)已登记 12 个原子，静态门禁 **9/9** 且独立复核 ACCEPT，现计入需求冻结。这不是伪造 2026-08-23 遗失清单原文。随后[模块实现关口归位审计](sand-iam-module-implementation-gate-audit-2026-09-08.md)只把 P 中误混入的真实供应商/标准客户端/宿主 HTTP/浏览器/业务应用/恢复/部署移回 F/L/D；P14、P19 已独立最终复核 ACCEPT，P20 以独立生产 service 的公开行为测试计分。七条业务链、升级票据 `5/7` 和实际恢复 `2/8` 均不变且不重复计入 48 项。
 
-> **历史候选摘要（P19 收口之前，仅供追溯）**：下述 `001–036`、84 表目标、包完整性、早期恢复描述器和 U-14～U-16 源码记录均早于当前 `001–037`/86 表权威源码；其中“未实现宿主 verifier/profile”等判断已被后续 SandPackage 交付取代，不得再当作当前状态。当前产品结论只认本页 2026-09-08 的 20/20 模块记录；宿主和恢复结论只认升级票据、REC01–REC08 及仓库级交接文档。
+> **历史候选摘要（P19 收口之前，仅供追溯）**：下述 `001–036`、84 表目标、包完整性、早期恢复描述器和 U-14～U-16 源码记录均早于当前 `001–038`/86 表权威源码；其中“未实现宿主 verifier/profile”等判断已被后续 SandPackage 交付取代，不得再当作当前状态。当前产品结论只认本页 2026-09-08 的 20/20 模块记录；宿主和恢复结论只认升级票据、REC01–REC08 及仓库级交接文档。
 
 > **七链历史模拟证据（不计正式 FLOW）**：[验收编排器](sand-iam-seven-chain-acceptance-runner.md)曾完成源码预检、内存式模拟和非 PostgreSQL 专测；不同历史报告的检查总数随契约演进，不得脱离具体候选复用。七链当前映射和计分边界以[终极验收原子账本](sand-iam-terminal-acceptance-ledger.md) C01–C07 为准；真实宿主、数据库、worker、外部提供方和浏览器仍未核验。
 
@@ -47,7 +103,7 @@
 
 | 原子项 | 状态 | 当前证据与边界 |
 | --- | --- | --- |
-| 1. 权威迁移与目标结构 | ✅ ACCEPT | 当前 `001–037`、38 个迁移文件、生成目标 86 张 `sand_iam_*` 表；源码包完整性 23/23。仅静态/生成证据，不等于数据库生命周期。 |
+| 1. 权威迁移与目标结构 | ✅ ACCEPT | 当前 `001–038`、39 个迁移文件、生成目标 86 张 `sand_iam_*` 表；源码包完整性 24/24。仅静态/生成证据，不等于数据库生命周期。 |
 | 2. 失败升级恢复 descriptor 与载荷绑定 | ✅ ACCEPT | v13 已 REJECT，不得引用其旧证据；v14–v23 已被计划 v24 取代。v24 从冻结 snapshot 构建的静态证据以构建输出为准；当前仍是 `candidate/dirty-not-release`，不等于 release 或宿主恢复。 |
 | 3. C-IAM-HOTFIX-01 权威行为修复 | ✅ ACCEPT | `../../../.artifacts/sandiam-authority-hotfix-20260907/verification.md`：行为检查 5/5、PHP lint 415/415、diff check 通过；其外部 descriptor stale 仍按原子项 2 追踪。 |
 | 4. SandPackage 失败升级恢复 staging | ✅ ACCEPT | [`GATE_A_VERIFICATION.md`](../../../.staging/sandpackage-failed-upgrade-recovery-v1-20260901T121000Z/report/GATE_A_VERIFICATION.md) 对应 Gate A/B、backend 10/10、行为断言 672 PASS、SHA manifest 16/16；它证明 staging 套件，不证明宿主数据库已恢复。 |
@@ -116,7 +172,7 @@
 | IAM-T05 | Codex + Cursor | ▶ 进行中 | IAM-T03 | 接口目录、路由绑定、语义动作决策、PHP/TypeScript SDK 和 Webman 中间件已进入 `008` lifecycle；应用/组织隔离、幂等观察、路由冲突、停用关闭失败、OpenAPI 语义保留和审计已通过 PostgreSQL 集成。真实 SandAI/非 AI 应用授权和管理端闭环尚未验收。 |
 | IAM-T06 | Codex + Cursor | ▶ 进行中 | IAM-T04、IAM-T05 | 应用级委派、自助 API、Webhook、审计导出已进入 lifecycle；委托与 Webhook PostgreSQL 集成通过。仍缺并发 worker、真实 HTTPS 接收端、三角色页面和浏览器闭环。 |
 | IAM-T07 | Codex + Cursor | ▶ 进行中 | IAM-T04～IAM-T06 | 完整管理端交接契约和 Cursor U-T04～U-T13 源码/执行记录已交付；仍缺真实宿主同步、登录后的三角色流程与两个视口验收。 |
-| IAM-T08 | Codex + Cursor | ▶ 进行中 | IAM-T04～IAM-T12 | 当前 0.7.0 候选迁移为 `001–037`（37 个修订号、38 个文件），生成 SQL 目标为 86 张 `sand_iam_*` 表；根/插件载荷一致。fresh install 为 `001–037`，0.6.0 升级为 `033–037`，021 不可变、034 不自动授权、035 先验结构指纹再收养账本、036 以规范化自校验值关闭受控夹具支持、037 增加初始化草稿/修订表且权限只登记不自动授予。P19 前端隔离 ESLint/typecheck/build 与后端生命周期/行为检查均通过独立复核。SandPackage catalog/035 修复与 v15 production verifier/profile 同步有独立证据。实际恢复 **2/8**；宿主候选替换、重试、安装/升级/卸载、真实宿主 HTTP、浏览器、外部客户端、七条业务闭环和部署仍未通过，已移交 SandAdmin/SandPackage 维护者，本轮无数据库、registry 或运行时写入。 |
+| IAM-T08 | Codex + Cursor | ▶ 进行中 | IAM-T04～IAM-T12 | 当前 0.7.0 候选迁移为 `001–038`（38 个修订号、39 个文件），生成 SQL 目标为 86 张 `sand_iam_*` 表；根/插件载荷一致。fresh install 为 `001–038`，0.6.0 升级为 `033–038`，021 不可变、034 不自动授权、035 先验结构指纹再收养账本、036 以规范化自校验值关闭受控夹具支持、037 增加初始化草稿/修订表且权限只登记不自动授予、038 只增加认证限流清理索引。P19 前端隔离 ESLint/typecheck/build 与后端生命周期/行为检查均通过独立复核。SandPackage catalog/035 修复与 v15 production verifier/profile 同步有独立证据。实际恢复 **2/8**；宿主候选替换、重试、安装/升级/卸载、真实宿主 HTTP、浏览器、外部客户端、七条业务闭环和部署仍未通过，已移交 SandAdmin/SandPackage 维护者，本轮无数据库、registry 或运行时写入。 |
 | IAM-T09 | Codex + Cursor | ▶ 进行中 | IAM-T06 | 应用登录体验、品牌、消息 Provider、独立用户门户后端候选与 `011/025` 已落；假驱动下的服务选择、密文配置、投递/Captcha、停用关闭失败和跨组织拒绝已通过 PostgreSQL 集成。真实供应商、HTTP、页面和浏览器未验收。 |
 | IAM-T10 | Codex + Cursor | ▶ 进行中 | IAM-T04、IAM-T09 | 用户生命周期、组、邀请、访客升级、CSV 导入导出、通用 Syncer 与 `012–015/026` 已形成候选；生命周期/组/访客、邀请、Syncer 三组 PostgreSQL 集成通过，P14 scheduler/worker 已独立最终复核 ACCEPT。真实 HTTP、真实 worker/目录运行和页面未验收。 |
 | IAM-T11 | Codex + Cursor | ▶ 进行中 | IAM-T03、IAM-T04 | DCR、OIDC 前/后通道登出、CAS、Kerberos/SPNEGO、RADIUS Access/Accounting 与 `016–018` 已形成候选，迁移已进入 lifecycle 并有 SandPackage 隔离安装记录；真实 Realm/NAS、标准客户端、宿主 HTTP 和页面未验收。 |
@@ -146,6 +202,21 @@
 - 契约文件名由 IAM-01 冻结后写入本看板「当前交接包」；DETECT 监视看板、契约与 `.codex/autopilot/tasks.md`
 
 ## 当前交接包
+
+### 2026-09-12 Cursor 对接 Codex Goal `01a091cd`
+
+- **Codex Goal**：thread `01a091cd`，「SandIAM 完整开源成品交付」，active。
+- **Cursor**：交接契约已写入本看板；最近一次可复核的 Cursor 文件记录为 2026-09-12 10:22+08，本轮未取得当前进程或会话在线证据，因此不声称 Agent 仍在线。Cursor Goal 文件已对齐该 thread；旧 Autopilot/DETECT 保持 Codex 关闭后的 `enabled=false`，不重开 watcher。
+- **边界不变**：Cursor 独占 `sand-iam/sandadmin-artd/src/views/plugin/sand-iam/`；Codex 独占 `sand-iam/plugin/sand-iam/`。Cursor 不改 demo/宿主/PHP/SQL。
+- **可领前端面**：T10 目录同步页增加 outbox failed 列表与精确重试；OAuth 客户端页增加 back-channel logout dead 脱敏列表与重新签发操作。目录调用 `GET sync-connector/outbox?id=<connector_id>&state=failed` / `POST sync-connector/outbox-retry`。OIDC 前端契约冻结如下：
+  - 列表：`GET oauth-client/logout-delivery/index?id=<client_id>&state=dead&page=<page>&limit=<1..100>`，权限 `sand_iam:oauth_client:read`。分页 `data[]` 中显示 `event_id`（事件编号）、`state`（投递状态）、`attempt_count`（尝试次数）、`last_error_code`（稳定错误码）和 `update_time`（最后更新时间）；`id` 只作操作主键，`status` 只作恢复按钮资格判断且不显示。不得显示或读取 `auth_session_id`、`response_digest`，接口也不会返回 `encrypted_logout_token`。
+  - 恢复：`POST oauth-client/logout-delivery/reissue`，权限 `sand_iam:oauth_client:update`，JSON body 精确为 `{ id: <client_id>, delivery_id: <dead_delivery_id> }`。每次新的人工操作生成新的 `X-Request-Id`；仅同一次网络重试复用原值。成功 `data` 为 `{ source_delivery_id, delivery_id, event_id, state, already_reissued }`；刷新 dead 列表，并分别提示“已创建恢复任务”或“该失败投递已有恢复任务”。页面不展示、缓存或索取 logout token/密文。
+  - 操作与失败：只对 `state=dead && status=2` 显示“重新签发”；二次确认须说明保留原失败记录并创建新投递，不是重发旧令牌。稳定错误码必须分别呈现：`SAND_IAM_OIDC_BACKCHANNEL_LOGOUT_DISABLED`（服务未启用）、`SAND_IAM_OIDC_BACKCHANNEL_CLIENT_UNAVAILABLE`（客户端/应用/主体不可用）、`SAND_IAM_OIDC_BACKCHANNEL_URI_UNAVAILABLE`（未配置有效地址）、`SAND_IAM_OIDC_LOGOUT_DELIVERY_NOT_FOUND`、`SAND_IAM_OIDC_LOGOUT_DELIVERY_NOT_RECOVERABLE`、`SAND_IAM_OIDC_LOGOUT_SESSION_NOT_REVOKED`、`SAND_IAM_OIDC_LOGOUT_RECOVERY_CONFLICT` 和通用 `SAND_IAM_IDEMPOTENCY_CONFLICT`；失败后保留列表与 request id，禁止乐观改状态。
+  - Cursor 源码验收：为 DTO 解析器补正负行为测试，证明秘密/未知字段不会进入页面模型；目标 eslint、SandIAM 范围 `vue-tsc`、helper/contract test、overlay `vite build` 必须通过。真实 API、两种视口、平台管理员/应用管理员允许与无权限管理员拒绝仍归 demo 最终验收，源码构建不得替代。
+  - 上述 OIDC 契约与 `OAuthClientController::logoutDeliveryPayload/reissueLogoutDelivery`、`OAuthOidcService::reissueBackchannelLogout` 和 `ManagementApiCatalog` 当前权威源码一致，现已可消费；不重开旧 Autopilot/DETECT watcher。
+
+  v70 发布卫生 **11/14**；管理 OpenAPI `0.13.0-candidate` 已包含 OIDC 恢复精确 schema；Codex 已过 non-PG/contract **114/114**、PHP lint **507/507**、包完整性 **24/24**。配置参考与离线预检覆盖 85/85 环境键；24 小时 12 项指标的队列、不可恢复积压及两类 retention backlog 口径已冻结。PostgreSQL 顺序/并发/保留/Sync outbox/OIDC recovery 验证用例已编写但未获授权执行；FLOW 仍 **0/7**，无真实宿主、浏览器、协议、24 小时或独立终验证据。Cursor 不写 LICENSE、不执行 DB/宿主/同步。
+- **证据**：`.cursor/autopilot/executions/CURSOR-PING-20260912.md`、`.cursor/autopilot/executions/DETECT-01.md`
 
 ### 给 Codex：IAM-03 可立即继续
 

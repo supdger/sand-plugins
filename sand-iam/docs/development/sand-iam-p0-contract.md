@@ -102,6 +102,10 @@ all security-sensitive operations -> audit_log
 
 运行时与授权入口从 `X-Request-Id` 读取 8–96 位字母、数字、`.`、`_`、`:` 或 `-` 的请求标识；缺失或不合规时由 SandIAM 生成 `req_` 前缀的随机标识。安全状态变更按操作者、操作名和请求标识绑定请求指纹：同一指纹重复提交不会再次签发、轮换或撤销，指纹不同返回 `SAND_IAM_IDEMPOTENCY_CONFLICT`。调用凭证明文绝不持久化；首次响应后重试仅返回已处理的凭证元数据和 `secret_available=false`，调用方必须按凭证遗失流程轮换，而不能要求系统重放秘密。
 
+幂等冲突保护的部署保留期不得短于 30 天。清理进程默认关闭，只删除超过保留期且 `state=succeeded` 的有限批次；不得清理 pending 记录或审计日志。保留期结束后调用方仍不得复用旧 request id；删除仅控制运行数据增长，不构成业务重放许可。
+
+认证限流窗口固定为 60 秒；其数据库状态只可由同一默认关闭的维护进程在窗口开始至少 1 小时后按有限批次物理删除。迁移 038 提供按 `window_start, id` 的清理访问路径。清理不得改变当前窗口内计数、策略或审计，并受独立数据库删除授权约束。
+
 `X-Request-Id` 只标识一个 HTTP 请求，allow 与 deny 必须使用不同值。验收或压测的一轮聚合使用调用方自管的 `acceptance_run_id`（例如报告字段或 `X-Acceptance-Run-Id`），它不是 SandIAM 授权输入、不会替代 request_id，也不会写成安全操作幂等键。
 
 业务拒绝统一使用 `plugin\\sandadmin\\exception\\ApiException`，显式传 `400`、`401` 或 `403`；不把拒绝吞成空列表或 500。

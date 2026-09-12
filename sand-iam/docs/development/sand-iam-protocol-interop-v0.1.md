@@ -45,6 +45,8 @@ RP-Initiated Logout 仍以有效 `id_token_hint` 为入口，精确校验 `post_
 
 Front-Channel 页面对 URL 做 HTML 转义并设置 CSP、no-store、no-referrer。Back-Channel worker 使用表单编码 POST、只访问公网 HTTPS、验证 TLS、固定本次 DNS 解析结果、禁止重定向和私网/保留地址，失败最多重试 5 次并写审计。
 
+达到五次失败的投递保持 `dead`，原 logout token 不会被重新排队。管理员可在同一 OAuth 客户端范围内查询脱敏投递，并对 dead 记录执行重新签发；系统要求客户端、应用、主体仍启用且原会话已经撤销，使用原事件确定性派生唯一后继 `jti`，签发新的有效期并创建 pending 记录。原 dead 行不修改，同一来源的并发或重复恢复由事件唯一键收敛到一个后继；后继若再次死亡，可继续形成下一段恢复链。列表、响应和审计都不包含 token 或密文。
+
 功能开关和 worker 均默认关闭：
 
 - `SAND_IAM_OIDC_FRONTCHANNEL_LOGOUT_ENABLED`

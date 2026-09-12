@@ -45,10 +45,20 @@ final class SyncConnectorService
     /** @return array{id:int,state:string,pulled:int,pushed:int,created:int,updated:int,missing:int,disabled:int,conflict:int} */
     public function run(int $connectorId, int $applicationId, string $actor, string $requestId): array
     {
-        $this->enabled(); $connector = SyncConnector::where('id', $connectorId)->where('application_id', $applicationId)->where('status', 1)->find(); if ($connector === null) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404);
-        $application = $this->application($applicationId); $driver = $this->driver((string) $connector->driver_code); $this->assertDirection($driver, (string) $connector->direction); $config = $this->cipher->decryptArray((string) $connector->encrypted_config);
-        try { $run = SyncRun::create(['sync_connector_id' => $connectorId, 'application_id' => $applicationId, 'connector_config_version' => (int) $connector->config_version, 'state' => 'running', 'cursor_before_hash' => $this->cursorHash($connector->encrypted_cursor), 'start_time' => $this->now(), 'status' => 1]); }
-        catch (\Throwable $exception) { if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SYNC_ALREADY_RUNNING', 409); throw $exception; }
+        $this->enabled();
+        Db::startTrans();
+        try {
+            $connector = SyncConnector::where('id', $connectorId)->where('application_id', $applicationId)->where('status', 1)->lock(true)->find();
+            if ($connector === null) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404);
+            $this->application($applicationId);
+            $driver = $this->driver((string) $connector->driver_code); $this->assertDirection($driver, (string) $connector->direction); $config = $this->cipher->decryptArray((string) $connector->encrypted_config);
+            $run = SyncRun::create(['sync_connector_id' => $connectorId, 'application_id' => $applicationId, 'connector_config_version' => (int) $connector->config_version, 'state' => 'running', 'cursor_before_hash' => $this->cursorHash($connector->encrypted_cursor), 'start_time' => $this->now(), 'status' => 1]);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SYNC_ALREADY_RUNNING', 409);
+            throw $exception;
+        }
         $counts = ['pulled' => 0, 'pushed' => 0, 'created' => 0, 'updated' => 0, 'missing' => 0, 'disabled' => 0, 'conflict' => 0];
         try {
             $direction = (string) $connector->direction;
@@ -115,16 +125,75 @@ final class SyncConnectorService
     /** @param class-string<SyncDriverInterface> $driver @param array<string,mixed> $config @param array<string,int> $counts */
     private function push(SyncConnector $connector, SyncRun $run, string $driver, array $config, array &$counts): void
     {
+        $attemptPolicy = new SyncOutboxAttemptPolicy();
         for ($batch = 0; $batch < 100; $batch++) {
             $rows = SyncOutbox::where('sync_connector_id', (int) $connector->id)->where('application_id', (int) $connector->application_id)->where('state', 'pending')->order('id', 'asc')->limit(100)->select(); if (count($rows) === 0) return;
-            $events = []; foreach ($rows as $row) $events[] = $this->cipher->decryptArray((string) $row->encrypted_payload) + ['event_id' => (string) $row->event_id];
-            $accepted = $driver::pushBatch($config, $events); if (!is_array($accepted) || array_filter($accepted, static fn (mixed $id): bool => !is_string($id)) !== []) throw new ApiException('SAND_IAM_SYNC_DRIVER_RESPONSE_INVALID', 503);
-            $sentIds = array_map(static fn (SyncOutbox $row): string => (string) $row->event_id, $rows->all()); $accepted = array_values(array_unique($accepted)); if (array_diff($accepted, $sentIds) !== []) throw new ApiException('SAND_IAM_SYNC_DRIVER_RESPONSE_INVALID', 503);
-            foreach ($rows as $row) { if (in_array((string) $row->event_id, $accepted, true)) { $row->save(['state' => 'succeeded', 'delivered_time' => $this->now(), 'status' => 2]); $counts['pushed']++; } else $row->save(['attempt_count' => (int) $row->attempt_count + 1, 'error_code' => 'SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED']); }
+            $events = []; $dispatchRows = []; $payloadFailure = false;
+            foreach ($rows as $row) {
+                try {
+                    $events[] = $this->cipher->decryptArray((string) $row->encrypted_payload) + ['event_id' => (string) $row->event_id];
+                    $dispatchRows[] = $row;
+                } catch (\Throwable) {
+                    $row->save($attemptPolicy->failure((int) $row->attempt_count, 'SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID'));
+                    $payloadFailure = true;
+                }
+            }
+            if ($events === []) throw new ApiException('SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID', 503);
+            try {
+                $accepted = $driver::pushBatch($config, $events); if (!is_array($accepted) || array_filter($accepted, static fn (mixed $id): bool => !is_string($id)) !== []) throw new ApiException('SAND_IAM_SYNC_DRIVER_RESPONSE_INVALID', 503);
+                $sentIds = array_map(static fn (SyncOutbox $row): string => (string) $row->event_id, $dispatchRows); $accepted = array_values(array_unique($accepted)); if (array_diff($accepted, $sentIds) !== []) throw new ApiException('SAND_IAM_SYNC_DRIVER_RESPONSE_INVALID', 503);
+            } catch (\Throwable $exception) {
+                $errorCode = $this->errorCode($exception, 'SAND_IAM_SYNC_OUTBOUND_FAILED');
+                foreach ($dispatchRows as $row) $row->save($attemptPolicy->failure((int) $row->attempt_count, $errorCode));
+                throw $exception;
+            }
+            foreach ($dispatchRows as $row) {
+                if (in_array((string) $row->event_id, $accepted, true)) {
+                    $row->save(['state' => 'succeeded', 'error_code' => null, 'delivered_time' => $this->now(), 'status' => 2]); $counts['pushed']++;
+                } else {
+                    $row->save($attemptPolicy->failure((int) $row->attempt_count, 'SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED'));
+                }
+            }
             $run->save($counts);
-            if (count($accepted) < count($rows)) return;
+            if ($payloadFailure) throw new ApiException('SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID', 503);
+            if (count($accepted) < count($rows)) throw new ApiException('SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED', 503);
         }
         throw new ApiException('SAND_IAM_SYNC_OUTBOUND_BATCH_LIMIT_EXCEEDED', 409);
+    }
+
+    public function retryOutbound(int $connectorId, int $applicationId, int $outboxId, string $actor, string $requestId): void
+    {
+        $this->enabled();
+        $requestId = RequestId::normalize($requestId);
+        $fingerprint = IdempotencyService::fingerprint(['connector_id' => $connectorId, 'application_id' => $applicationId, 'outbox_id' => $outboxId]);
+        Db::startTrans();
+        try {
+            (new IdempotencyService())->execute(
+                'sync_outbox',
+                (string) $outboxId,
+                'sync.outbox_retry',
+                $requestId,
+                $fingerprint,
+                'sync_outbox',
+                function () use ($connectorId, $applicationId, $outboxId, $actor, $requestId): array {
+                    $connector = SyncConnector::where('id', $connectorId)->where('application_id', $applicationId)->where('status', 1)->lock(true)->find();
+                    if ($connector === null) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404);
+                    if (!in_array((string) $connector->direction, ['outbound', 'bidirectional'], true)) throw new ApiException('SAND_IAM_SYNC_OUTBOX_NOT_RETRYABLE', 409);
+                    if (SyncRun::where('sync_connector_id', $connectorId)->where('state', 'running')->find() !== null) throw new ApiException('SAND_IAM_SYNC_ALREADY_RUNNING', 409);
+                    $outbox = SyncOutbox::where('id', $outboxId)->where('sync_connector_id', $connectorId)->where('application_id', $applicationId)->where('state', 'failed')->where('status', 2)->lock(true)->find();
+                    if ($outbox === null) throw new ApiException('SAND_IAM_SYNC_OUTBOX_NOT_RETRYABLE', 409);
+                    $outbox->save((new SyncOutboxAttemptPolicy())->retry());
+                    $this->audit->write('admin', $actor, (int) $connector->organization_id, $applicationId, 'sync.outbox_retry', 'sync_outbox', $outboxId, 'succeeded', $requestId, ['event_id_sha256' => hash('sha256', (string) $outbox->event_id)]);
+                    return ['resource_id' => $outboxId, 'result' => []];
+                },
+                0,
+                false,
+            );
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
     }
 
     private function finalizeMissing(SyncConnector $connector, SyncRun $run, string $actor, string $requestId): int
@@ -176,5 +245,6 @@ final class SyncConnectorService
     private function application(int $id):Application{$app=Application::where('id',$id)->where('status',1)->find();if($app===null)throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所属接入应用不存在或已停用',404);return $app;}
     private function enabled():void{if((int)config('plugin.sand-iam.app.identity_lifecycle_enabled',0)!==1)throw new ApiException('SAND_IAM_IDENTITY_LIFECYCLE_UNAVAILABLE',503);}
     private function now():string{return date('Y-m-d H:i:s');}
+    private function errorCode(\Throwable $exception,string $fallback):string{return preg_match('/^(SAND_IAM_[A-Z0-9_]+)/',$exception->getMessage(),$matches)===1?$matches[1]:$fallback;}
     /** @param array<string,mixed> $context */ private function writeAudit(SyncConnector $connector,string $action,int $id,string $actor,string $requestId,string $outcome,array $context):void{$app=$this->application((int)$connector->application_id);$this->audit->write('admin',$actor,(int)$app->organization_id,(int)$app->id,$action,'sync_run',$id,$outcome,$requestId!==''?substr($requestId,0,96):bin2hex(random_bytes(16)),$context);}
 }

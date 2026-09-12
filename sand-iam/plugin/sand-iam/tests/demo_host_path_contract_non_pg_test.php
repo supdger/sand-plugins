@@ -43,7 +43,10 @@ foreach (glob($sandIamRoot . '/plugin/sand-iam/tests/*.php') ?: [] as $testFile)
     }
 }
 
-if (count($testsWithHostFallback) !== 36) {
+// The 40th guarded consumer is oidc_logout_recovery_pg_integration_test.php;
+// keeping an explicit count makes every new host-aware test an intentional
+// contract change instead of silently broadening the host surface.
+if (count($testsWithHostFallback) !== 40) {
     demoHostPathFail('unexpected host-fallback test count: ' . count($testsWithHostFallback));
 }
 
@@ -75,4 +78,4 @@ foreach ($currentArtifacts as $artifact) {
     }
 }
 
-fwrite(STDOUT, "SandIAM demo-host path contract passed (36 test fallbacks).\n");
+fwrite(STDOUT, "SandIAM demo-host path contract passed (40 test fallbacks).\n");

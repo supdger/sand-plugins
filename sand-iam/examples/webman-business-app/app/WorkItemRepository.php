@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Example\Matter;
+namespace Example\WorkItem;
 
 use RuntimeException;
 
 /** Replace the table name only; never source owner or organization from a request body. */
-final class MatterRepository
+final class WorkItemRepository
 {
     private \PDO $database;
 
@@ -18,16 +18,16 @@ final class MatterRepository
         $this->database = new \PDO($dsn, (string) getenv('BUSINESS_DATABASE_USER'), (string) getenv('BUSINESS_DATABASE_PASSWORD'), [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
     }
 
-    public function findOrFail(int $id): Matter
+    public function findOrFail(int $id): WorkItem
     {
-        $query = $this->database->prepare('SELECT id, organization_id, owner_identity_id, state FROM business_matter WHERE id = :id');
+        $query = $this->database->prepare('SELECT id, organization_id, owner_identity_id, state FROM business_work_item WHERE id = :id');
         $query->execute(['id' => $id]);
         $row = $query->fetch(\PDO::FETCH_ASSOC);
-        if (!is_array($row)) throw new RuntimeException('案件不存在');
-        return new Matter((int) $row['id'], (int) $row['organization_id'], (int) $row['owner_identity_id'], (string) $row['state']);
+        if (!is_array($row)) throw new RuntimeException('工作项不存在');
+        return new WorkItem((int) $row['id'], (int) $row['organization_id'], (int) $row['owner_identity_id'], (string) $row['state']);
     }
 
-    /** @param list<int> $ids @return list<Matter> */
+    /** @param list<int> $ids @return list<WorkItem> */
     public function findManyOrFail(array $ids): array
     {
         $items = [];
@@ -35,9 +35,9 @@ final class MatterRepository
         return $items;
     }
 
-    public function archive(Matter $matter): void
+    public function close(WorkItem $workItem): void
     {
-        $query = $this->database->prepare("UPDATE business_matter SET state = 'archived' WHERE id = :id AND state <> 'archived'");
-        $query->execute(['id' => $matter->id]);
+        $query = $this->database->prepare("UPDATE business_work_item SET state = 'closed' WHERE id = :id AND state <> 'closed'");
+        $query->execute(['id' => $workItem->id]);
     }
 }

@@ -15,7 +15,8 @@ declare(strict_types=1);
 function sandIamPayloadRoots(): array
 {
     return [
-        'README.md', 'config.json', 'info.ini', 'install.sql', 'update.sql', 'uninstall.sql',
+        'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'SBOM.cdx.json',
+        'config.json', 'info.ini', 'install.sql', 'update.sql', 'uninstall.sql',
         'migrations', 'lifecycle', 'plugin/sand-iam',
         'sandadmin-artd/src/views/plugin/sand-iam', 'portal', 'sdk', 'docs/user-guide', 'examples', 'recovery',
     ];
@@ -53,7 +54,7 @@ function sandIamPayloadExcluded(string $path): bool
     ], true)) {
         return true;
     }
-    return preg_match('#(?:^|/)(?:\.git|\.env(?:\.|$)|node_modules|\.pnpm-store|\.dart_tool|\.DS_Store|\.staging|\.tmp|\.backups|backups|artifacts|coverage|test-results|tests|dist|build|cache|logs?|waiting-codex)(?:/|$)|(?:^|/)[^/]+\.(?:test|spec)\.[^/]+$|(?:^|/)(?:id_rsa|[^/]+\.(?:pem|key|log|dump))$#i', $path) === 1;
+    return preg_match('#(?:^|/)(?:\.git|\.env(?:\.|$)|node_modules|\.pnpm-store|\.dart_tool|\.DS_Store|\.staging|\.tmp|\.backups|backups|artifacts|coverage|test-results|tests?|dist|build|cache|logs?|waiting-codex)(?:/|$)|(?:^|/)[^/]+\.(?:test|spec)\.[^/]+$|(?:^|/)(?:id_rsa|[^/]+\.(?:pem|key|log|dump))$#i', $path) === 1;
 }
 
 /** @return list<string> */

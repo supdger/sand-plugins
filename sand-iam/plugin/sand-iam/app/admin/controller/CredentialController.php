@@ -55,7 +55,7 @@ final class CredentialController extends BaseController
             'credential',
             fn (): array => ['resource_id' => ($issued = $this->create($clientId, $name, $data['expire_time'] ?? null, $requestId, $this->actor($request)))['id'], 'result' => $issued],
         );
-        return $this->success($result['result'], $result['replayed'] ? '请求已处理；调用凭证明文不会再次显示' : '凭证只显示一次')->withHeader('Cache-Control', 'no-store');
+        return $this->success($result['result'], $result['replayed'] ? '请求已处理；调用凭证明文不会再次显示' : '凭证只显示一次')->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache');
     }
 
     #[Permission('SandIAM 轮换凭证', 'sand_iam:credential:rotate')]
@@ -80,7 +80,7 @@ final class CredentialController extends BaseController
                 return ['resource_id' => $issued['id'], 'result' => $issued];
             },
         );
-        return $this->success($result['result'], $result['replayed'] ? '请求已处理；新调用凭证明文不会再次显示' : '新凭证只显示一次')->withHeader('Cache-Control', 'no-store');
+        return $this->success($result['result'], $result['replayed'] ? '请求已处理；新调用凭证明文不会再次显示' : '新凭证只显示一次')->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache');
     }
 
     #[Permission('SandIAM 撤销凭证', 'sand_iam:credential:revoke')]

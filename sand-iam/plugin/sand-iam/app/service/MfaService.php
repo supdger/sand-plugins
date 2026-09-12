@@ -90,36 +90,75 @@ final class MfaService
     /** @return array<string,mixed> */
     public function totpStart(string $accessToken, string $name, string $currentPassword, string $requestId, string $ip = ''): array
     {
+        $requestId = RequestId::normalize($requestId);
         [$application, $identity] = $this->current($accessToken);
+        $name = $this->factorName($name, '身份验证器');
+        $operations = new IdempotencyService();
+        $actorRef = $this->idempotencyActor($application, $identity);
+        $fingerprint = IdempotencyService::fingerprint([
+            'name' => $name,
+            'password_proof' => $this->hash('current-password:' . $currentPassword),
+        ]);
+        $replay = $operations->replayIfCompleted('application_user', $actorRef, 'identity.totp_start', $requestId, $fingerprint);
+        if ($replay !== null) return $replay['result'];
         (new HumanAuthService())->assertCurrentPassword($accessToken, $currentPassword, $ip, $requestId);
         $this->requireEncryptionKey();
-        if (MfaFactor::where('application_id', (int) $application->id)
-            ->where('identity_id', (int) $identity->id)
-            ->where('type', 'totp')->where('status', 1)->find()) {
-            throw new ApiException('SAND_IAM_MFA_TOTP_ALREADY_ENABLED', 409);
-        }
-        MfaFactor::where('application_id', (int) $application->id)
-            ->where('identity_id', (int) $identity->id)
-            ->where('type', 'totp')->where('status', 2)
-            ->whereNull('revoked_time')->update(['revoked_time' => $this->now()]);
-        $name = $this->factorName($name, '身份验证器');
-        $secret = random_bytes(20);
-        $factor = MfaFactor::create([
-            'application_id' => (int) $application->id, 'identity_id' => (int) $identity->id,
-            'type' => 'totp', 'name' => $name, 'encrypted_secret' => $this->encrypt($secret),
-            'encryption_version' => $this->encryptionVersion(), 'status' => 2,
-        ]);
-        $base32 = $this->base32Encode($secret);
-        $label = rawurlencode((string) $application->name . ':' . (string) $identity->code);
-        $issuer = rawurlencode((string) $application->name);
-        $this->audit($application, $identity, 'identity.totp_start', 'mfa_factor', (int) $factor->id, 'succeeded', $requestId);
-        return ['factor_id' => (int) $factor->id, 'secret' => $base32, 'otpauth_uri' => "otpauth://totp/{$label}?secret={$base32}&issuer={$issuer}&algorithm=SHA1&digits=6&period=30"];
+        $result = $operations->execute(
+            'application_user',
+            $actorRef,
+            'identity.totp_start',
+            $requestId,
+            $fingerprint,
+            'mfa_factor',
+            function () use ($application, $identity, $name, $requestId): array {
+                $lockedIdentity = Identity::where('id', (int) $identity->id)
+                    ->where('application_id', (int) $application->id)->where('status', 1)->lock(true)->find();
+                if ($lockedIdentity === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+                if (MfaFactor::where('application_id', (int) $application->id)
+                    ->where('identity_id', (int) $identity->id)
+                    ->where('type', 'totp')->where('status', 1)->find()) {
+                    throw new ApiException('SAND_IAM_MFA_TOTP_ALREADY_ENABLED', 409);
+                }
+                MfaFactor::where('application_id', (int) $application->id)
+                    ->where('identity_id', (int) $identity->id)
+                    ->where('type', 'totp')->where('status', 2)
+                    ->whereNull('revoked_time')->update(['revoked_time' => $this->now()]);
+                $secret = random_bytes(20);
+                $factor = MfaFactor::create([
+                    'application_id' => (int) $application->id, 'identity_id' => (int) $identity->id,
+                    'type' => 'totp', 'name' => $name, 'encrypted_secret' => $this->encrypt($secret),
+                    'encryption_version' => $this->encryptionVersion(), 'status' => 2,
+                ]);
+                $base32 = $this->base32Encode($secret);
+                $label = rawurlencode((string) $application->name . ':' . (string) $identity->code);
+                $issuer = rawurlencode((string) $application->name);
+                $this->audit($application, $identity, 'identity.totp_start', 'mfa_factor', (int) $factor->id, 'succeeded', $requestId);
+                return [
+                    'resource_id' => (int) $factor->id,
+                    'result' => [
+                        'factor_id' => (int) $factor->id,
+                        'secret' => $base32,
+                        'otpauth_uri' => "otpauth://totp/{$label}?secret={$base32}&issuer={$issuer}&algorithm=SHA1&digits=6&period=30",
+                    ],
+                ];
+            },
+        );
+        return $result['result'];
     }
 
     /** @return array<string,mixed> */
     public function totpConfirm(string $accessToken, int $factorId, string $code, string $requestId): array
     {
+        $requestId = RequestId::normalize($requestId);
         [$application, $identity] = $this->current($accessToken);
+        $operations = new IdempotencyService();
+        $actorRef = $this->idempotencyActor($application, $identity);
+        $fingerprint = IdempotencyService::fingerprint([
+            'factor_id' => $factorId,
+            'code_proof' => $this->hash('totp-confirm:' . $code),
+        ]);
+        $replay = $operations->replayIfCompleted('application_user', $actorRef, 'identity.totp_confirm', $requestId, $fingerprint);
+        if ($replay !== null) return $replay['result'];
         $factor = $this->factor($application, $identity, $factorId, 'totp', true);
         $secret = $this->decrypt((string) $factor->encrypted_secret);
         if ((int) $factor->status === 1) {
@@ -135,21 +174,24 @@ final class MfaService
             $this->audit($application, $identity, 'identity.totp_confirm', 'mfa_factor', $factorId, 'failed', $requestId);
             throw new ApiException('SAND_IAM_MFA_TOTP_INVALID', 400);
         }
-        Db::startTrans();
-        try {
-            $locked = MfaFactor::where('id', $factorId)->where('application_id', (int) $application->id)
-                ->where('identity_id', (int) $identity->id)->where('status', 2)->whereNull('revoked_time')->lock(true)->find();
-            if ($locked === null) throw new ApiException('SAND_IAM_MFA_TOTP_ALREADY_ENABLED', 409);
-            $locked->save(['status' => 1, 'last_used_counter' => $counter, 'last_used_time' => $this->now()]);
-            $codes = $this->replaceRecoveryCodes($application, $identity, $locked);
-            Db::commit();
-        } catch (\Throwable $e) {
-            Db::rollback();
-            if (str_contains($e->getMessage(), 'unique')) throw new ApiException('SAND_IAM_MFA_TOTP_ALREADY_ENABLED', 409);
-            throw $e;
-        }
-        $this->audit($application, $identity, 'identity.totp_confirm', 'mfa_factor', $factorId, 'succeeded', $requestId);
-        return ['enabled' => true, 'recovery_codes' => $codes];
+        $result = $operations->execute(
+            'application_user',
+            $actorRef,
+            'identity.totp_confirm',
+            $requestId,
+            $fingerprint,
+            'mfa_factor',
+            function () use ($application, $identity, $factorId, $counter, $requestId): array {
+                $locked = MfaFactor::where('id', $factorId)->where('application_id', (int) $application->id)
+                    ->where('identity_id', (int) $identity->id)->where('status', 2)->whereNull('revoked_time')->lock(true)->find();
+                if ($locked === null) throw new ApiException('SAND_IAM_MFA_TOTP_ALREADY_ENABLED', 409);
+                $locked->save(['status' => 1, 'last_used_counter' => $counter, 'last_used_time' => $this->now()]);
+                $codes = $this->replaceRecoveryCodes($application, $identity, $locked);
+                $this->audit($application, $identity, 'identity.totp_confirm', 'mfa_factor', $factorId, 'succeeded', $requestId);
+                return ['resource_id' => $factorId, 'result' => ['enabled' => true, 'recovery_codes' => $codes]];
+            },
+        );
+        return $result['result'];
     }
 
     /** @return list<array<string,mixed>> */
@@ -186,65 +228,110 @@ final class MfaService
     /** @return array{recovery_codes:list<string>} */
     public function regenerateRecoveryCodes(string $accessToken, string $password, string $requestId, string $ip = ''): array
     {
+        $requestId = RequestId::normalize($requestId);
         [$application, $identity] = $this->current($accessToken);
+        $operations = new IdempotencyService();
+        $actorRef = $this->idempotencyActor($application, $identity);
+        $fingerprint = IdempotencyService::fingerprint([
+            'factor_type' => 'totp',
+            'password_proof' => $this->hash('current-password:' . $password),
+        ]);
+        $replay = $operations->replayIfCompleted('application_user', $actorRef, 'identity.recovery_regenerate', $requestId, $fingerprint);
+        if ($replay !== null) return $replay['result'];
         (new HumanAuthService())->assertCurrentPassword($accessToken, $password, $ip, $requestId);
-        Db::startTrans();
-        try {
-            $factor = MfaFactor::where('application_id', (int) $application->id)->where('identity_id', (int) $identity->id)
-                ->where('type', 'totp')->where('status', 1)->order('id', 'asc')->lock(true)->find();
-            if ($factor === null) throw new ApiException('SAND_IAM_MFA_TOTP_REQUIRED_FOR_RECOVERY_CODES', 400);
-            $codes = $this->replaceRecoveryCodes($application, $identity, $factor);
-            Db::commit();
-        } catch (\Throwable $exception) {
-            Db::rollback();
-            throw $exception;
-        }
-        $this->audit($application, $identity, 'identity.recovery_regenerate', 'mfa_factor', (int) $factor->id, 'succeeded', $requestId);
-        return ['recovery_codes' => $codes];
+        $result = $operations->execute(
+            'application_user',
+            $actorRef,
+            'identity.recovery_regenerate',
+            $requestId,
+            $fingerprint,
+            'mfa_factor',
+            function () use ($application, $identity, $requestId): array {
+                $factor = MfaFactor::where('application_id', (int) $application->id)->where('identity_id', (int) $identity->id)
+                    ->where('type', 'totp')->where('status', 1)->order('id', 'asc')->lock(true)->find();
+                if ($factor === null) throw new ApiException('SAND_IAM_MFA_TOTP_REQUIRED_FOR_RECOVERY_CODES', 400);
+                $codes = $this->replaceRecoveryCodes($application, $identity, $factor);
+                $this->audit($application, $identity, 'identity.recovery_regenerate', 'mfa_factor', (int) $factor->id, 'succeeded', $requestId);
+                return ['resource_id' => (int) $factor->id, 'result' => ['recovery_codes' => $codes]];
+            },
+        );
+        return $result['result'];
     }
 
     /** @param array<string,mixed> $payload @return array<string,mixed> */
     public function verifyLoginChallenge(array $payload, string $ip, string $requestId): array
     {
+        $requestId = RequestId::normalize($requestId);
         $application = $this->application($payload);
         $token = (string) ($payload['challenge_token'] ?? '');
+        $challengeProof = $this->hash('mfa-token:' . $token);
+        $operations = new IdempotencyService();
+        $fingerprint = IdempotencyService::fingerprint([
+            'application_id' => (int) $application->id,
+            'challenge_response' => $payload,
+        ]);
+        $replay = $operations->replayIfCompleted(
+            'mfa_challenge',
+            $challengeProof,
+            'identity.mfa_challenge_verify',
+            $requestId,
+            $fingerprint,
+        );
+        if ($replay !== null) {
+            return $this->recoverChallengeVerificationResult($replay['result'], $token, $requestId, $ip);
+        }
         $rateIdentity = $token === '' ? null : AuthChallenge::where('application_id', (int) $application->id)
-            ->whereIn('purpose', ['mfa_login', 'mfa_step_up'])->where('token_hash', $this->hash('mfa-token:' . $token))->value('identity_id');
-        (new HumanAuthService())->assertMfaAttemptAllowed((int) $application->id, (string) ($rateIdentity ?: 'unknown') . '|' . $ip);
+            ->whereIn('purpose', ['mfa_login', 'mfa_step_up'])->where('token_hash', $challengeProof)->value('identity_id');
+        $humanAuth = new HumanAuthService();
+        $humanAuth->assertMfaAttemptAllowed((int) $application->id, (string) ($rateIdentity ?: 'unknown') . '|' . $ip);
         $challenge = null;
         $identity = null;
-        $tokens = null;
-        Db::startTrans();
         try {
-            $purpose = (string) AuthChallenge::where('application_id', (int) $application->id)->where('token_hash', $this->hash('mfa-token:' . $token))->value('purpose');
-            if (!in_array($purpose, ['mfa_login', 'mfa_step_up'], true)) throw new ApiException('SAND_IAM_MFA_CHALLENGE_INVALID', 401);
-            $challenge = $this->lockedChallenge($application, $token, $purpose);
-            $identity = Identity::where('id', (int) $challenge->identity_id)->where('application_id', (int) $application->id)->where('status', 1)->find();
-            if ($identity === null) throw new ApiException('SAND_IAM_MFA_CHALLENGE_INVALID', 401);
-            $method = (string) ($payload['method'] ?? '');
-            if ($method === 'totp') $this->verifyChallengeTotp($application, $identity, (string) ($payload['code'] ?? ''));
-            elseif ($method === 'recovery_code') $this->consumeRecoveryCode($application, $identity, (string) ($payload['code'] ?? ''));
-            elseif ($method === 'passkey') $this->verifyAssertion($application, $identity, $this->decrypt((string) $challenge->encrypted_challenge), $payload);
-            else throw new ApiException('SAND_IAM_MFA_METHOD_UNAVAILABLE', 400);
-            $context = json_decode((string) $challenge->context, true);
-            if (!is_array($context)) $context = [];
-            $challenge->save(['status' => 2, 'consumed_time' => $this->now()]);
-            if ($purpose === 'mfa_step_up') {
-                $session = AuthSession::where('id', (int) ($context['auth_session_id'] ?? 0))->where('application_id', (int) $application->id)->where('identity_id', (int) $identity->id)->where('status', 1)->lock(true)->find();
-                if ($session === null || $session->revoked_time !== null) throw new ApiException('SAND_IAM_MFA_CHALLENGE_INVALID', 401);
-                $session->save(['step_up_time' => $this->now(), 'step_up_method' => 'mfa']);
-                $tokens = ['step_up' => true, 'expires_in' => self::CHALLENGE_TTL];
-            } elseif (($context['auth_method'] ?? null) === 'federation') {
-                $bindingId = (int) ($context['identity_binding_id'] ?? 0);
-                $binding = IdentityBinding::where('id', $bindingId)->where('application_id', (int) $application->id)->where('identity_id', (int) $identity->id)->lock(true)->find();
-                if ($binding === null) throw new ApiException('SAND_IAM_MFA_CHALLENGE_INVALID', 401);
-                $tokens = (new HumanAuthService())->issueFederatedSession($application, $identity, $binding, $ip, (string) ($payload['user_agent'] ?? ''), $requestId);
-            } else {
-                $tokens = (new HumanAuthService())->issueSessionAfterMfa($application, $identity, $ip, (string) ($payload['user_agent'] ?? ''), $requestId);
-            }
-            Db::commit();
+            $execution = $operations->execute(
+                'mfa_challenge',
+                $challengeProof,
+                'identity.mfa_challenge_verify',
+                $requestId,
+                $fingerprint,
+                'auth_session',
+                function () use (&$application, &$challenge, &$identity, $humanAuth, $token, $challengeProof, $payload, $ip, $requestId): array {
+                    $purpose = (string) AuthChallenge::where('application_id', (int) $application->id)->where('token_hash', $challengeProof)->value('purpose');
+                    if (!in_array($purpose, ['mfa_login', 'mfa_step_up'], true)) throw new ApiException('SAND_IAM_MFA_CHALLENGE_INVALID', 401);
+                    $challenge = $this->lockedChallenge($application, $token, $purpose);
+                    $identity = Identity::where('id', (int) $challenge->identity_id)->where('application_id', (int) $application->id)->where('status', 1)->lock(true)->find();
+                    if ($identity === null) throw new ApiException('SAND_IAM_MFA_CHALLENGE_INVALID', 401);
+                    $method = (string) ($payload['method'] ?? '');
+                    if ($method === 'totp') $this->verifyChallengeTotp($application, $identity, (string) ($payload['code'] ?? ''));
+                    elseif ($method === 'recovery_code') $this->consumeRecoveryCode($application, $identity, (string) ($payload['code'] ?? ''));
+                    elseif ($method === 'passkey') $this->verifyAssertion($application, $identity, $this->decrypt((string) $challenge->encrypted_challenge), $payload);
+                    else throw new ApiException('SAND_IAM_MFA_METHOD_UNAVAILABLE', 400);
+                    $context = json_decode((string) $challenge->context, true);
+                    if (!is_array($context)) $context = [];
+                    $challenge->save(['status' => 2, 'consumed_time' => $this->now()]);
+                    if ($purpose === 'mfa_step_up') {
+                        $session = AuthSession::where('id', (int) ($context['auth_session_id'] ?? 0))->where('application_id', (int) $application->id)->where('identity_id', (int) $identity->id)->where('status', 1)->lock(true)->find();
+                        if ($session === null || $session->revoked_time !== null) throw new ApiException('SAND_IAM_MFA_CHALLENGE_INVALID', 401);
+                        $session->save(['step_up_time' => $this->now(), 'step_up_method' => 'mfa']);
+                        $result = ['step_up' => true, 'expires_in' => self::CHALLENGE_TTL, 'response_kind' => 'step_up', 'step_up_session_id' => (int) $session->id];
+                        $resourceId = (int) $session->id;
+                    } elseif (($context['auth_method'] ?? null) === 'federation') {
+                        $bindingId = (int) ($context['identity_binding_id'] ?? 0);
+                        $binding = IdentityBinding::where('id', $bindingId)->where('application_id', (int) $application->id)->where('identity_id', (int) $identity->id)->lock(true)->find();
+                        if ($binding === null) throw new ApiException('SAND_IAM_MFA_CHALLENGE_INVALID', 401);
+                        $tokens = $humanAuth->issueFederatedSessionInTransaction($application, $identity, $binding, $ip, (string) ($payload['user_agent'] ?? ''), $requestId);
+                        $resourceId = (int) $tokens['session_id'];
+                        $result = $tokens + ['response_kind' => 'session', 'encrypted_replay' => $humanAuth->sealSessionTokenResponse($tokens, $token, $requestId, 'mfa-challenge-verify')];
+                    } else {
+                        $tokens = $humanAuth->issueSessionAfterMfaInTransaction($application, $identity, $ip, (string) ($payload['user_agent'] ?? ''), $requestId);
+                        $resourceId = (int) $tokens['session_id'];
+                        $result = $tokens + ['response_kind' => 'session', 'encrypted_replay' => $humanAuth->sealSessionTokenResponse($tokens, $token, $requestId, 'mfa-challenge-verify')];
+                    }
+                    $this->audit($application, $identity, $purpose === 'mfa_step_up' ? 'identity.step_up' : 'identity.mfa_login_verify', 'mfa_challenge', (int) $challenge->id, 'succeeded', $requestId, ['method' => $method]);
+                    return ['resource_id' => $resourceId, 'result' => $result];
+                },
+            );
         } catch (\Throwable $e) {
-            Db::rollback();
+            if ($e instanceof ApiException && str_starts_with($e->getMessage(), 'SAND_IAM_IDEMPOTENCY_')) throw $e;
             if ($challenge !== null && $e instanceof ApiException) {
                 $this->failChallenge($challenge, $application, $identity, $requestId, $e);
             } elseif ($challenge === null) {
@@ -252,8 +339,10 @@ final class MfaService
             }
             throw $e;
         }
-        $this->audit($application, $identity, $purpose === 'mfa_step_up' ? 'identity.step_up' : 'identity.mfa_login_verify', 'mfa_challenge', (int) $challenge->id, 'succeeded', $requestId, ['method' => (string) ($payload['method'] ?? '')]);
-        return $tokens;
+        if ($execution['replayed']) return $this->recoverChallengeVerificationResult($execution['result'], $token, $requestId, $ip);
+        $result = $execution['result'];
+        unset($result['encrypted_replay'], $result['response_kind'], $result['step_up_session_id']);
+        return $result;
     }
 
     /** @return array<string,mixed> */
@@ -275,69 +364,192 @@ final class MfaService
     /** @param array<string,mixed> $payload */
     public function passkeyRegistrationFinish(string $accessToken, array $payload, string $requestId, string $ip = ''): void
     {
+        $requestId = RequestId::normalize($requestId);
         [$application, $identity] = $this->current($accessToken);
+        $operations = new IdempotencyService();
+        $actorRef = $this->idempotencyActor($application, $identity);
+        $fingerprint = IdempotencyService::fingerprint([
+            'challenge_token_proof' => $this->hash('passkey-registration-finish:' . (string) ($payload['challenge_token'] ?? '')),
+            'credential_response' => $payload,
+        ]);
+        $replay = $operations->replayIfCompleted(
+            'application_user',
+            $actorRef,
+            'identity.passkey_register_finish',
+            $requestId,
+            $fingerprint,
+        );
+        if ($replay !== null) return;
         $humanAuth = new HumanAuthService();
         $humanAuth->consumePasskeyFinishRate($application, $ip);
         $challenge = null;
-        Db::startTrans();
         try {
-            // Keep this order with authentication finish: organization, application,
-            // experience/network policy, auth policy, challenge, then credential.
-            $application = $humanAuth->lockPasskeyFinishBoundaryInTransaction($application, $ip);
-            $this->webAuthnPolicy($application);
-            $challenge = $this->lockedChallenge($application, (string) ($payload['challenge_token'] ?? ''), 'webauthn_register', (int) $identity->id);
-            $identity = Identity::where('id', (int) $identity->id)->where('application_id', (int) $application->id)->where('status', 1)->lock(true)->find();
-            if ($identity === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
-            $credential = $this->validateRegistration($application, $identity, $this->decrypt((string) $challenge->encrypted_challenge), $payload);
-            $context = json_decode((string) $challenge->context, true) ?: [];
-            WebauthnCredential::create(['application_id' => (int) $application->id, 'identity_id' => (int) $identity->id, 'name' => (string) ($context['name'] ?? '通行密钥'), 'credential_id' => $credential['id'], 'public_key' => $credential['public_key'], 'sign_count' => $credential['sign_count'], 'user_handle' => $this->decrypt((string) $challenge->encrypted_user_handle), 'status' => 1]);
-            $challenge->save(['status' => 2, 'consumed_time' => $this->now()]);
-            Db::commit();
-        } catch (\Throwable $e) { Db::rollback(); if ($challenge !== null) $this->failChallenge($challenge, $application, $identity, $requestId, $e); throw $e; }
-        $this->audit($application, $identity, 'identity.passkey_register_finish', 'mfa_challenge', (int) $challenge->id, 'succeeded', $requestId);
+            $operations->execute(
+                'application_user',
+                $actorRef,
+                'identity.passkey_register_finish',
+                $requestId,
+                $fingerprint,
+                'webauthn_credential',
+                function () use (&$application, &$identity, &$challenge, $humanAuth, $ip, $payload, $requestId): array {
+                    // Keep this order with authentication finish: organization, application,
+                    // experience/network policy, auth policy, challenge, then credential.
+                    $application = $humanAuth->lockPasskeyFinishBoundaryInTransaction($application, $ip);
+                    $this->webAuthnPolicy($application);
+                    $challenge = $this->lockedChallenge($application, (string) ($payload['challenge_token'] ?? ''), 'webauthn_register', (int) $identity->id);
+                    $identity = Identity::where('id', (int) $identity->id)->where('application_id', (int) $application->id)->where('status', 1)->lock(true)->find();
+                    if ($identity === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+                    $credential = $this->validateRegistration($application, $identity, $this->decrypt((string) $challenge->encrypted_challenge), $payload);
+                    $context = json_decode((string) $challenge->context, true) ?: [];
+                    $factor = WebauthnCredential::create(['application_id' => (int) $application->id, 'identity_id' => (int) $identity->id, 'name' => (string) ($context['name'] ?? '通行密钥'), 'credential_id' => $credential['id'], 'public_key' => $credential['public_key'], 'sign_count' => $credential['sign_count'], 'user_handle' => $this->decrypt((string) $challenge->encrypted_user_handle), 'status' => 1]);
+                    $challenge->save(['status' => 2, 'consumed_time' => $this->now()]);
+                    $this->audit($application, $identity, 'identity.passkey_register_finish', 'mfa_challenge', (int) $challenge->id, 'succeeded', $requestId);
+                    return ['resource_id' => (int) $factor->id, 'result' => ['registered' => true]];
+                },
+            );
+        } catch (\Throwable $e) {
+            if ($challenge !== null) $this->failChallenge($challenge, $application, $identity, $requestId, $e);
+            throw $e;
+        }
     }
 
     /** @param array<string,mixed> $payload @return array<string,mixed> */
     public function passkeyAuthenticationOptions(array $payload, string $requestId, string $ip = ''): array
     {
+        $requestId = RequestId::normalize($requestId);
         $application = $this->application($payload);
-        $application = (new HumanAuthService())->assertPasskeyOptionsAllowed($application, $ip);
+        $humanAuth = new HumanAuthService();
+        $application = $humanAuth->assertPasskeyOptionsBoundary($application, $ip);
         $this->webAuthnPolicy($application);
-        $challenge = $this->createChallenge($application, null, 'webauthn_auth', []);
-        $this->audit($application, null, 'identity.passkey_auth_start', 'mfa_challenge', $challenge['id'], 'succeeded', $requestId);
-        return ['challenge_token' => $challenge['token'], 'public_key' => $this->webAuthnRequestOptions($application, null, $challenge['raw'])];
+        $operations = new IdempotencyService();
+        $actorRef = 'anonymous:' . (int) $application->id;
+        $fingerprint = IdempotencyService::fingerprint([
+            'application_id' => (int) $application->id,
+            'source_network_proof' => $this->hash('passkey-options-ip:' . $ip),
+        ]);
+        $replay = $operations->replayIfCompleted(
+            'application_user',
+            $actorRef,
+            'identity.passkey_auth_options',
+            $requestId,
+            $fingerprint,
+        );
+        if ($replay !== null) {
+            return $this->recoverChallengeResponse($application, $replay['result'], $requestId, 'passkey-authentication-options', $ip);
+        }
+
+        $issuedResponse = null;
+        $execution = $operations->execute(
+            'application_user',
+            $actorRef,
+            'identity.passkey_auth_options',
+            $requestId,
+            $fingerprint,
+            'mfa_challenge',
+            function () use (&$application, &$issuedResponse, $humanAuth, $ip, $requestId): array {
+                $application = $humanAuth->lockPasskeyFinishBoundaryInTransaction($application, $ip);
+                $this->webAuthnPolicy($application);
+                $humanAuth->consumePasskeyOptionsRateInTransaction($application, $ip);
+                $challenge = $this->createChallenge($application, null, 'webauthn_auth', []);
+                $issuedResponse = [
+                    'challenge_token' => $challenge['token'],
+                    'public_key' => $this->webAuthnRequestOptions($application, null, $challenge['raw']),
+                ];
+                $this->audit($application, null, 'identity.passkey_auth_start', 'mfa_challenge', $challenge['id'], 'succeeded', $requestId);
+                return [
+                    'resource_id' => $challenge['id'],
+                    'result' => [
+                        'challenge_id' => $challenge['id'],
+                        'encrypted_replay' => $this->sealChallengeResponse(
+                            $application,
+                            $issuedResponse,
+                            $requestId,
+                            'passkey-authentication-options',
+                        ),
+                    ],
+                ];
+            },
+        );
+        if ($execution['replayed']) {
+            return $this->recoverChallengeResponse($application, $execution['result'], $requestId, 'passkey-authentication-options', $ip);
+        }
+        if (!is_array($issuedResponse)) throw new ApiException('SAND_IAM_MFA_CHALLENGE_RETRY_UNAVAILABLE', 503);
+        return $issuedResponse;
     }
 
     /** @param array<string,mixed> $payload @return array<string,mixed> */
     public function passkeyAuthenticationFinish(array $payload, string $ip, string $requestId): array
     {
+        $requestId = RequestId::normalize($requestId);
         $application = $this->application($payload);
         $humanAuth = new HumanAuthService();
+        $challengeToken = (string) ($payload['challenge_token'] ?? '');
+        $challengeProof = $this->hash('mfa-token:' . $challengeToken);
+        $operations = new IdempotencyService();
+        $fingerprint = IdempotencyService::fingerprint([
+            'application_id' => (int) $application->id,
+            'credential_response' => $payload,
+        ]);
+        $replay = $operations->replayIfCompleted(
+            'mfa_challenge',
+            $challengeProof,
+            'identity.passkey_auth_finish',
+            $requestId,
+            $fingerprint,
+        );
+        if ($replay !== null) {
+            return $humanAuth->recoverSessionTokenResponse(
+                $replay['result'],
+                $challengeToken,
+                $requestId,
+                'passkey-authentication-finish',
+                $ip,
+            );
+        }
         $humanAuth->consumePasskeyFinishRate($application, $ip);
         $credentialId = $this->credentialId($payload);
         $rateIdentity = WebauthnCredential::where('application_id', (int) $application->id)->where('credential_id', $credentialId)->value('identity_id');
         $humanAuth->assertMfaAttemptAllowed((int) $application->id, (string) ($rateIdentity ?: 'unknown') . '|' . $ip);
         $challenge = null;
         $identity = null;
-        $tokens = null;
-        Db::startTrans();
         try {
-            // Do not release these locks before challenge consumption, credential
-            // verification, and session creation. Configuration changes therefore
-            // win before a passkey can write credentials or issue a session.
-            $application = $humanAuth->lockPasskeyFinishBoundaryInTransaction($application, $ip);
-            $this->webAuthnPolicy($application);
-            $challenge = $this->lockedChallenge($application, (string) ($payload['challenge_token'] ?? ''), 'webauthn_auth');
-            $factor = WebauthnCredential::where('application_id', (int) $application->id)->where('credential_id', $credentialId)->where('status', 1)->lock(true)->find();
-            if ($factor === null) throw new ApiException('SAND_IAM_PASSKEY_CREDENTIAL_NOT_FOUND', 401);
-            $identity = Identity::where('id', (int) $factor->identity_id)->where('application_id', (int) $application->id)->where('status', 1)->lock(true)->find();
-            if ($identity === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
-            $this->verifyAssertion($application, $identity, $this->decrypt((string) $challenge->encrypted_challenge), $payload, $factor);
-            $challenge->save(['status' => 2, 'consumed_time' => $this->now()]);
-            $tokens = $humanAuth->issueSessionAfterMfaInTransaction($application, $identity, $ip, (string) ($payload['user_agent'] ?? ''), $requestId);
-            Db::commit();
+            $execution = $operations->execute(
+                'mfa_challenge',
+                $challengeProof,
+                'identity.passkey_auth_finish',
+                $requestId,
+                $fingerprint,
+                'auth_session',
+                function () use (&$application, &$challenge, &$identity, $humanAuth, $ip, $payload, $credentialId, $requestId, $challengeToken): array {
+                    // Do not release these locks before challenge consumption, credential
+                    // verification, and session creation. Configuration changes therefore
+                    // win before a passkey can write credentials or issue a session.
+                    $application = $humanAuth->lockPasskeyFinishBoundaryInTransaction($application, $ip);
+                    $this->webAuthnPolicy($application);
+                    $challenge = $this->lockedChallenge($application, $challengeToken, 'webauthn_auth');
+                    $factor = WebauthnCredential::where('application_id', (int) $application->id)->where('credential_id', $credentialId)->where('status', 1)->lock(true)->find();
+                    if ($factor === null) throw new ApiException('SAND_IAM_PASSKEY_CREDENTIAL_NOT_FOUND', 401);
+                    $identity = Identity::where('id', (int) $factor->identity_id)->where('application_id', (int) $application->id)->where('status', 1)->lock(true)->find();
+                    if ($identity === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+                    $this->verifyAssertion($application, $identity, $this->decrypt((string) $challenge->encrypted_challenge), $payload, $factor);
+                    $challenge->save(['status' => 2, 'consumed_time' => $this->now()]);
+                    $tokens = $humanAuth->issueSessionAfterMfaInTransaction($application, $identity, $ip, (string) ($payload['user_agent'] ?? ''), $requestId);
+                    $this->audit($application, $identity, 'identity.passkey_auth_finish', 'mfa_challenge', (int) $challenge->id, 'succeeded', $requestId);
+                    return [
+                        'resource_id' => (int) $tokens['session_id'],
+                        'result' => $tokens + [
+                            'encrypted_replay' => $humanAuth->sealSessionTokenResponse(
+                                $tokens,
+                                $challengeToken,
+                                $requestId,
+                                'passkey-authentication-finish',
+                            ),
+                        ],
+                    ];
+                },
+            );
         } catch (\Throwable $e) {
-            Db::rollback();
+            if ($e instanceof ApiException && str_starts_with($e->getMessage(), 'SAND_IAM_IDEMPOTENCY_')) throw $e;
             if ($challenge !== null && $e instanceof ApiException) {
                 $this->failChallenge($challenge, $application, $identity, $requestId, $e);
             } elseif ($challenge === null) {
@@ -345,12 +557,120 @@ final class MfaService
             }
             throw $e;
         }
-        $this->audit($application, $identity, 'identity.passkey_auth_finish', 'mfa_challenge', (int) $challenge->id, 'succeeded', $requestId);
-        return $tokens;
+        if ($execution['replayed']) {
+            return $humanAuth->recoverSessionTokenResponse(
+                $execution['result'],
+                $challengeToken,
+                $requestId,
+                'passkey-authentication-finish',
+                $ip,
+            );
+        }
+        $result = $execution['result'];
+        unset($result['encrypted_replay']);
+        return $result;
+    }
+
+    /** @param array<string,mixed> $stored @return array<string,mixed> */
+    private function recoverChallengeVerificationResult(array $stored, string $challengeToken, string $requestId, string $ip): array
+    {
+        if (($stored['response_kind'] ?? null) === 'session') {
+            return (new HumanAuthService())->recoverSessionTokenResponse(
+                $stored,
+                $challengeToken,
+                $requestId,
+                'mfa-challenge-verify',
+                $ip,
+            );
+        }
+        if (($stored['response_kind'] ?? null) !== 'step_up') {
+            throw new ApiException('SAND_IAM_AUTH_SESSION_RETRY_UNAVAILABLE', 401);
+        }
+        $sessionId = (int) ($stored['step_up_session_id'] ?? 0);
+        $session = $sessionId > 0
+            ? AuthSession::where('id', $sessionId)->where('status', 1)->whereNotNull('step_up_time')->find()
+            : null;
+        if ($session === null || $session->revoked_time !== null) {
+            throw new ApiException('SAND_IAM_AUTH_SESSION_RETRY_UNAVAILABLE', 401);
+        }
+        return ['step_up' => true, 'expires_in' => (int) ($stored['expires_in'] ?? self::CHALLENGE_TTL)];
+    }
+
+    /** @param array<string,mixed> $response */
+    private function sealChallengeResponse(Application $application, array $response, string $requestId, string $context): string
+    {
+        return $this->encrypt(json_encode([
+            'application_id' => (int) $application->id,
+            'request_id' => $requestId,
+            'context' => $context,
+            'expires_at' => time() + self::CHALLENGE_TTL,
+            'response' => $response,
+        ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    }
+
+    /** @param array<string,mixed> $stored @return array<string,mixed> */
+    private function recoverChallengeResponse(Application $application, array $stored, string $requestId, string $context, string $ip): array
+    {
+        $transactionStarted = false;
+        try {
+            $envelope = $stored['encrypted_replay'] ?? null;
+            $challengeId = (int) ($stored['challenge_id'] ?? 0);
+            if (!is_string($envelope) || $envelope === '' || $challengeId < 1) throw new \RuntimeException('missing challenge replay');
+            $payload = json_decode($this->decrypt($envelope), true, 16, JSON_THROW_ON_ERROR);
+            $response = is_array($payload) ? ($payload['response'] ?? null) : null;
+            $challengeToken = is_array($response) ? ($response['challenge_token'] ?? null) : null;
+            $publicKey = is_array($response) ? ($response['public_key'] ?? null) : null;
+            if (
+                !is_array($payload)
+                || (int) ($payload['application_id'] ?? 0) !== (int) $application->id
+                || !hash_equals($requestId, (string) ($payload['request_id'] ?? ''))
+                || !hash_equals($context, (string) ($payload['context'] ?? ''))
+                || !is_int($payload['expires_at'] ?? null)
+                || $payload['expires_at'] < time()
+                || !is_array($response)
+                || !is_string($challengeToken)
+                || !is_array($publicKey)
+                || !is_string($publicKey['challenge'] ?? null)
+            ) {
+                throw new \RuntimeException('invalid challenge replay');
+            }
+            Db::startTrans();
+            $transactionStarted = true;
+            $application = (new HumanAuthService())->lockPasskeyFinishBoundaryInTransaction($application, $ip);
+            $this->webAuthnPolicy($application);
+            $challenge = AuthChallenge::where('id', $challengeId)
+                ->where('application_id', (int) $application->id)
+                ->where('purpose', 'webauthn_auth')
+                ->where('status', 1)
+                ->whereNull('consumed_time')
+                ->lock(true)
+                ->find();
+            if (
+                $challenge === null
+                || strtotime((string) $challenge->expire_time) <= time()
+                || !hash_equals((string) $challenge->token_hash, $this->hash('mfa-token:' . $challengeToken))
+                || !hash_equals((string) $publicKey['challenge'], $this->b64($this->decrypt((string) $challenge->encrypted_challenge)))
+            ) {
+                throw new \RuntimeException('inactive challenge replay');
+            }
+            Db::commit();
+            $transactionStarted = false;
+            return $response;
+        } catch (\Throwable $exception) {
+            if ($transactionStarted) Db::rollback();
+            if ($exception instanceof ApiException && (
+                str_starts_with($exception->getMessage(), 'SAND_IAM_MFA_CONFIGURATION_UNAVAILABLE')
+                || str_starts_with($exception->getMessage(), 'SAND_IAM_AUTH_CONFIGURATION_UNAVAILABLE')
+            )) {
+                throw $exception;
+            }
+            throw new ApiException('SAND_IAM_MFA_CHALLENGE_RETRY_UNAVAILABLE', 401);
+        }
     }
 
     /** @return array{0:Application,1:Identity} */
     private function current(string $accessToken): array { return (new HumanAuthService())->authenticatedPrincipal($accessToken); }
+    private function idempotencyActor(Application $application, Identity $identity): string { return (int) $application->id . ':' . (int) $identity->id; }
     /** @param array<string,mixed> $payload */
     private function application(array $payload): Application { return (new HumanAuthService())->resolveApplication($payload); }
     private function factor(Application $app, Identity $identity, int $id, ?string $type = null, bool $allowPending = false): MfaFactor { $q = MfaFactor::where('id', $id)->where('application_id', (int) $app->id)->where('identity_id', (int) $identity->id)->whereNull('revoked_time'); if ($type) $q->where('type', $type); if (!$allowPending) $q->where('status', 1); $factor = $q->find(); if ($factor === null) throw new ApiException('SAND_IAM_MFA_FACTOR_NOT_FOUND', 404); return $factor; }

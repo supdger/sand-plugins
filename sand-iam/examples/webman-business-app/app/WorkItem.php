@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Example\Matter;
+namespace Example\WorkItem;
 
 /** Immutable projection loaded from the business database before authorization. */
-final readonly class Matter
+final readonly class WorkItem
 {
     public function __construct(
         public int $id,

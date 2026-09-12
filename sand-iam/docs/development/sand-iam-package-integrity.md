@@ -10,7 +10,7 @@ php sand-iam/tools/check-package-integrity.php
 
 默认检查迁移与根/插件生命周期、Composer/SAML 类解析、后端/路由/配置、管理端载荷、SDK 文档、PostgreSQL 方言及版本一致性。输出的 `passed/total` 只说明当前工作树中的包内文件相互匹配。
 
-这里的“版本一致性”只指可安装插件包的候选发行版本（当前为根与插件 `info.ini` 和运行配置中的 `0.7.0`）。管理 OpenAPI 目录的 `info.version=0.12.0-candidate` 是独立的接口契约版本，不与插件包版本比较，也不能据此推断已发布或已部署；它的值和口径由[管理端接口交接](sand-iam-management-api-v0.1.md)冻结。
+这里的“版本一致性”只指可安装插件包的候选发行版本（当前为根与插件 `info.ini` 和运行配置中的 `0.7.0`）。管理 OpenAPI 目录的 `info.version=0.13.0-candidate` 是独立的接口契约版本，不与插件包版本比较，也不能据此推断已发布或已部署；它的值和口径由[管理端接口交接](sand-iam-management-api-v0.1.md)冻结。
 
 工作树即使干净，默认输出仍是 `CANDIDATE`；它不证明来源、审核或签名，也不能作为发布结论。
 
@@ -64,13 +64,27 @@ php sand-iam/tools/check-package-integrity.php \
 
 检查器拒绝缺失清单或公钥、包内路径、任何路径链中的符号链接、候选 schema、篡改哈希、非 Ed25519 签名、伪签名或缺少来源字段。公钥只从显式 `--trusted-public-key` 读取，绝不接受 manifest 自带的任意公钥。发布载荷枚举同样拒绝任何会被纳入发布包的文件/目录符号链接，并且不会将链接目标纳入哈希。它不生成、不移动、也不把候选清单升级为可信清单。
 
-`0.7.0` 另有迁移不可变门禁：根与包内 `021_admin_permission_catalog.pgsql` 必须等于已发布 0.6.0 的 SHA-256；035 账本的已知文件名、修订号、哈希和包版本必须完整一致，036 的所有自引用校验值必须等于将该值规范化为 `__SELF_SHA256__` 后的 SHA-256，037 必须登记初始化草稿/修订表并保持前三项新权限只入目录、不自动授予角色。fresh install 完整带入 `001–037`，而 `0.6.0 → 0.7.0` 载荷只能包含 `033–037`。035 不把空账本当成旧版事实，必须先核验 0.6.0/033 的表、列、约束和索引指纹；其中组织级身份源的 `application_id` 明确允许为空，但只有精确存在且规范化定义一致的 `ck_sand_iam_identity_provider_scope` 才可证明应用级非空、组织级为空的作用域边界。任何未知文件名、多余账本行、文件名、哈希、版本、列可空性或上述约束定义冲突都会拒绝继续。SandPackage 的通用升级选择与已安装状态收养不在本插件范围，必须在宿主侧先独立修复和验收。
+`0.7.0` 另有迁移不可变门禁：根与包内 `021_admin_permission_catalog.pgsql` 必须等于已发布 0.6.0 的 SHA-256；035 账本的已知文件名、修订号、哈希和包版本必须完整一致，036–038 的所有自引用校验值必须等于将该值规范化为 `__SELF_SHA256__` 后的 SHA-256，037 必须登记初始化草稿/修订表并保持前三项新权限只入目录、不自动授予角色，038 只增加认证限流过期清理所需的 `(window_start, id)` 索引。fresh install 完整带入 `001–038`，而 `0.6.0 → 0.7.0` 载荷只能包含 `033–038`。035 不把空账本当成旧版事实，必须先核验 0.6.0/033 的表、列、约束和索引指纹；其中组织级身份源的 `application_id` 明确允许为空，但只有精确存在且规范化定义一致的 `ck_sand_iam_identity_provider_scope` 才可证明应用级非空、组织级为空的作用域边界。任何未知文件名、多余账本行、文件名、哈希、版本、列可空性或上述约束定义冲突都会拒绝继续。SandPackage 的通用升级选择与已安装状态收养不在本插件范围，必须在宿主侧先独立修复和验收。
 
 完整性测试可在 `/private/tmp` 临时生成 Ed25519 密钥对来验证验签逻辑；该夹具不是、也绝不能被当作本项目的可信发布公钥或发布证据。
 
 ## 当前边界
 
 当前源码工作树是候选状态，且没有被提供的包外可信来源清单或可信 Ed25519 公钥；因此 `--release` 必须失败。即使候选包完整性全绿，也不能称为已发布、可上线或已完成发布验收。
+
+## 最终 ZIP 的包外签名
+
+源码级来源清单通过后，最终 ZIP 还必须单独绑定。`build-review-candidate.php --release-unsigned`
+只接受已提交且 `sand-iam/` 子树干净、已有获批 `LICENSE`、SBOM 未漂移、发布卫生和包完整性
+全部通过的权威源码，输出 `release-candidate-unsigned` / `release/unsigned` manifest。默认 builder
+仍固定输出 `candidate-review-only` / `candidate/dirty-not-release`，不能送签。
+
+独立审核者使用位于包根之外、权限为 `0600` 的 Ed25519 私钥运行
+`tools/sign-release-bundle.php`。签名的 canonical JSON 同时绑定 ZIP 名称、SHA-256、字节数、
+条目数、artifact manifest SHA-256、源码快照、恢复 payload、描述器、`update.sql` 与审核来源。
+`tools/verify-release-bundle.php` 使用包外可信公钥验签，并重新打开 ZIP 校验 manifest 中的每个
+条目、路径安全、必需许可材料和测试排除。任何 dirty/review manifest、重打包、追加字节、
+条目变化、manifest 变化或签名不匹配都关闭失败。
 
 ## 本地 review-only 候选包
 

@@ -15,9 +15,9 @@ use support\Response;
 
 final class AuthController extends BaseController
 {
-    public function register(Request $request): Response { return $this->success((new HumanAuthService())->register($request->post(), $this->ip($request), $this->requestId($request)))->withHeader('Cache-Control', 'no-store'); }
-    public function login(Request $request): Response { return $this->success((new HumanAuthService())->login($request->post(), $this->ip($request), $this->requestId($request)))->withHeader('Cache-Control', 'no-store'); }
-    public function refresh(Request $request): Response { return $this->success((new HumanAuthService())->refresh((string) $request->post('refresh_token', ''), $this->ip($request), $this->requestId($request)))->withHeader('Cache-Control', 'no-store'); }
+    public function register(Request $request): Response { return $this->success((new HumanAuthService())->register($request->post(), $this->ip($request), $this->requestId($request)))->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache'); }
+    public function login(Request $request): Response { return $this->success((new HumanAuthService())->login($request->post(), $this->ip($request), $this->requestId($request)))->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache'); }
+    public function refresh(Request $request): Response { return $this->success((new HumanAuthService())->refresh((string) $request->post('refresh_token', ''), $this->ip($request), $this->requestId($request)))->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache'); }
     public function logout(Request $request): Response { (new HumanAuthService())->logout($this->bearer($request), $this->requestId($request)); return $this->success('已退出'); }
     public function forgotPassword(Request $request): Response { (new HumanAuthService())->requestVerification(array_merge($request->post(), ['purpose' => 'password_reset', '_password_reset_endpoint' => true, '_ip' => $this->ip($request)]), $this->requestId($request)); return $this->success('如账号存在，重置验证码已发送'); }
     public function resetPassword(Request $request): Response { (new HumanAuthService())->resetPassword(array_merge($request->post(), ['_ip' => $this->ip($request)]), $this->requestId($request)); return $this->success('密码已重置，请重新登录'); }
@@ -41,7 +41,7 @@ final class AuthController extends BaseController
     public function passkeyAuthenticationOptions(Request $request): Response { return $this->sensitive((new MfaService())->passkeyAuthenticationOptions($request->post(), $this->requestId($request), $this->ip($request))); }
     public function passkeyAuthenticationFinish(Request $request): Response { return $this->sensitive((new MfaService())->passkeyAuthenticationFinish($request->post(), $this->ip($request), $this->requestId($request))); }
     private function bearer(Request $request): string { $value = trim((string) $request->header('Authorization', '')); $token = strncasecmp($value, 'Bearer ', 7) === 0 ? trim(substr($value, 7)) : ''; if ($token === '') throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401); return $token; }
-    private function sensitive(array $data): Response { return $this->success($data)->withHeader('Cache-Control', 'no-store'); }
+    private function sensitive(array $data): Response { return $this->success($data)->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache'); }
     private function ip(Request $request): string { return (string) $request->getRealIp(); }
     private function requestId(Request $request): string { return RequestId::fromRequestCached($request); }
 }

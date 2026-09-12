@@ -1,17 +1,21 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
   import {
     parseSandIamSyncConnectors,
+    parseSandIamSyncOutboxRows,
     parseSandIamSyncRuns,
     syncConfigLabel,
     syncDirectionLabel,
+    syncOutboxOperationLabel,
+    syncOutboxStateLabel,
     syncRunStateLabel,
     type SandIamSyncConnectorRow,
     type SandIamSyncDirection,
+    type SandIamSyncOutboxRow,
     type SandIamSyncRunRow
   } from '../api/syncConnectorContracts'
   import { listSandIamResource } from '../api/resource'
@@ -31,6 +35,7 @@
   const applications = ref<SandIamResourceRow[]>([])
   const connectors = ref<SandIamSyncConnectorRow[]>([])
   const runs = ref<SandIamSyncRunRow[]>([])
+  const failedOutbox = ref<SandIamSyncOutboxRow[]>([])
   const applicationId = ref('')
   const name = ref('')
   const code = ref('')
@@ -58,6 +63,16 @@
     const parsed = Number(raw)
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null
   }
+
+  const selectedConnector = computed(() => {
+    const id = selectedId(selectedIdValue.value)
+    if (id === null) return null
+    return connectors.value.find((item) => item.id === id) ?? null
+  })
+
+  const inboundOnlySelected = computed(() => selectedConnector.value?.direction === 'inbound')
+
+  const selectedRunRunning = computed(() => runs.value.some((item) => item.state === 'running'))
 
   function selectedApplicationName(): string {
     const id = selectedId(applicationId.value)
@@ -187,7 +202,10 @@
       await postSandIamAction(path, { id })
       ElMessage.success(success)
       await loadConnectors()
-      if (path === 'sync-connector/run') await loadRuns()
+      if (path === 'sync-connector/run') {
+        await loadRuns()
+        await loadFailedOutbox()
+      }
     } catch (error: unknown) {
       requestError.value = describeSandIamError(error)
     } finally {
@@ -223,6 +241,56 @@
     }
   }
 
+  /**
+   * 只拉 failed 出站事件。请求不带载荷字段，解析器也不读取密文。
+   */
+  async function loadFailedOutbox(): Promise<void> {
+    const id = selectedId(selectedIdValue.value)
+    if (id === null || !canRuns.value) return
+    loading.value = true
+    requestError.value = null
+    try {
+      failedOutbox.value = parseSandIamSyncOutboxRows(
+        await getSandIamAdmin('sync-connector/outbox', { id, state: 'failed' })
+      )
+    } catch (error: unknown) {
+      requestError.value = describeSandIamError(error)
+      failedOutbox.value = []
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * 精确重试单条失败事件。postSandIamAction 每次生成新的 X-Request-Id，
+   * 只提交连接 id 与 outbox_id，不回传任何载荷。
+   */
+  async function retryFailedOutbox(row: SandIamSyncOutboxRow): Promise<void> {
+    const id = selectedId(selectedIdValue.value)
+    if (id === null || row.state !== 'failed') {
+      requestError.value = describeSandIamError(
+        new Error('SAND_IAM_SYNC_OUTBOX_NOT_RETRYABLE: 只有失败的出站事件可以重试')
+      )
+      return
+    }
+    loading.value = true
+    requestError.value = null
+    try {
+      await postSandIamAction('sync-connector/outbox-retry', { id, outbox_id: row.id })
+      ElMessage.success('已重新排队')
+      await loadFailedOutbox()
+    } catch (error: unknown) {
+      requestError.value = describeSandIamError(error)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  watch(selectedIdValue, () => {
+    runs.value = []
+    failedOutbox.value = []
+  })
+
   onMounted(() => {
     void loadApplications()
   })
@@ -234,7 +302,7 @@
       <div class="mb-4">
         <h2 class="m-0 text-lg font-semibold">用户同步</h2>
         <p class="mb-0 mt-2 text-sm text-gray-500">
-          按接入应用创建同步连接。连接信息在保存后不会再次显示，请在同步记录中查看处理结果。
+          按接入应用创建同步连接。连接信息在保存后不会再次显示。失败后可在同页查看失败出站事件并按事件重试，页面不会展示或索取载荷密文。
         </p>
       </div>
 
@@ -400,6 +468,9 @@
           <ElButton :disabled="!canRuns" :loading="loading" @click="loadRuns"
             >查看运行记录</ElButton
           >
+          <ElButton :disabled="!canRuns" :loading="loading" @click="loadFailedOutbox">
+            查看失败出站
+          </ElButton>
         </ElFormItem>
       </ElForm>
 
@@ -426,6 +497,57 @@
         </ElTableColumn>
         <ElTableColumn label="错误码" min-width="200">
           <template #default="scope">{{ scope.row.error_code || '—' }}</template>
+        </ElTableColumn>
+      </ElTable>
+
+      <h3 class="mt-8 text-base">失败出站事件</h3>
+      <ElAlert
+        v-if="inboundOnlySelected"
+        class="mb-4"
+        type="warning"
+        :closable="false"
+        title="纯入站连接不能重试出站"
+        description="当前连接只接收外部写入，没有可写出的外部目录。失败出站事件不能重新排队。"
+      />
+      <ElAlert
+        v-if="selectedRunRunning"
+        class="mb-4"
+        type="warning"
+        :closable="false"
+        title="同步仍在执行"
+        description="同一连接同一应用只允许一个运行中任务。执行结束前重试会被拒绝。"
+      />
+      <ElTable :data="failedOutbox" border stripe empty-text="先选择连接并加载失败出站事件">
+        <ElTableColumn label="事件标识" min-width="180">
+          <template #default="scope">{{ scope.row.event_id }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="操作" min-width="90">
+          <template #default="scope">{{ syncOutboxOperationLabel(scope.row.operation) }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="状态" min-width="90">
+          <template #default="scope">{{ syncOutboxStateLabel(scope.row.state) }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="尝试次数" min-width="90">
+          <template #default="scope">{{ scope.row.attempt_count }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="错误码" min-width="220">
+          <template #default="scope">{{ scope.row.error_code || '—' }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="时间" min-width="160">
+          <template #default="scope">{{ scope.row.time ?? '—' }}</template>
+        </ElTableColumn>
+        <ElTableColumn label="操作" min-width="100" fixed="right">
+          <template #default="scope">
+            <ElButton
+              v-if="scope.row.state === 'failed'"
+              size="small"
+              :disabled="!canRun"
+              :loading="loading"
+              @click="retryFailedOutbox(scope.row)"
+            >
+              重试
+            </ElButton>
+          </template>
         </ElTableColumn>
       </ElTable>
     </ElCard>

@@ -101,7 +101,8 @@ final class SandIamCredentialResult {
       {required this.metadata,
       required this.secretAvailable,
       required this.replayed,
-      this._secret});
+      SandIamOneTimeSecret? secret})
+      : _secret = secret;
 
   final SandIamJson metadata;
   final bool secretAvailable;
@@ -153,7 +154,7 @@ final class SandIamManagementClient {
   final Duration timeout;
 
   Future<SandIamJson> onboardingPreview(SandIamJson manifest,
-          {String? requestId}) =>
+          {String? requestId}) async =>
       _object(await _request('POST', SandIamApi.onboardingPreview,
           body: <String, Object?>{'manifest': manifest}, requestId: requestId));
 
@@ -348,7 +349,7 @@ final class SandIamManagementClient {
         metadata: metadata,
         secretAvailable: value is String,
         replayed: replayed,
-        _secret: value is String ? SandIamOneTimeSecret(value) : null);
+        secret: value is String ? SandIamOneTimeSecret(value) : null);
   }
 
   static Future<SandIamHttpResponse> _defaultTransport(
