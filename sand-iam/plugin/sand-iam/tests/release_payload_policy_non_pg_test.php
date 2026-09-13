@@ -74,6 +74,10 @@ $checks = [
         && in_array('SECURITY.md', $payload, true),
     'Dart singular test directory is excluded' => !in_array('sdk/dart/test/client_test.dart', $payload, true),
     'PHP plural tests directory is excluded' => !in_array('plugin/sand-iam/tests/release_payload_policy_non_pg_test.php', $payload, true),
+    'standalone consumer local Composer vendor tree is excluded without excluding shipped dependencies' => sandIamPayloadExcluded('examples/webman-business-app/standalone/vendor/autoload.php')
+        && sandIamPayloadExcluded('examples/webman-business-app/standalone/vendor/acme/package/src/Consumer.php')
+        && !sandIamPayloadExcluded('plugin/sand-iam/vendor/autoload.php')
+        && !sandIamPayloadExcluded('sdk/typescript/dist/index.js'),
     'public root README is included' => in_array('README.md', $payload, true),
     'public backup guide provides a non-creating fail-closed PostgreSQL drill' => (static function () use ($root): bool {
         $guide = file_get_contents($root . '/docs/user-guide/backup-and-restore.md');

@@ -98,7 +98,7 @@ SandIAM 源码树、候选包和适用运行环境，按第 9 节逐项判定复
 | 可上线部署 | **0/8** | **0%** | D01–D08 |
 | 完整目标 | **28/48** | **58.3%** | 上述五关口之和 |
 
-2026-09-08 的计划审阅候选是 `v24 review candidate`（`candidate/dirty-not-release`）。artifact、entries、哈希与同快照复现证据只认当时构建输出，不在本账本预写；当时升级票据是 `5/7`，实际恢复子检查是 `2/8`，两组数字都不属于上述 48 项。`17-file demo` 静态白名单同步当时已完成，但 identity-bound Gate A 在该快照中为 **`BLOCKED`**：活跃失败候选缺少 `candidate_archive_sha256`、`candidate_payload_manifest_sha256`、`recovery_descriptor_sha256`、`update_sql_sha256` 四项真实 candidate identity 摘要，当时 `update.sql` 与 v24 不同，且当时的 `verify` 会写 `FailedUpgradeRecoveryAudit`，故未执行 verify。compatibility probe 当时为 **PASS**，但仅使用 probe/test identity，不能替代正式 Gate A；该宿主问题随后交给 SandAdmin/SandPackage。该快照未执行数据库、registry、runtime recovery、浏览器与业务闭环。SandAI 的 L03 证据须从 `sand_ai` 工作区按当前候选重新核验后回填。P18 的 SDK 可消费修复在该快照中按模块实现关口计分，但不构成真实业务应用、宿主、浏览器、部署或线上验收。`v7`、`v9`、被拒绝的 `v13` 以及被后续候选替代的 `v14–v23` 只能作为历史审计材料，不能代表 P1 最终源码。
+2026-09-08 的计划审阅候选是 `v24 review candidate`（`candidate/dirty-not-release`）。artifact、entries、哈希与同快照复现证据只认当时构建输出，不在本账本预写；当时升级票据是 `5/7`，实际恢复子检查是 `2/8`，两组数字都不属于上述 48 项。`17-file demo` 静态白名单同步当时已完成，但 identity-bound Gate A 在该快照中为 **`BLOCKED`**：活跃失败候选缺少 `candidate_archive_sha256`、`candidate_payload_manifest_sha256`、`recovery_descriptor_sha256`、`update_sql_sha256` 四项真实 candidate identity 摘要，当时 `update.sql` 与 v24 不同，且当时的 `verify` 会写 `FailedUpgradeRecoveryAudit`，故未执行 verify。compatibility probe 当时为 **PASS**，但仅使用 probe/test identity，不能替代正式 Gate A；该宿主问题随后交给 SandAdmin/SandPackage。该快照未执行数据库、registry、runtime recovery、浏览器与业务闭环。该快照中关于 SandAI 的 L03 回填要求属于历史记录，不构成当前 SandIAM 独立验收依赖；当前 L03 以受控机器服务为准。P18 的 SDK 可消费修复在该快照中按模块实现关口计分，但不构成真实业务应用、宿主、浏览器、部署或线上验收。`v7`、`v9`、被拒绝的 `v13` 以及被后续候选替代的 `v14–v23` 只能作为历史审计材料，不能代表 P1 最终源码。
 
 ## 2. 需求、架构与票据 R01–R09
 
@@ -180,7 +180,7 @@ F01–F07 在 2026-09-08 的严格计数为 **0/7**。
 | --- | --- | --- | --- | --- |
 | L01 | **管理员配置闭环。** 平台管理员/被委派管理员完成客户主体、应用、身份/授权/通知配置，越权拒绝、撤权、审计和清理。 | 真实宿主页面 + API + 数据/审计后置状态。 | 管理 API 单测、页面截图。 | 截至该快照未形成完整证据。**◻ 未通过** |
 | L02 | **应用用户认证闭环。** 独立应用入口完成注册/邀请、登录、会话、MFA/Passkey、自助、撤销后拒绝和清理。 | 应用用户浏览器会话 + API + 审计 + 清理。 | SandAdmin 后台登录、内存模拟。 | 截至该快照未形成完整证据。**◻ 未通过** |
-| L03 | **SandAI 服务接入闭环。** 已授权调用成功，无授权/错 audience/action/撤销后失败，SandIAM 与 SandAI 审计关联。 | 真实 SandAI API 副作用与双侧审计。 | Adapter 单测、catalog 登记。 | 快照中 A-01/SAND-113F 尚未完成；证据须从 `sand_ai` 工作区按新候选重新核验后回填。**◻ 未通过** |
+| L03 | **机器服务接入闭环。** 受控机器调用服务完成真实授权 allow、无授权/错 audience/action/撤销后 deny，产生可观察业务副作用，并由 SandIAM 与受控服务双侧审计以可追溯的请求号及上下文标识关联；不要求等待 SandAI。 | 真实受控机器服务副作用、SandIAM 与服务双侧审计、撤销后失败和清理。 | Adapter 单测、catalog 登记、内存模拟或仅 SandAI 记录。 | 历史快照中的 A-01/SAND-113F 仅作历史材料、不构成当前依赖；当前尚缺受控非 AI 机器服务的真实 allow/deny/撤销、副作用、双侧审计和清理证据。**◻ 未通过** |
 | L04 | **非 AI 业务应用闭环。** 独立业务应用用 SDK/中间件完成登录、真实资源 allow/deny/scope、跨应用隔离、审计和清理。 | 真实业务 API、业务状态、SandIAM 决策与审计。 | 示例代码、模拟资源、前端按钮隐藏。 | 截至该快照没有真实接入记录。**◻ 未通过** |
 
 L01–L04 在 2026-09-08 的严格计数为 **0/4**。
