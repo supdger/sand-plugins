@@ -949,6 +949,95 @@ try {
             || in_array('zero residual workload credential invocation', $selectedGrantOnlyCleanup, true)) {
             terminalAcceptanceFail('chain4 cleanup branch selection does not bind each physical cleanup to its matching zero residual step');
         }
+        $chainOne = $examplePlan['chains']['organization-application-environment'];
+        $chainOneCleanupSelections = [
+            'full-grant' => ['captures' => ['organization_id' => '11', 'application_id' => '22', 'environment_id' => '33', 'admin_application_grant_id' => '44'], 'label' => 'full organization application environment grant'],
+            'full' => ['captures' => ['organization_id' => '11', 'application_id' => '22', 'environment_id' => '33'], 'label' => 'full organization application environment'],
+            'org-app' => ['captures' => ['organization_id' => '11', 'application_id' => '22'], 'label' => 'organization application'],
+            'org' => ['captures' => ['organization_id' => '11'], 'label' => 'organization'],
+        ];
+        foreach ($chainOneCleanupSelections as $stage => $selection) {
+            $captures = ['prefix' => TERMINAL_ACCEPTANCE_MOCK_PREFIX] + $selection['captures'];
+            $selected = liveSelectedCleanupSteps($chainOne, $captures);
+            $ids = array_column($selected, 'id');
+            if (count($selected) !== 2 || !str_contains($ids[0] ?? '', $selection['label']) || !str_contains($ids[1] ?? '', $selection['label'])) {
+                terminalAcceptanceFail("C01 {$stage} captures did not select exactly its cleanup and status pair");
+            }
+            $interpolated = liveInterpolate($selected[0]['body'] ?? [], $captures);
+            $objectTypes = array_keys($interpolated['object_ids'] ?? []);
+            $expectedTypes = match ($stage) {
+                'full-grant' => ['organization', 'application', 'environment', 'admin_application_grant'],
+                'full' => ['organization', 'application', 'environment'],
+                'org-app' => ['organization', 'application'],
+                default => ['organization'],
+            };
+            if ($objectTypes !== $expectedTypes) terminalAcceptanceFail("C01 {$stage} cleanup interpolation leaked an uncaptured fixture type");
+        }
+        if (liveSelectedCleanupSteps($chainOne, []) !== []) terminalAcceptanceFail('C01 unknown HTTP outcome was treated as an empty cleanup stage');
+        $c01NoCaptureCalls = 0;
+        $GLOBALS['sand_iam_live_http_transport'] = static function () use (&$c01NoCaptureCalls): array {
+            $c01NoCaptureCalls++;
+            return ['status' => 200, 'body' => '{"code":200}', 'json' => ['code' => 200], 'headers' => [], 'location' => ''];
+        };
+        $c01NoCapture = liveRun(
+            'organization-application-environment',
+            $chainOne,
+            $mockTargets,
+            [],
+            TERMINAL_ACCEPTANCE_MOCK_PREFIX,
+            ['organization-application-environment' => $chainOne['required_credentials']],
+        );
+        if (($c01NoCapture['status'] ?? null) !== 'blocked'
+            || (($c01NoCapture['cleanup']['ok'] ?? true) !== false)
+            || (($c01NoCapture['cleanup']['state'] ?? null) !== 'not_confirmed')
+            || $c01NoCaptureCalls !== 0
+            || ($c01NoCapture['captured_ids'] ?? []) !== []) {
+            terminalAcceptanceFail('C01 first-create credential failure made HTTP or claimed cleanup/status confirmation without captures');
+        }
+        $c01FullCalls = [];
+        $GLOBALS['sand_iam_live_http_transport'] = static function (array $target, array $step) use (&$c01FullCalls): array {
+            $id = (string) ($step['id'] ?? '');
+            $c01FullCalls[] = $id;
+            $body = match ($id) {
+                'create organization' => ['code' => 200, 'data' => ['id' => 11]],
+                'create application' => ['code' => 200, 'data' => ['id' => 22]],
+                'create environment' => ['code' => 200, 'data' => ['id' => 33]],
+                'create scoped application grant' => ['code' => 200, 'data' => ['id' => 44]],
+                'scoped allow' => ['code' => 200, 'data' => ['id' => 33]],
+                'audit exact resource' => ['code' => 200, 'data' => ['data' => [['resource_type' => 'environment', 'resource_id' => '33']]]],
+                'disable scoped application grant', 'disable this-run environment' => ['code' => 200],
+                'platform reads disabled environment' => ['code' => 200, 'data' => ['status' => 2]],
+                'controlled cleanup full organization application environment grant',
+                'zero residual full organization application environment grant' => [
+                    'code' => 200,
+                    'data' => [
+                        'residual' => ['environment' => 0, 'admin_application_grant' => 0, 'active_business_residual' => 0],
+                        'retained' => ['organization' => [['id' => '11', 'status' => 2]], 'application' => [['id' => '22', 'status' => 2]]],
+                    ],
+                ],
+                default => ['code' => 403],
+            };
+            $raw = in_array($id, ['out of scope deny', 'same scoped revoked deny'], true)
+                ? ($id === 'out of scope deny' ? '__REQUIRED_SCOPE_DENY_MESSAGE__' : '__REQUIRED_REVOKED_SCOPE_DENY_MESSAGE__')
+                : json_encode($body, JSON_THROW_ON_ERROR);
+            return ['status' => in_array($id, ['out of scope deny', 'same scoped revoked deny'], true) ? 403 : 200, 'body' => $raw, 'json' => $body, 'headers' => [], 'location' => ''];
+        };
+        $c01Full = liveRun(
+            'organization-application-environment',
+            $chainOne,
+            $mockTargets,
+            ['platform_admin' => 'Authorization: Bearer platform', 'scoped_admin' => 'Authorization: Bearer scoped', 'out_of_scope_admin' => 'Authorization: Bearer outsider'],
+            TERMINAL_ACCEPTANCE_MOCK_PREFIX,
+            ['organization-application-environment' => $chainOne['required_credentials']],
+        );
+        if (($c01Full['status'] ?? null) !== 'passed'
+            || (($c01Full['cleanup']['state'] ?? null) !== 'confirmed')
+            || count($c01FullCalls) !== 13
+            || array_slice($c01FullCalls, -2) !== ['controlled cleanup full organization application environment grant', 'zero residual full organization application environment grant']
+            || !in_array('controlled cleanup full organization application environment grant', $c01FullCalls, true)
+            || !in_array('zero residual full organization application environment grant', $c01FullCalls, true)) {
+            terminalAcceptanceFail('C01 full-grant production liveRun did not accept the retained-anchor response shape');
+        }
         $chainTwoCleanupSelections = [
             'complete' => ['identity_id' => '34', 'group_id' => '35', 'group_member_id' => '36', 'group_role_relation_id' => '37'],
             'member' => ['identity_id' => '34', 'group_id' => '35', 'group_member_id' => '36'],

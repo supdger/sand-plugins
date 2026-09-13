@@ -4,6 +4,8 @@
 >
 > 状态：执行中
 > 目标：在不重复劳动、不覆盖彼此改动的前提下，并行推进 SandIAM 后端与管理前端；并作为 SandAI `IdentityContextProvider` / `EnvironmentReferenceVerifier` 的唯一权威来源。
+>
+> 当前覆盖（2026-09-13）：Web 前端由 Codex 接管，Astra 负责前端设计与实现，并由不同上下文的 Astra 独立验收；本文历史 Cursor 主责记录保留追溯，不代表当前写者。前端切片与独立验收可并行，互不争用全局 write gate。
 
 ## 1. 责任边界
 
@@ -12,7 +14,7 @@
 | P0 领域模型、PostgreSQL 迁移、安装/升级/卸载 | Codex | Cursor 只读 | 空 PG 库可安装；仅 `sand_iam_*`；无 MySQL 方言 |
 | 管理 API、运行时身份上下文、策略/数据范围、审计 | Codex | Cursor 按契约消费 | 路由、DTO、权限码、错误码已冻结并可验证 |
 | SandAI Adapter 契约（token/context、audience、grant、environment 引用） | Codex | SandAI Codex 按契约实现宿主适配器 | 不跨库读 `sand_iam_*`；无上下文 / 无授权的拒绝语义稳定 |
-| `sandadmin-artd/src/views/plugin/sand-iam/` 页面 | Cursor | Codex 提供接口支撑 | 只消费已冻结、已标「可消费」的契约字段 |
+| `sandadmin-artd/src/views/plugin/sand-iam/` 页面 | Codex 接管；Astra 设计与实现 | 不同上下文 Astra 独立验收 | 只消费已冻结、已标「可消费」的契约字段 |
 | 契约、联调、回归与宿主验收 | Codex | Cursor 修正前端问题 | 在 `sandadmin` PostgreSQL 实例上的真实路径通过 |
 
 Codex 与 Cursor 都可以改前后端，但默认不跨越上述主责边界；跨界修复必须在看板交接记录中说明原因和影响文件。
@@ -20,7 +22,7 @@ Codex 与 Cursor 都可以改前后端，但默认不跨越上述主责边界；
 ## 2. 不可同时编辑的区域
 
 - Codex 独占：`sand-iam/plugin/sand-iam/` 的 PHP、SQL、迁移、`config/menu.php`、`config/route.php`，以及 API / Adapter 契约文档。
-- Cursor 独占：`sand-iam/sandadmin-artd/src/views/plugin/sand-iam/` 的 Vue / TypeScript / 样式。
+- 当前 Web 前端：Codex 接管；Astra 负责设计与实现；不同上下文 Astra 独立验收；范围为 `sand-iam/sandadmin-artd/src/views/plugin/sand-iam/` 的 Vue / TypeScript / 样式。历史 Cursor 独占记录仅作追溯。
 - 共享前先冻结：路由、Request/Response DTO、错误码、权限标识、页面字段字典。
 - 不允许：新增 MySQL 兼容分支；`sa_*` 业务表；前端根据猜测的字段反向定义后端；把任何接入应用的用户类型或业务规则写进 SandIAM。
 

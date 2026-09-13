@@ -610,11 +610,22 @@ $assert('CycloneDX SBOM matches committed dependency locks', static function () 
     if (($document['bomFormat'] ?? null) !== 'CycloneDX' || ($document['specVersion'] ?? null) !== '1.6') return false;
     $components = is_array($document['components'] ?? null) ? $document['components'] : [];
     $purls = array_column($components, 'purl');
-    return count($components) >= 6
+    $w3cComponent = null;
+    foreach ($components as $component) {
+        if (is_array($component) && ($component['bom-ref'] ?? null) === 'urn:sandiam:vendored:w3c-xmldsig-core-schema@2002-02-08') {
+            $w3cComponent = $component;
+            break;
+        }
+    }
+    return count($components) >= 7
         && in_array('pkg:composer/onelogin/php-saml@4.3.2', $purls, true)
         && in_array('pkg:composer/robrichards/xmlseclibs@3.1.5', $purls, true)
         && in_array('pkg:npm/typescript@5.9.3', $purls, true)
-        && in_array('pkg:pub/http@1.6.0', $purls, true);
+        && in_array('pkg:pub/http@1.6.0', $purls, true)
+        && is_array($w3cComponent)
+        && ($w3cComponent['type'] ?? null) === 'data'
+        && ($w3cComponent['scope'] ?? null) === 'required'
+        && (($w3cComponent['licenses'][0]['license']['name'] ?? null) === 'W3C Software Notice and License');
 });
 
 $assert('TypeScript SDK exports resolve to packaged ESM and declaration files only', static function () use ($root, $releaseArtifactFiles): bool {

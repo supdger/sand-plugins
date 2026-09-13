@@ -15,10 +15,10 @@ namespace support {
     class Request
     {
         /** @param array<string, mixed> $post */
-        public function __construct(private array $post = [], private array $input = []) {}
+        public function __construct(private array $post = [], private array $input = [], private string $requestId = 'environment-lifecycle-acceptance-001') {}
         /** @return array<string, mixed> */ public function post(): array { return $this->post; }
         public function input(string $key, mixed $default = null): mixed { return $this->input[$key] ?? $this->post[$key] ?? $default; }
-        public function header(string $key, mixed $default = null): mixed { return $key === 'X-Request-Id' ? 'environment-lifecycle-acceptance-001' : $default; }
+        public function header(string $key, mixed $default = null): mixed { return $key === 'X-Request-Id' ? $this->requestId : $default; }
     }
     final class Response
     {
@@ -43,6 +43,22 @@ namespace plugin\SandIam\app\service {
         public function write(string $actorType, string $actorRef, ?int $organizationId, ?int $applicationId, string $action, string $resourceType, ?int $resourceId, string $outcome, string $requestId): void
         {
             self::$writes[] = ['organization_id' => $organizationId, 'application_id' => $applicationId, 'action' => $action, 'outcome' => $outcome, 'request_id' => $requestId];
+        }
+    }
+}
+
+namespace think\facade {
+    final class Db
+    {
+        private static array $snapshots = [];
+        public static function startTrans(): void { self::$snapshots[] = serialize([\plugin\SandIam\app\model\Environment::$rows, \plugin\SandIam\app\model\SecurityOperation::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]); }
+        public static function commit(): void { array_pop(self::$snapshots); }
+        public static function rollback(): void
+        {
+            [$environments, $operations, $audits] = unserialize(array_pop(self::$snapshots), ['allowed_classes' => true]);
+            \plugin\SandIam\app\model\Environment::$rows = $environments;
+            \plugin\SandIam\app\model\SecurityOperation::$rows = $operations;
+            \plugin\SandIam\app\service\AuditWriter::$writes = $audits;
         }
     }
 }
@@ -73,6 +89,7 @@ namespace plugin\SandIam\app\model {
         /** @var list<array{0:string,1:mixed}> */ private array $conditions = [];
         /** @param array<int, object> $rows */ public function __construct(private array $rows, string $field, mixed $value) { $this->conditions[] = [$field, $value]; }
         public function where(string $field, mixed $value): self { $this->conditions[] = [$field, $value]; return $this; }
+        public function lock(bool $lock): self { return $this; }
         public function find(): ?object
         {
             foreach ($this->rows as $row) {
@@ -118,6 +135,17 @@ namespace plugin\SandIam\app\model {
         public static function find(int $id): ?EnvironmentRecord { return self::$rows[$id] ?? null; }
         public static function findOrEmpty(int $id): EnvironmentRecord { return self::find($id) ?? new EnvironmentRecord([], true); }
     }
+
+    final class SecurityOperation
+    {
+        /** @var array<int, EnvironmentRecord> */ public static array $rows = [];
+        public static function where(string $field, mixed $value): FakeQuery { return new FakeQuery(self::$rows, $field, $value); }
+        public static function create(array $payload): EnvironmentRecord
+        {
+            $id = count(self::$rows) + 1;
+            return self::$rows[$id] = new EnvironmentRecord(['id' => $id, ...$payload]);
+        }
+    }
 }
 
 namespace {
@@ -137,6 +165,7 @@ namespace {
     }
 
     require dirname(__DIR__) . '/app/service/RequestId.php';
+    require dirname(__DIR__) . '/app/service/IdempotencyService.php';
     require dirname(__DIR__) . '/app/admin/support/AdminResourceController.php';
     require dirname(__DIR__) . '/app/admin/support/ApplicationResourceController.php';
     require dirname(__DIR__) . '/app/admin/controller/EnvironmentController.php';
@@ -154,7 +183,7 @@ namespace {
     }
 
     try {
-        $controller->save(new Request(['application_id' => 10, 'code' => 'production', 'name' => '重复环境', 'status' => 1]));
+        $controller->save(new Request(['application_id' => 10, 'code' => 'production', 'name' => '重复环境', 'status' => 1], [], 'environment-lifecycle-duplicate-002'));
         throw new \RuntimeException('duplicate environment code was accepted');
     } catch (ApiException $exception) {
         if ($exception->getCode() !== 409 || !str_contains($exception->getMessage(), 'SAND_IAM_ENVIRONMENT_CONFLICT') || !str_contains($exception->getMessage(), '已有环境')) {

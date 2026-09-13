@@ -12,10 +12,20 @@
 - 2026-09-12 当前态复核：Codex 任务列表中本工作区仅本 Goal 为 `active`，旧 SandIAM 任务均为 `notLoaded`；本机 automation 配置中没有 SandIAM/sand_plugins 定时项。该结论来自本轮只读任务列表与配置扫描，没有修改外部状态。
 - 旧任务状态不得自动计入当前通过。可复用证据先绑定当前源码树、候选摘要和适用环境，再回写同一[终极验收原子账本](sand-iam-terminal-acceptance-ledger.md)。
 - 当前复核计分：需求 **8/9**、模块 **20/20**、正式 FLOW **0/7**、本地业务闭环 **0/4**、可上线部署 **0/8**，合计 **28/48**；发布门槛 **0/10**。这是本轮逐原子复核后的新结论，不是旧任务自动继承。
+- **2026-09-13 OSS 静态材料门禁批次**：W3C vendored schema 已补独立 `NOTICE` 与 SBOM component；SDK 已补独立 `LICENSE`/`NOTICE` 与 metadata；public path 漏检已修复。hygiene **16/16**、policy **16/16**、SBOM **80**，Astra 独立复核 **ACCEPT（P0/P1/P2=0）**。本批只修复开源材料静态门禁，不改变 R09、P **20/20**、F **0/7**、L **0/4**、D **0/8**、FLOW **28/48**、C **0/7** 或发布 **0/10**。
+- 最终 clean 候选、正式签名、宿主 HTTP（默认关闭）、宿主生命周期、外部互操作、Casdoor 对照和同一最终候选 24 小时运行仍未通过；当前不得称为可发布、已部署或线上验证。
 - A′ 已按授权提交为 `61a7f13821980deca8479f9c9e5e872be92cf72a`，独立范围复核 **ACCEPT**，未 push；仅含白名单 43 files（A=4、M=39、D=0），无 migration/Vue/TS/越界路径。当前工作树 non-clean，有 22 项 tracked changes 与 6 个 untracked path roots；来源/事务修复仍未提交。主树 integrity **25/26**，唯一失败为 clean/tracked。
 - v12 archive 内容自洽，但其旧 verifier 对 manifest/validation 自报 `release/unsigned`、clean committed source 与 hygiene PASS 已被独立 Astra 推翻：它只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件。v12 仅是历史快照，正式来源验收 **REJECT**，不得作为正式来源或升级包。Composer **58** 与 TypeScript `dist` **4** 已完成双隔离重建和锁校验。
 - 两次测试选择器偏差已记录；只读 DB 复核只在时间窗口内未见可见写入，不能证明此前或窗口外无写入：86 tables、ledger 38 rows、max revision 37、revision 038 rows 0、runtime 仍 0.7.0。B′/C′/D′ 尚未执行，G 未授权；发布 **0/10**、FLOW **28/48**、业务链计数均不变，当前仍未部署、未线上验证。历史 `0.7.0-v70/v71` 摘要不能作为 0.7.1 证据。
 - **Endurance contract checkpoint（write-gate begin --replace 归档）**：v1 审计记录为 **4P1 + 3P2**；v2 分三批修复，最终由 Astra 工具复核 **ACCEPT（P0/P1/P2=0）**。该 ACCEPT 只证明离线 contract/tool 修复，不是实际长跑通过。协议明确为协作式可信环境边界：JSONL 哈希链只提供完整性/篡改可见性，不是签名、身份认证或防伪；Git 来源未独立重建，collector/probe 的真实性仍依赖受控环境、独立保管和可信对端。所有 fixture 均不是 86400 秒；真实同一最终候选 24 小时运行尚未开始（**0**）。external validators 的 fixture 修复即使离线结构 ACCEPT，也不表示 ready。发布门槛仍 **0/10**，FLOW **28/48**，F/L/D 计数不变。
+
+### 2026-09-13 三批离线材料回写
+
+- **vendor CRLF 规范化批次**：完成 vendor CRLF 规范化；package integrity **25/26**；Astra independent **ACCEPT**。唯一失败为 clean/tracked source，不能把 dirty clean-source 误报为正式来源通过；不改变 P **20/20**、F **0/7**、L **0/4**、D **0/8**、FLOW **28/48** 或发布 **0/10**。
+- **public docs 13 文档批次**：`developer_quickstart` **PASS**、payload **16/16**、links **16/16**，Astra independent **ACCEPT**。本批静态 P1 关闭；`HOST-202609-002-sandpackage-frontend-activation-contract.md` 已发送，待宿主接收处理（不等于已接单或已修复），真实独立开发者旅程仍未通过；不改变 F/L/D、FLOW 或发布计分。
+- **Consumer A / Provider B 离线接入批次（最终结果）**：Consumer A standalone 源码离线 Astra **ACCEPT（P0/P1/P2=0）**，autoload **6/6**、lint **11/11**、offline、payload **16/16** 及 early rejection audit 通过；Provider B provider+caller 源码离线 Astra **ACCEPT（P0/P1/P2=0）**，tests **13/13**、lint **15/15**、payload **16/16**，Git/无 Git offline Composer+autoload 及 failure audit 通过。两者均未完成真实 HTTP、PostgreSQL、撤权或审计，因此 **L04=0**，F/L/D、FLOW **28/48** 和发布 **0/10** 不变。临时目录 `provider-b-independent.6VkMjk` 清理被 hook 拒绝；该临时状态不写成发布包内容，也不改变上述计分。
+- **Consumer live v2 整体离线契约批次**：nonPG **46/46**、schema static-rule **167**、lint **6/6**、payload **16/16**，Astra 独立复核 **ACCEPT（P0/P1/P2=0）**；完整 plan capability 绑定、信任文件/父目录隔离、正确 admin URL/effect 与 map 键序语义均已覆盖。无 live adapter、真实 cleanup、HTTP 或 DB，`real_l04=false`；同 UID TOCTOU 与标准 JSON Schema 尚未完全证明，因此 **F/L/D/发布门槛** 计数不变。
+- **Consumer acceptance runner / 防循环核查**：consumer acceptance runner v1 strict validate **49/49**，Astra **ACCEPT（P0/P1/P2=0）**；live 明确 `unsupported`、`real_l04=false`，不计真实 L04。只读核查确认无 `automation.toml`、Codex/Cursor autopilot disabled、旧任务无近期 `active` 证据；App list 工具被 hook 拦截，按边界记录，不外推为运行或验收证据。`HOST-202609-002-sandpackage-frontend-activation-contract.md` 已发送，待宿主接收处理（不等于已接单或已修复）。所有计数不变。
 
 ### 当前执行顺序
 
@@ -25,7 +35,7 @@
 4. **OSS-03 外部与人工门槛**：标准客户端/真实受控对端、Casdoor 三旅程各两轮、未参与开发者公开文档安装接入、最终候选 24 小时稳定性。
 5. **OSS-04 发布包终验**：10/10 发布门槛、独立终验、无阻塞缺陷；终点不含 push、正式 Release、部署或线上验证。
 
-当前进展：OSS-00 已完成；OSS-01 的依赖/许可证审计已完成，源码已具备 Apache-2.0
+当前进展：OSS-00 已完成；OSS-01 的依赖/许可证审计已完成，且本批补齐 W3C vendored schema 独立 `NOTICE`/SBOM component、SDK 独立 `LICENSE`/`NOTICE`/metadata 与 public path 漏检。当前 hygiene **16/16**、policy **16/16**、SBOM **80**，经 Astra 独立复核 **ACCEPT（P0/P1/P2=0）**。源码已具备 Apache-2.0
 `LICENSE`、`NOTICE`、私密漏洞报告入口和唯一 DCO 贡献机制，不再表述为 license/DCO 待确认。它们不消除来源、签名、生命周期或正式发布门槛。
 
 OSS-02/OSS-03 的静态基线已完成；OSS-05 的外部门槛只完成 runner 预备：PHP lint **507/507**、
@@ -59,6 +69,8 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 当前依赖漏洞公告查询也尚未完成：官方 Composer audit 因会发送锁定包名/版本而被安全审批拒绝，
 没有改用第三方服务绕过；只读外部元数据范围已加入 OSS-04 F 授权项。
 
+**2026-09-13 当前并行执行记录（不改变分母或正式通过计数）**：需求实现与独立验收并行，安装只阻宿主实测。C01 源码与离线独立复核获 Astra 综合 **ACCEPT（P0/P1/P2=0）**；既有 C01/F04 的 `AdminOrganizationAccess` 请求号关联源码修复、新行为/恢复回归，以及四 create 原子事务两批均独立 **ACCEPT**。既有真实 Service 响应已跑完整 13 步并 `passed`、cleanup confirmed；四阶段部分清理、四类全集、真实 creator 审计、真实 grant allow/revoke/env 停用均有记录。C01 v2 保留 disabled org/app audit anchors；真实 retained ID/status=2，environment/grant 物理零且 active 残留为 0，不宣称全行物理零。三项用户可观察源码行为已完成；zero-capture 因凭证 transport=0、firstwrite unknown 仍为 **blocked/not_confirmed**，不是完成或正式 C01/F/L/D 通过。C01 原子创建继续保持 `data.id`、权限先验证和生产 `IdempotencyService` 语义；实际 PostgreSQL 并发尚未验收，额外 dynamic probe 被 hook 阻挡，仅作源码核对。C02 四操作审计事务源码修复及非 PG 回归已获独立 ACCEPT；F05 OAuth failed logout UI 五文件已实现，DTO test 由主控与独立 Astra 通过，目标 eslint、SandIAM scoped `vue-tsc`（exit 0、日志 0）和隔离 Vite build 均通过（21.71s）；独立 `astramedium__logout_review` 源码/离线复核未发现确定阻止缺陷。主控与独立 Astra 已核对 OAuth HTTP 200 业务错误的稳定 message/code；“必丢错误码”假设已撤回，未修改兼容代码。真实浏览器与 API、两视口、角色验收仍未完成；全量宿主 types 仍单独受 SandPackage 测试配置 TS2307 阻断，因此不计正式 F05 通过。sync-connector/index.vue 与 `failedOutbox.behavior.test.cjs` 已修复连接切换旧响应污染/错配重试（原代码红例 `1010!=2020`，修后主控及独立 `astramedium__logout_review` 实际 Vue 脚本延迟回归 PASS）；目标 ESLint、格式与 diff 检查 PASS，独立源码离线未发现确定缺陷。既有 OAuth 临时 overlay 仅覆盖 sync 两文件；SandIAM scoped `vue-tsc` exit 0，Vite build exit 0（4487 modules，18.91s）；原源码已冻结。该结果仍不是浏览器/HTTP、完整页面、正式 F 或业务链通过。文件隔离已落实：audit Access 两文件停止写并完成验收；atomic 范围仅为 base + 4 controllers + test；C01 范围为 `AcceptanceFixture*`、`live-driver`、`plan`、`tests`；F05 前端范围为五文件。共享 write gate 存在同 session 冲突，按 checkpoint 短交接；分析与验收并行且不争用全局 gate。HOST 已成功送达；本节点未扩展 DB、HTTP、服务、同步或迁移授权；门户本批 IAM-T01/F03 的注册验证源码、既有测试、受控 DOM/fetch 回归、type、隔离 build、主控复跑及独立 Astra 源审均 PASS，权威 `account.js`/`index` 原生生成物与独立 `write:false` 构建字节一致，生成物缺口已关闭，公开用户指南已补；真实 API、短信/邮件与浏览器仍未验收，F03/C/L/D/发布计数不变。C04 service grant controller 已开启原子 create；审计失败三类记录回滚、同请求重放不重复，变更 payload 返回 409、撤权返回 403、引用错误返回 400；既有服务调用控制回归 PASS。该批为非 PostgreSQL/HTTP 证据，正式计数不变。
+
 > 下文保留旧看板作为历史证据索引，其中“进行中”“已完成”均不代表当前 Goal 已复核通过。
 
 ## 当前唯一产品主线／目标纠偏（2026-09-08）
@@ -90,7 +102,7 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 >
 > v7/v9 均已作废为历史 review-only 证据；v13 亦已被独立离线验收 **REJECT**（P1：builder/checker payload policy 不一致、authority descriptor stale；见 `.artifacts/sand-iam-v13-independent-acceptance-20260907/INDEPENDENT_ACCEPTANCE.md`），三者均不得复用、安装或同步。v14、v15、v16 均由后续候选取代；v17 是 P19 收口前的历史候选：`.artifacts/sand-iam-0.7.0-v17-20260907T200515Z/`，ZIP SHA-256 `70bfe0186ae6aec48b971107dcbc7b89d80862ba4a0b083b8466e3c8a9a7734a`、598 entries。v17 的 SDK `dist` 仅放行四个 TypeScript 导出文件（`index.js/index.d.ts/management.js/management.d.ts`），静态 package checker **23/23**，重复构建 bit-identical；从 ZIP 解包后由真实消费者完成默认 fetch 的 loopback allow/403/401 三种结果。该证据继续证明 P18，但 v17 不含 P19 最终源码，不得再安装或同步为当前候选。
 >
-> SandPackage catalog/035 修复已由 `.artifacts/sandpackage-recovery-catalog-independent-review-20260907/P0_P1_CORRECTION_EVIDENCE.md` 记录为 30/30、verifier 107/107；v15 的 production verifier/profile 已按 `.artifacts/recovery-controlled-sync-v15-20260907/MANIFEST.md` 完成 8/8 受控同步。该同步不等于候选上传、数据库恢复或部署完成。2026-09-07 的 83 表、catalog 与 `state=8` 仅是历史保留证据，不能再称当前状态；当前可复核宿主事实以 [`HOST-202609-001`](../../../docs/host-requests/HOST-202609-001-sandpackage-failed-recovery.md) 为准：它是 `local draft / not sent`，demo registry 为健康 `0.7.0`（`state=1`、`stage=completed`），精确数据库计数未在本轮重新验收。
+> SandPackage catalog/035 修复已由 `.artifacts/sandpackage-recovery-catalog-independent-review-20260907/P0_P1_CORRECTION_EVIDENCE.md` 记录为 30/30、verifier 107/107；v15 的 production verifier/profile 已按 `.artifacts/recovery-controlled-sync-v15-20260907/MANIFEST.md` 完成 8/8 受控同步。该同步不等于候选上传、数据库恢复或部署完成。2026-09-07 的 83 表、catalog 与 `state=8` 仅是历史保留证据，不能再称当前状态；当前可复核宿主事实以 [`HOST-202609-001`](../../../docs/host-requests/HOST-202609-001-sandpackage-failed-recovery.md) 为准：已发送至 SandAdmin，待宿主接收处理（不等于已接单或已修复），demo registry 为健康 `0.7.0`（`state=1`、`stage=completed`），精确数据库计数未在本轮重新验收。
 >
 > v17 的历史前端 build/type/lint/54 路由证据已通过；计划 v24 已完成 P19 前端隔离 ESLint/typecheck/build 和 ZIP 构建所需源码。SandPackage 6.1.4 demo static gate 已 ACCEPT：**`DEMO_SYNC_6_1_4_STATIC_PASS`**（lifecycle 10/10、lint 3/3、vue-tsc PASS、关键 SHA 5/5；digest `dbdec85c3558592f2af196a689a28fdaa89f9ce56e8e38ecfcf93e6f3de5f34f`，白名单外不变）。正式 Gate A 已 **PASS**：existing replacement `8ecc5cec…f9e9f` 绑定真实 identity，返回 `retry_safe`、101/101、`failed_assertion_ids=[]`、`audit_written=false`、fingerprint `714894c6…a16ce6`，且 READ ONLY + REPEATABLE READ + ROLLBACK/连接复用通过。P2 历史风险不阻断静态门。Gate A 仅使真实恢复阶段前进到 **1/5**；无 active registry/DB 写、replace/retry、服务、浏览器、commit 或 push。
 
@@ -263,3 +275,10 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 - C01 第一次探索于 2026-09-12 20:44:47 +08 留存于本会话记录：创建 `organization=102`、`application=72`、`environment=40`，完成更新/allow/停用后的 `400` deny；旧运行树的恢复返回 `403`，随后 API cleanup 返回 `cleaned=true`。第二次于 21:13:06 +08 使用 `/private/tmp/sand-iam-c01-http-driver.php`，夹具前缀 `sand_iam_acceptance_e36b8b2f26b372ec_`，对象 `103/73/41`；恢复夹带 `name` 的拒绝仍为旧运行树 `403`，cleanup 同样为 `cleaned=true`。两次均未触碰 pending journal；`.env` 已恢复原始缺失 cleanup flag 的 SHA-256 `4a6ce68009af8c7d2073ff93347bcd523064e9ea9a630b940e2667a768cdf5b2`。
 - 证据复用边界：候选源码/可复现构建及 `6443598` clean-clone 导出不受当前安装态影响，可继续作为候选和同步取证；两次 C01 的创建、更新、allow、停用 deny 与零残留仅可复用为旧运行树的观察。恢复成功、恢复 payload `400` 行为和加载 `6443598` 的业务链必须在宿主官方恢复并正规升级后重验；对应 host 证据为上述交接单与 pending backup journal。**C01 未通过；七链 0/7。** 宿主恢复并正规升级加载 `6443598` 前不得重跑。
 - 既有授权位置仅作范围留存，不扩展权限：`.codex/autopilot/executions/OSS-04-authorization.md`，以及本会话两次“授权”和“持续授权”指令。它们已覆盖当时受控同步/C01 的限定操作；本节点未据此执行 SandAdmin、数据库、服务或 SandPackage 写入。
+
+### 2026-09-13 backup v3 离线证据契约批次
+
+- 本批仅登记离线 backup v3 证据契约：`schema v3` / `plan v2`，覆盖 typed ownership + staged reconcile，以及 generator/template roundtrip。
+- 核心验证结果为 **1 个正例 + 9 个 hash 重算负例**；六文件独立 Astra 验收为 **ACCEPT（P0/P1/P2=0）**。validator SHA-256：`fece73aa13ec4917f5c122f563716c2ab0945572ecd84d88245968022aa1206f`。
+- `real_g=false`。本批未执行真实 PostgreSQL、KMS 或恢复演练；不构成 D06、正式 FLOW、业务闭环、部署或线上验证通过。
+- 本批不改变冻结统计：需求/架构/票据 **8/9**、模块实现 **20/20**、正式 FLOW **0/7**、本地业务闭环 **0/4**、可上线部署 **0/8**，完整目标仍 **28/48**；发布门槛仍 **0/10**。除本节与对应 terminal ledger 外，不回写其他过时全仓统计。

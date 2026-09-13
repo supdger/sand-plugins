@@ -63,6 +63,91 @@ $runtimeLicenses = [
 $missingRuntimeLicenses = array_values(array_filter($runtimeLicenses, static fn (string $path): bool => !isset($payloadSet[$path])));
 $record('distributed runtime license texts exist', $missingRuntimeLicenses === [], implode(', ', $missingRuntimeLicenses));
 
+$xmlDsigSchema = 'plugin/sand-iam/vendor/onelogin/php-saml/src/Saml2/schemas/xmldsig-core-schema.xsd';
+$xmlDsigSource = isset($payloadSet[$xmlDsigSchema]) ? file_get_contents($root . '/' . $xmlDsigSchema) : false;
+$notices = is_file($root . '/THIRD_PARTY_NOTICES.md') ? file_get_contents($root . '/THIRD_PARTY_NOTICES.md') : false;
+$sbom = is_file($root . '/SBOM.cdx.json') ? json_decode((string) file_get_contents($root . '/SBOM.cdx.json'), true) : null;
+$w3cComponent = null;
+foreach (is_array($sbom) && is_array($sbom['components'] ?? null) ? $sbom['components'] : [] as $component) {
+    if (is_array($component) && ($component['bom-ref'] ?? null) === 'urn:sandiam:vendored:w3c-xmldsig-core-schema@2002-02-08') {
+        $w3cComponent = $component;
+        break;
+    }
+}
+$w3cLicense = is_array($w3cComponent) && is_array($w3cComponent['licenses'][0]['license'] ?? null)
+    ? $w3cComponent['licenses'][0]['license']
+    : [];
+$w3cEvidence = array_column(
+    is_array($w3cComponent) && is_array($w3cComponent['properties'] ?? null) ? $w3cComponent['properties'] : [],
+    'value'
+);
+$w3cNoticeText = is_string($notices)
+    && preg_match('#<!-- W3C-LICENSE-BEGIN -->\R(.*?)\R<!-- W3C-LICENSE-END -->#s', $notices, $w3cNoticeMatch) === 1
+    ? $w3cNoticeMatch[1]
+    : null;
+$record(
+    'distributed W3C XML Signature schema has source header, notice, and SBOM component',
+    is_string($xmlDsigSource)
+        && str_contains($xmlDsigSource, 'Copyright 2001 The Internet Society and W3C')
+        && str_contains($xmlDsigSource, 'W3C Software License')
+        && str_contains($xmlDsigSource, 'http://www.w3.org/Consortium/Legal/copyright-software-19980720')
+        && is_string($notices)
+        && str_contains($notices, '`' . $xmlDsigSchema . '`')
+        && str_contains($notices, 'Copyright 2001 The Internet Society and W3C')
+        && str_contains($notices, 'W3C Software Notice and License')
+        && str_contains($notices, 'https://www.w3.org/Consortium/Legal/copyright-software-19980720')
+        && is_string($w3cNoticeText)
+        && hash_equals('36ea737a8b78df521fa218e3a12fe2cb16e4fedcdbca005fbb703842a48d77bb', hash('sha256', $w3cNoticeText))
+        && is_array($w3cComponent)
+        && ($w3cComponent['type'] ?? null) === 'data'
+        && ($w3cComponent['scope'] ?? null) === 'required'
+        && ($w3cLicense['name'] ?? null) === 'W3C Software Notice and License'
+        && ($w3cLicense['url'] ?? null) === 'https://www.w3.org/Consortium/Legal/copyright-software-19980720'
+        && in_array($xmlDsigSchema, $w3cEvidence, true)
+        && in_array('THIRD_PARTY_NOTICES.md', $w3cEvidence, true),
+    'the distributed xmldsig-core-schema.xsd must retain its W3C header and be indexed by both THIRD_PARTY_NOTICES.md and SBOM.cdx.json.'
+);
+
+$sdkLegalFiles = [
+    'sdk/php/LICENSE', 'sdk/php/NOTICE',
+    'sdk/typescript/LICENSE', 'sdk/typescript/NOTICE',
+    'sdk/dart/LICENSE', 'sdk/dart/NOTICE',
+];
+$projectNotice = is_file($root . '/NOTICE') ? file_get_contents($root . '/NOTICE') : false;
+$sdkLegalFilesMatchProject = is_string($projectLicense) && is_string($projectNotice);
+foreach ([
+    'sdk/php/LICENSE' => $projectLicense,
+    'sdk/typescript/LICENSE' => $projectLicense,
+    'sdk/dart/LICENSE' => $projectLicense,
+    'sdk/php/NOTICE' => $projectNotice,
+    'sdk/typescript/NOTICE' => $projectNotice,
+    'sdk/dart/NOTICE' => $projectNotice,
+] as $path => $expected) {
+    $actual = is_file($root . '/' . $path) ? file_get_contents($root . '/' . $path) : false;
+    $sdkLegalFilesMatchProject = $sdkLegalFilesMatchProject
+        && is_string($actual)
+        && hash_equals(hash('sha256', $expected), hash('sha256', $actual));
+}
+$phpSdk = json_decode((string) file_get_contents($root . '/sdk/php/composer.json'), true);
+$typeScriptSdk = json_decode((string) file_get_contents($root . '/sdk/typescript/package.json'), true);
+$dartSdk = (string) file_get_contents($root . '/sdk/dart/pubspec.yaml');
+$record(
+    'independently distributed SDKs carry Apache-2.0 metadata, license, and notice',
+    array_values(array_filter($sdkLegalFiles, static fn (string $path): bool => !isset($payloadSet[$path]))) === []
+        && $sdkLegalFilesMatchProject
+        && is_array($phpSdk)
+        && ($phpSdk['license'] ?? null) === 'Apache-2.0'
+        && (($phpSdk['support']['source'] ?? null) === 'https://github.com/supdger/sand-plugins')
+        && is_array($typeScriptSdk)
+        && ($typeScriptSdk['license'] ?? null) === 'Apache-2.0'
+        && (($typeScriptSdk['repository']['url'] ?? null) === 'https://github.com/supdger/sand-plugins.git')
+        && in_array('LICENSE', $typeScriptSdk['files'] ?? [], true)
+        && in_array('NOTICE', $typeScriptSdk['files'] ?? [], true)
+        && str_contains($dartSdk, 'repository: https://github.com/supdger/sand-plugins')
+        && str_contains($dartSdk, 'issue_tracker: https://github.com/supdger/sand-plugins/issues'),
+    'each SDK must be independently redistributable with its own Apache-2.0 metadata, LICENSE, NOTICE, and current project support URL.'
+);
+
 $testPayload = array_values(array_filter($payload, static fn (string $path): bool => preg_match('#(?:^|/)tests?(?:/|$)|(?:^|/)[^/]+\.(?:test|spec)\.[^/]+$#i', $path) === 1));
 $record('test and spec files are excluded', $testPayload === [], implode(', ', array_slice($testPayload, 0, 10)));
 
@@ -77,7 +162,7 @@ foreach ($publicMarkdown as $path) {
         $brokenLinks[] = $path . ': unreadable';
         continue;
     }
-    if (preg_match('#(?:docs/development|\.codex/|\.cursor/|/Users/[A-Za-z0-9._-]+/)#', $source) === 1) {
+    if (preg_match('#(?:docs/development|\.codex/|\.cursor/|(?:^|[\s"\'`=:(\[,])/(?:Users|home)/[A-Za-z0-9._-]+(?:/|$)|(?:^|[\s"\'`=:(\[,])/private(?:/|$)|file://|(?<![A-Za-z0-9_])(?:\$HOME|\$\{HOME\}|~)(?:[\\\\/]|$)|(?<![A-Za-z0-9])[A-Za-z]:[\\\\/])#', $source) === 1) {
         $internalMarkers[] = $path;
     }
     if ((str_starts_with($path, 'docs/user-guide/') || str_starts_with($path, 'examples/'))
@@ -107,7 +192,7 @@ foreach ($payload as $path) {
     if (!in_array($extension, $textExtensions, true) && !in_array(basename($path), ['composer.lock', 'composer.json'], true)) continue;
     $source = file_get_contents($root . '/' . $path);
     if (!is_string($source)) continue;
-    if (preg_match('#/Users/[A-Za-z0-9._-]+/#', $source) === 1) $localPathFiles[] = $path;
+    if (preg_match('#(?:file://|(?:^|[\s"\'`=:(\[,])/(?:Users|home)/[A-Za-z0-9._-]+(?:/|$)|(?:^|[\s"\'`=:(\[,])/private(?:/|$)|(?<![A-Za-z0-9_])(?:\$HOME|\$\{HOME\}|~)(?:[\\\\/]|$)|(?<![A-Za-z0-9])[A-Za-z]:[\\\\/])#', $source) === 1) $localPathFiles[] = $path;
     if (preg_match('#(?:\.codex/|\.cursor/|docs/development/|candidate/dirty-not-release|autopilot)#i', $source) === 1) $internalPayloadFiles[] = $path;
     if (preg_match('/-----BEGIN [A-Z ]*PRIVATE KEY-----|\bsiam_(?:at|wc|rt)_[A-Za-z0-9_-]{8,}\b/i', $source) === 1) $credentialFiles[] = $path;
 }

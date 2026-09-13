@@ -2,123 +2,226 @@
 
 declare(strict_types=1);
 
-/** Validate candidate-bound PostgreSQL backup/restore evidence without touching a database. */
+/** Offline verifier: no PostgreSQL/network/restore operation is performed. */
+require_once __DIR__ . '/release-bundle-attestation.php';
 
-$options = getopt('', ['report:']);
-$reportPath = $options['report'] ?? null;
-if (!is_string($reportPath) || trim($reportPath) === '') throw new InvalidArgumentException('--report is required');
-$reportPath = realpath($reportPath);
-if (!is_string($reportPath) || !is_file($reportPath) || is_link($reportPath)) throw new RuntimeException('recovery report must be an existing regular file');
-$reportRoot = dirname($reportPath);
-$report = json_decode((string) file_get_contents($reportPath), true, 512, JSON_THROW_ON_ERROR);
-if (!is_array($report) || ($report['schema'] ?? null) !== 'sand-iam.backup-recovery/v1') throw new RuntimeException('invalid recovery report schema');
-
-/** @param list<string> $required @param list<string> $allowed */
-$expectKeys = static function (array $value, array $required, array $allowed, string $label): void {
-    $missing = array_values(array_diff($required, array_keys($value)));
-    $unknown = array_values(array_diff(array_keys($value), $allowed));
-    if ($missing !== []) throw new RuntimeException($label . ' is missing keys: ' . implode(', ', $missing));
-    if ($unknown !== []) throw new RuntimeException($label . ' has unknown keys: ' . implode(', ', $unknown));
-};
-$nonEmpty = static function (mixed $value, string $label): string {
-    if (!is_string($value) || trim($value) === '') throw new RuntimeException($label . ' is required');
-    return trim($value);
-};
-$timestamp = static function (mixed $value, string $label): DateTimeImmutable {
-    if (!is_string($value) || preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $value) !== 1) throw new RuntimeException($label . ' must use exact UTC second precision');
-    $parsed = DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s\Z', $value, new DateTimeZone('UTC'));
-    $errors = DateTimeImmutable::getLastErrors();
-    if (!$parsed instanceof DateTimeImmutable || $parsed->format('Y-m-d\TH:i:s\Z') !== $value
-        || (is_array($errors) && (($errors['warning_count'] ?? 0) !== 0 || ($errors['error_count'] ?? 0) !== 0))) throw new RuntimeException($label . ' must be a valid UTC timestamp');
-    return $parsed;
-};
-
-$topKeys = ['schema', 'candidate', 'reviewer', 'environment', 'backup', 'state', 'checks', 'unresolved_failures', 'evidence'];
-$expectKeys($report, $topKeys, $topKeys, 'report');
-foreach (['candidate', 'reviewer', 'environment', 'backup', 'state', 'checks', 'evidence'] as $section) if (!is_array($report[$section])) throw new RuntimeException($section . ' must be an object or array');
-
-$candidate = $report['candidate'];
-$expectKeys($candidate, ['version', 'archive_sha256', 'artifact_manifest_sha256'], ['version', 'archive_sha256', 'artifact_manifest_sha256'], 'candidate');
-if (preg_match('/^\d+\.\d+\.\d+$/', (string) ($candidate['version'] ?? '')) !== 1) throw new RuntimeException('candidate version must be semantic');
-foreach (['archive_sha256', 'artifact_manifest_sha256'] as $field) if (preg_match('/^[0-9a-f]{64}$/', (string) ($candidate[$field] ?? '')) !== 1) throw new RuntimeException('candidate.' . $field . ' must be SHA-256');
-
-$reviewer = $report['reviewer'];
-$expectKeys($reviewer, ['id', 'independent', 'conflict_statement'], ['id', 'independent', 'conflict_statement'], 'reviewer');
-$nonEmpty($reviewer['id'] ?? null, 'reviewer.id');
-$nonEmpty($reviewer['conflict_statement'] ?? null, 'reviewer.conflict_statement');
-if (($reviewer['independent'] ?? null) !== true) throw new RuntimeException('reviewer must be independent');
-
-$environment = $report['environment'];
-$environmentKeys = ['fingerprint', 'host', 'postgresql', 'source_dsn_sha256', 'restore_dsn_sha256', 'restore_target_precreated', 'production_target'];
-$expectKeys($environment, $environmentKeys, $environmentKeys, 'environment');
-foreach (['fingerprint', 'source_dsn_sha256', 'restore_dsn_sha256'] as $field) if (preg_match('/^[0-9a-f]{64}$/', (string) ($environment[$field] ?? '')) !== 1) throw new RuntimeException('environment.' . $field . ' must be SHA-256');
-foreach (['host', 'postgresql'] as $field) $nonEmpty($environment[$field] ?? null, 'environment.' . $field);
-if (hash_equals((string) $environment['source_dsn_sha256'], (string) $environment['restore_dsn_sha256'])) throw new RuntimeException('source and restore DSN fingerprints must differ');
-if (($environment['restore_target_precreated'] ?? null) !== true || ($environment['production_target'] ?? null) !== false) throw new RuntimeException('restore target must be a precreated non-production database');
-
-$backup = $report['backup'];
-$backupKeys = ['format', 'archive_sha256', 'archive_list_sha256', 'pg_dump_version', 'pg_restore_version', 'started_at', 'completed_at', 'restore_flags'];
-$expectKeys($backup, $backupKeys, $backupKeys, 'backup');
-if (($backup['format'] ?? null) !== 'custom') throw new RuntimeException('backup format must be PostgreSQL custom');
-foreach (['archive_sha256', 'archive_list_sha256'] as $field) if (preg_match('/^[0-9a-f]{64}$/', (string) ($backup[$field] ?? '')) !== 1) throw new RuntimeException('backup.' . $field . ' must be SHA-256');
-foreach (['pg_dump_version', 'pg_restore_version'] as $field) $nonEmpty($backup[$field] ?? null, 'backup.' . $field);
-$startedAt = $timestamp($backup['started_at'] ?? null, 'backup.started_at');
-$completedAt = $timestamp($backup['completed_at'] ?? null, 'backup.completed_at');
-if ($completedAt <= $startedAt) throw new RuntimeException('backup.completed_at must be after started_at');
-if (!is_array($backup['restore_flags'])) throw new RuntimeException('backup.restore_flags must be an array');
-$flags = array_values(array_unique(array_map(static fn (mixed $flag): string => is_string($flag) ? $flag : '', $backup['restore_flags'])));
-foreach (['--exit-on-error', '--single-transaction', '--no-owner', '--no-acl'] as $requiredFlag) if (!in_array($requiredFlag, $flags, true)) throw new RuntimeException('restore flags are missing ' . $requiredFlag);
-foreach (['--create', '-C', '--clean', '-c'] as $forbiddenFlag) if (in_array($forbiddenFlag, $flags, true)) throw new RuntimeException('restore flags contain forbidden ' . $forbiddenFlag);
-
-$state = $report['state'];
-$stateKeys = ['source', 'restored'];
-$expectKeys($state, $stateKeys, $stateKeys, 'state');
-$countKeys = ['sand_iam_tables', 'migration_rows', 'organizations', 'applications', 'environments', 'identities', 'active_credentials', 'revoked_credentials', 'revoked_sessions', 'audit_rows'];
-foreach ($stateKeys as $side) {
-    if (!is_array($state[$side])) throw new RuntimeException('state.' . $side . ' must be an object');
-    $expectKeys($state[$side], array_merge(['logical_state_sha256', 'audit_chain_sha256'], $countKeys), array_merge(['logical_state_sha256', 'audit_chain_sha256'], $countKeys), 'state.' . $side);
-    foreach (['logical_state_sha256', 'audit_chain_sha256'] as $field) if (preg_match('/^[0-9a-f]{64}$/', (string) ($state[$side][$field] ?? '')) !== 1) throw new RuntimeException('state.' . $side . '.' . $field . ' must be SHA-256');
-    foreach ($countKeys as $field) if (!is_int($state[$side][$field] ?? null) || $state[$side][$field] < 0) throw new RuntimeException('state.' . $side . '.' . $field . ' must be a non-negative integer');
-}
-foreach (array_merge(['logical_state_sha256', 'audit_chain_sha256'], $countKeys) as $field) {
-    if ($state['source'][$field] !== $state['restored'][$field]) throw new RuntimeException('source/restored state mismatch: ' . $field);
-}
-
-$requiredChecks = ['archive_list_complete', 'restore_single_transaction', 'migration_ledger_equal', 'authorization_allow_equal', 'authorization_deny_equal', 'revoked_access_denied', 'revoked_sessions_not_resurrected', 'audit_chain_equal', 'signature_verification_equal', 'post_restore_audit_append', 'host_objects_unchanged', 'other_plugins_unchanged', 'cleanup_verified'];
-$expectKeys($report['checks'], $requiredChecks, $requiredChecks, 'checks');
-foreach ($requiredChecks as $check) if (($report['checks'][$check] ?? null) !== true) throw new RuntimeException('recovery did not prove ' . $check);
-if (($report['unresolved_failures'] ?? null) !== 0) throw new RuntimeException('recovery has unresolved failures');
-
-$requiredEvidenceTypes = ['backup-command', 'archive-list', 'restore-command', 'source-state', 'restored-state', 'business-probes', 'cleanup'];
-$seenTypes = [];
-$seenPaths = [];
-foreach ($report['evidence'] as $evidence) {
-    if (!is_array($evidence)) throw new RuntimeException('evidence reference must be an object');
-    $expectKeys($evidence, ['type', 'path', 'sha256'], ['type', 'path', 'sha256'], 'evidence');
-    $type = $evidence['type'] ?? null;
-    if (!is_string($type) || !in_array($type, $requiredEvidenceTypes, true) || isset($seenTypes[$type])) throw new RuntimeException('unknown or duplicate recovery evidence type');
-    $seenTypes[$type] = true;
-    $relative = $evidence['path'] ?? null;
-    if (!is_string($relative) || $relative === '' || str_starts_with($relative, '/') || str_contains($relative, '\\') || preg_match('#(?:^|/)\.\.?(?:/|$)#', $relative) === 1 || isset($seenPaths[$relative])) throw new RuntimeException('evidence path must be unique, safe, and relative');
-    $seenPaths[$relative] = true;
-    $lexicalPath = $reportRoot;
-    foreach (explode('/', $relative) as $component) {
-        $lexicalPath .= '/' . $component;
-        if (is_link($lexicalPath)) throw new RuntimeException('evidence path contains a symbolic link: ' . $relative);
+$options = getopt('', ['report:', 'plan:', 'archive:', 'artifact-manifest:']);
+foreach (['report', 'plan', 'archive', 'artifact-manifest'] as $option) if (!is_string($options[$option] ?? null) || trim($options[$option]) === '') throw new InvalidArgumentException('--' . $option . ' is required');
+$sha = static function (mixed $v, string $l): string { if (!is_string($v) || preg_match('/^[0-9a-f]{64}$/', $v) !== 1) throw new RuntimeException($l . ' must be SHA-256'); return $v; };
+$str = static function (mixed $v, string $l): string { if (!is_string($v) || trim($v) === '') throw new RuntimeException($l . ' is required'); return trim($v); };
+$obj = static function (mixed $v, string $l): array { if (!is_array($v) || array_is_list($v)) throw new RuntimeException($l . ' must be an object'); return $v; };
+$keys = static function (array $v, array $required, string $l): void { if (array_diff($required, array_keys($v)) !== [] || array_diff(array_keys($v), $required) !== []) throw new RuntimeException($l . ' has an invalid key set'); };
+$int = static function (mixed $v, string $l, int $min = 0): int { if (!is_int($v) || $v < $min) throw new RuntimeException($l . ' must be an integer >= ' . $min); return $v; };
+$utc = static function (mixed $v, string $l): int { if (!is_string($v) || preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/', $v) !== 1) throw new RuntimeException($l . ' must be UTC microseconds'); $d = DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s.u\Z', $v, new DateTimeZone('UTC')); if (!$d instanceof DateTimeImmutable || $d->format('Y-m-d\TH:i:s.u\Z') !== $v) throw new RuntimeException($l . ' is invalid'); return ((int) $d->format('U') * 1000000) + (int) $d->format('u'); };
+$canonicalPath = static function (string $path, string $label): string {
+    if ($path === '' || str_contains($path, "\0") || str_contains($path, '\\') || str_contains($path, '//')) throw new RuntimeException($label . ' path is unsafe');
+    if (!str_starts_with($path, '/')) $path = getcwd() . '/' . $path;
+    $parts = explode('/', $path); $current = '/';
+    foreach ($parts as $part) {
+        if ($part === '') continue;
+        if ($part === '.' || $part === '..') throw new RuntimeException($label . ' path is unsafe');
+        $current .= ($current === '/' ? '' : '/') . $part;
+        clearstatcache(true, $current); $stat = lstat($current);
+        if ($stat === false || (($stat['mode'] & 0170000) === 0120000)) throw new RuntimeException($label . ' has a missing or symlink component');
     }
-    $path = realpath($lexicalPath);
-    if (!is_string($path) || !is_file($path) || !str_starts_with($path, $reportRoot . '/')) throw new RuntimeException('evidence file is missing or outside report root: ' . $relative);
-    $hash = hash_file('sha256', $path);
-    if (!is_string($hash) || preg_match('/^[0-9a-f]{64}$/', (string) ($evidence['sha256'] ?? '')) !== 1 || !hash_equals((string) $evidence['sha256'], $hash)) throw new RuntimeException('evidence SHA-256 mismatch: ' . $relative);
-    $bytes = file_get_contents($path);
-    if (is_string($bytes) && preg_match('//u', $bytes) === 1 && preg_match('/(?:postgres(?:ql)?:\/\/[^\s:@]+:[^\s@]+@)|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bsiam_(?:at|wc|rt)_[A-Za-z0-9_-]{8,}\b/i', $bytes) === 1) throw new RuntimeException('evidence contains a high-confidence secret: ' . $relative);
-}
-$missingTypes = array_values(array_diff($requiredEvidenceTypes, array_keys($seenTypes)));
-if ($missingTypes !== []) throw new RuntimeException('recovery evidence is missing types: ' . implode(', ', $missingTypes));
+    $stat = lstat($current);
+    if ($stat === false || (($stat['mode'] & 0170000) !== 0100000) || $stat['nlink'] !== 1) throw new RuntimeException($label . ' must be a non-hardlinked regular file');
+    return $current;
+};
+$fileIdentity = static function (array $stat): array { return ['dev'=>(string) $stat['dev'], 'ino'=>(string) $stat['ino'], 'size'=>(int) $stat['size'], 'mode'=>(int) ($stat['mode'] & 0170000), 'nlink'=>(int) $stat['nlink']]; };
+$sameIdentity = static function (array $left, array $right): bool { return $left === $right; };
+/* A shared lock is cooperative; the terminal reopen/rehash below catches non-cooperative replacement or writes. */
+$snapshot = static function (string $path, string $label) use ($canonicalPath, $fileIdentity, $sameIdentity): array {
+    $path = $canonicalPath($path, $label); $before = lstat($path); $fh = fopen($path, 'rb');
+    if ($fh === false || !flock($fh, LOCK_SH | LOCK_NB)) { if (is_resource($fh)) fclose($fh); throw new RuntimeException($label . ' cannot acquire a shared read lock'); }
+    try { $fdBefore = fstat($fh); $bytes = stream_get_contents($fh); $fdAfter = fstat($fh); clearstatcache(true, $path); $after = lstat($path); }
+    finally { flock($fh, LOCK_UN); fclose($fh); }
+    if ($fdBefore === false || $fdAfter === false || $after === false || !is_string($bytes)) throw new RuntimeException($label . ' cannot be read');
+    $identity = $fileIdentity($before); if (!$sameIdentity($identity, $fileIdentity($fdBefore)) || !$sameIdentity($identity, $fileIdentity($fdAfter)) || !$sameIdentity($identity, $fileIdentity($after))) throw new RuntimeException($label . ' changed while being read');
+    return ['path'=>$path, 'bytes'=>$bytes, 'sha256'=>hash('sha256', $bytes), 'identity'=>$identity];
+};
+$verifySnapshot = static function (array $saved, string $label) use ($snapshot): void { $now = $snapshot($saved['path'], $label); if ($now['identity'] !== $saved['identity'] || !hash_equals($saved['sha256'], $now['sha256'])) throw new RuntimeException($label . ' changed after its validation snapshot'); };
+$seen = [];
+$claim = static function (array $item, string $label) use (&$seen): void { $id = $item['identity']['dev'] . ':' . $item['identity']['ino']; if (isset($seen[$id]) || isset($seen['path:' . $item['path']])) throw new RuntimeException($label . ' aliases another protected input'); $seen[$id] = true; $seen['path:' . $item['path']] = true; };
+$scanString = static function (string $value, string $path): void { if (preg_match('/(?:postgres(?:ql)?|mysql):\/\/|-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\b(?:password|passwd|pwd)\s*[:=]|\b(?:api[ _-]?key|client[ _-]?secret|access[ _-]?token|refresh[ _-]?token|id[ _-]?token|bearer[ _-]?token)\s*[:=]|\bBearer\s+[A-Za-z0-9._~+\/-]{8,}|\bsiam_(?:at|wc|rt)_[A-Za-z0-9_-]{8,}\b/i', $value) === 1) throw new RuntimeException($path . ' contains secret-like value material'); };
+$rejectSecrets = static function (mixed $value, string $path = 'document') use (&$rejectSecrets, $scanString): void {
+    if (is_string($value)) { $scanString($value, $path); return; }
+    if (!is_array($value)) return;
+    $aliases = ['authorization','proxyauthorization','password','passwd','pwd','secret','clientsecret','apiclientsecret','accesstoken','refreshtoken','idtoken','bearertoken','apikey','privatekey','keymaterial','plaintextkey','databaseurl','databaseuri','dsn','connectionstring','token'];
+    foreach ($value as $key => $child) { if (!is_int($key) && in_array(preg_replace('/[^a-z0-9]/', '', strtolower((string) $key)), $aliases, true)) throw new RuntimeException($path . ' contains forbidden sensitive field'); $rejectSecrets($child, $path . '.' . $key); }
+};
+$read = static function (array $item, string $label) use ($obj, $scanString, $rejectSecrets): array { if (preg_match('//u', $item['bytes']) !== 1) throw new RuntimeException($label . ' must be UTF-8'); $scanString($item['bytes'], $label); try { $decoded = $obj(json_decode($item['bytes'], true, 512, JSON_THROW_ON_ERROR), $label); } catch (JsonException $e) { throw new RuntimeException($label . ' must be JSON', 0, $e); } $rejectSecrets($decoded, $label); return $decoded; };
+$boundedPositive = static function (mixed $value, string $max, string $label): string { if (!is_string($value) || preg_match('/^[1-9][0-9]*$/D', $value) !== 1 || strlen($value) > strlen($max) || (strlen($value) === strlen($max) && strcmp($value, $max) > 0)) throw new RuntimeException($label . ' is out of range'); return $value; };
+$identity = static function (mixed $v, string $l) use ($obj, $keys, $boundedPositive): array { $v = $obj($v, $l); $keys($v, ['system_identifier', 'database_oid', 'database_name_hex'], $l); $v['system_identifier'] = $boundedPositive($v['system_identifier'] ?? null, '18446744073709551615', $l . '.system_identifier'); $v['database_oid'] = $boundedPositive($v['database_oid'] ?? null, '4294967295', $l . '.database_oid'); if (!is_string($v['database_name_hex'] ?? null) || preg_match('/^[0-9a-f]+$/D', $v['database_name_hex']) !== 1 || strlen($v['database_name_hex']) % 2 !== 0) throw new RuntimeException($l . '.database_name_hex is invalid'); return $v; };
 
-echo json_encode([
-    'schema' => 'sand-iam.backup-recovery-validation/v1', 'passed' => true,
-    'checks_verified' => count($requiredChecks), 'state_fields_verified' => count($countKeys) + 2,
-    'evidence_files_verified' => count($seenPaths), 'reviewer_id' => $reviewer['id'],
-    'environment_fingerprint' => $environment['fingerprint'],
-], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . PHP_EOL;
+$reportInput = $snapshot($options['report'], 'report'); $claim($reportInput, 'report');
+$planInput = $snapshot($options['plan'], 'recovery plan'); $claim($planInput, 'recovery plan');
+$archiveInput = $snapshot($options['archive'], 'candidate archive'); $claim($archiveInput, 'candidate archive');
+$manifestInput = $snapshot($options['artifact-manifest'], 'artifact manifest'); $claim($manifestInput, 'artifact manifest');
+$reportPath = $reportInput['path']; $archivePath = $archiveInput['path']; $manifestPath = $manifestInput['path'];
+$report = $read($reportInput, 'report');
+if (in_array($report['schema'] ?? null, ['sand-iam.backup-recovery/v1', 'sand-iam.backup-recovery/v2'], true)) throw new RuntimeException('v1/v2 recovery evidence is not eligible for release G; produce v3 evidence');
+$keys($report, ['schema','run_id','candidate','reviewer','environment','plan_sha256','timeline','timing','backup','state','reconcile','probes','queue','encryption','cleanup','evidence'], 'report');
+if (($report['schema'] ?? null) !== 'sand-iam.backup-recovery/v3') throw new RuntimeException('invalid recovery report schema');
+$runId = $str($report['run_id'] ?? null, 'run_id'); $planHash = $sha($report['plan_sha256'] ?? null, 'plan_sha256'); if (!hash_equals($planHash, $planInput['sha256'])) throw new RuntimeException('report plan_sha256 is not bound to supplied recovery plan');
+$plan = $read($planInput, 'recovery plan'); $keys($plan, ['schema','run_id','candidate','environment','collector','thresholds'], 'recovery plan'); if (($plan['schema'] ?? null) !== 'sand-iam.backup-recovery-plan/v2') throw new RuntimeException('v1 recovery plan is not eligible for v3 evidence; produce a v2 plan');
+
+// Re-open real candidate inputs. Report self-description never substitutes for this.
+$verifySnapshot($manifestInput, 'artifact manifest'); $manifest = sandIamReadArtifactManifest($manifestPath); $verifySnapshot($manifestInput, 'artifact manifest');
+$manifestHash = $manifestInput['sha256']; $archiveHash = $archiveInput['sha256']; $archiveBytes = $archiveInput['identity']['size'];
+$verifySnapshot($archiveInput, 'candidate archive'); $map = sandIamInspectReleaseZip($archivePath); $verifySnapshot($archiveInput, 'candidate archive');
+$package = $manifest['package'];
+if (($package['archive'] ?? null) !== basename($archivePath) || ($package['sha256'] ?? null) !== $archiveHash || ($package['bytes'] ?? null) !== $archiveBytes || ($package['entry_count'] ?? null) !== $map['entry_count'] || ($manifest['files'] ?? null) !== $map['files']) throw new RuntimeException('archive file map or provenance does not match artifact manifest');
+$candidate = $obj($report['candidate'] ?? null, 'candidate'); $keys($candidate, ['version','archive_sha256','archive_bytes','artifact_manifest_sha256','source_revision'], 'candidate'); $revision = $obj($candidate['source_revision'] ?? null, 'candidate.source_revision'); $keys($revision, ['commit','tree'], 'candidate.source_revision');
+if (($candidate['version'] ?? null) !== $package['version'] || ($candidate['archive_sha256'] ?? null) !== $archiveHash || ($candidate['archive_bytes'] ?? null) !== $archiveBytes || ($candidate['artifact_manifest_sha256'] ?? null) !== $manifestHash || ($revision['commit'] ?? null) !== $manifest['source_revision']['commit'] || ($revision['tree'] ?? null) !== $manifest['source_revision']['tree']) throw new RuntimeException('report candidate is not bound to the supplied archive/manifest provenance');
+$reviewer = $obj($report['reviewer'] ?? null, 'reviewer'); $keys($reviewer, ['id','independent','conflict_statement'], 'reviewer'); if (($reviewer['independent'] ?? null) !== true) throw new RuntimeException('reviewer must be independent'); $str($reviewer['id'] ?? null, 'reviewer.id'); $str($reviewer['conflict_statement'] ?? null, 'reviewer.conflict_statement');
+$env = $obj($report['environment'] ?? null, 'environment'); $keys($env, ['id','collector','source','target'], 'environment'); $collector = $obj($env['collector'] ?? null, 'environment.collector'); $keys($collector, ['id','version'], 'collector'); $str($env['id'] ?? null, 'environment.id'); $str($collector['id'] ?? null, 'collector.id'); $str($collector['version'] ?? null, 'collector.version'); $source = $identity($env['source'] ?? null, 'environment.source'); $target = $identity($env['target'] ?? null, 'environment.target'); if ($source['system_identifier'] === $target['system_identifier'] && $source['database_oid'] === $target['database_oid']) throw new RuntimeException('source and target identities must differ by cluster system identifier or database OID');
+$planCandidate = $obj($plan['candidate'] ?? null, 'recovery plan.candidate'); $planEnv = $obj($plan['environment'] ?? null, 'recovery plan.environment'); $planCollector = $obj($plan['collector'] ?? null, 'recovery plan.collector'); $planThresholds = $obj($plan['thresholds'] ?? null, 'recovery plan.thresholds'); $keys($planThresholds, ['rpo_limit_seconds','rto_limit_seconds','minimum_consistency_lsn'], 'recovery plan.thresholds'); if (($plan['run_id'] ?? null) !== $runId || $planCandidate !== $candidate || $planEnv !== $env || $planCollector !== $collector) throw new RuntimeException('recovery plan is not bound to report run, candidate, identity, environment, and collector'); $rpoLimit = $int($planThresholds['rpo_limit_seconds'] ?? null, 'recovery plan.rpo_limit_seconds', 1); $rtoLimit = $int($planThresholds['rto_limit_seconds'] ?? null, 'recovery plan.rto_limit_seconds', 1);
+
+$timeline = $report['timeline']; $stages = ['source_snapshot','consistency_point','backup_start','backup_end','security_changes_end','restore_start','restore_end','reconcile_start','reconcile_end','probe','cleanup']; if (!is_array($timeline) || !array_is_list($timeline) || count($timeline) !== count($stages)) throw new RuntimeException('timeline must have exactly eleven fixed stages'); $previous = null; $times=[];
+foreach ($timeline as $i => $event) { $event = $obj($event, 'timeline[' . $i . ']'); $keys($event, ['stage','at','monotonic_us'], 'timeline[' . $i . ']'); if (($event['stage'] ?? null) !== $stages[$i]) throw new RuntimeException('timeline stage order is invalid'); $at = $utc($event['at'] ?? null, 'timeline.at'); $mono = $int($event['monotonic_us'] ?? null, 'timeline.monotonic_us', 1); if ($previous !== null && ($at <= $previous['at'] || $mono <= $previous['mono'] || ($at - $previous['at']) !== ($mono - $previous['mono']))) throw new RuntimeException('timeline UTC and monotonic microseconds must be strictly ordered and consistent'); $previous = ['at'=>$at,'mono'=>$mono]; $times[$event['stage']]=$at; }
+$computedTiming=['snapshot_us'=>$times['consistency_point']-$times['source_snapshot'],'backup_us'=>$times['backup_end']-$times['backup_start'],'restore_us'=>$times['restore_end']-$times['restore_start'],'reconcile_us'=>$times['reconcile_end']-$times['reconcile_start'],'probe_us'=>$times['probe']-$times['reconcile_end'],'cleanup_us'=>$times['cleanup']-$times['probe'],'rpo_us'=>$times['backup_end']-$times['consistency_point'],'rto_us'=>$times['probe']-$times['restore_start']]; $timing=$obj($report['timing'] ?? null,'timing'); $keys($timing,array_keys($computedTiming),'timing'); foreach($computedTiming as $name=>$actual) if($int($timing[$name]??null,'timing.'.$name,1)!==$actual) throw new RuntimeException('timing.'.$name.' does not recompute from fixed timeline'); if($computedTiming['rpo_us']>$rpoLimit*1000000||$computedTiming['rto_us']>$rtoLimit*1000000) throw new RuntimeException('computed RPO/RTO exceeds frozen recovery-plan threshold');
+$root = dirname($reportPath);
+$relativeSnapshot = static function (mixed $relative, string $label) use ($root, $snapshot, $claim): array { if (!is_string($relative) || $relative === '' || str_starts_with($relative, '/') || str_contains($relative, '\\') || str_contains($relative, '//') || preg_match('#(?:^|/)\.\.?(?:/|$)#', $relative) === 1) throw new RuntimeException($label . ' path must be safe and relative'); $item = $snapshot($root . '/' . $relative, $label); if (!str_starts_with($item['path'], $root . '/')) throw new RuntimeException($label . ' escapes report directory'); $claim($item, $label); return $item; };
+$boundFile = static function (mixed $value, string $label) use ($obj, $keys, $sha, $int, $relativeSnapshot): array { $value = $obj($value, $label); $keys($value, ['path','sha256','bytes'], $label); $item = $relativeSnapshot($value['path'] ?? null, $label); if (!hash_equals($sha($value['sha256'] ?? null, $label . '.sha256'), $item['sha256']) || $int($value['bytes'] ?? null, $label . '.bytes', 1) !== $item['identity']['size']) throw new RuntimeException($label . ' snapshot hash or size mismatch'); return $item; };
+$lsn = static function (mixed $value, string $label): array { if (!is_string($value) || preg_match('/^[0-9A-F]+\/[0-9A-F]+$/D', $value) !== 1) throw new RuntimeException($label . ' must be an uppercase PostgreSQL LSN'); [$high,$low]=explode('/',$value,2); if (strlen($high)>8||strlen($low)>8) throw new RuntimeException($label . ' is out of range'); return ['high'=>str_pad($high,8,'0',STR_PAD_LEFT),'low'=>str_pad($low,8,'0',STR_PAD_LEFT)]; };
+$compareLsn = static function (array $left, array $right): int { $high=strcmp($left['high'],$right['high']); return $high !== 0 ? $high : strcmp($left['low'],$right['low']); };
+$backup = $obj($report['backup'] ?? null, 'backup'); $keys($backup, ['format','backup_id','consistency_lsn','raw_dump','archive_list','rpo_seconds','rpo_limit_seconds','rto_seconds','rto_limit_seconds'], 'backup'); if (($backup['format'] ?? null) !== 'custom') throw new RuntimeException('backup must be a PostgreSQL custom dump'); $str($backup['backup_id'] ?? null, 'backup.backup_id'); $minimumLsn=$lsn($planThresholds['minimum_consistency_lsn'] ?? null, 'recovery plan.minimum_consistency_lsn'); $consistencyLsn=$lsn($backup['consistency_lsn'] ?? null, 'backup.consistency_lsn'); if ($compareLsn($consistencyLsn,$minimumLsn)<0) throw new RuntimeException('backup consistency_lsn is older than frozen recovery-plan minimum'); $rawDump = $boundFile($backup['raw_dump'] ?? null, 'backup.raw_dump'); $archiveList = $boundFile($backup['archive_list'] ?? null, 'backup.archive_list'); if ($rawDump['sha256'] === $archiveHash) throw new RuntimeException('raw PostgreSQL dump must not equal candidate plugin archive'); if (preg_match('//u', $archiveList['bytes']) !== 1 || trim($archiveList['bytes']) === '') throw new RuntimeException('backup.archive_list must be a nonempty UTF-8 pg_restore list capture'); foreach (['rpo_seconds','rpo_limit_seconds','rto_seconds','rto_limit_seconds'] as $k) $int($backup[$k] ?? null, 'backup.' . $k); if ($backup['rpo_seconds'] !== intdiv($computedTiming['rpo_us']+999999,1000000) || $backup['rto_seconds'] !== intdiv($computedTiming['rto_us']+999999,1000000) || $backup['rpo_limit_seconds'] !== $rpoLimit || $backup['rto_limit_seconds'] !== $rtoLimit) throw new RuntimeException('backup RPO/RTO is not derived from timeline and frozen recovery plan');
+
+$entities = ['organizations','applications','environments','users','groups','roles','resources','policies','data_scopes','service_identities','credentials','grants','audit','outbox','sync_cursors','idempotency_keys','key_versions'];
+$ref = static function (mixed $value, string $label) use ($obj, $keys, $str, $entities): array {
+    $value = $obj($value, $label); $keys($value, ['type', 'id'], $label);
+    if (!in_array($value['type'] ?? null, $entities, true)) throw new RuntimeException($label . ' has an unknown entity type');
+    $value['id'] = $str($value['id'] ?? null, $label . '.id');
+    return $value;
+};
+$refKey = static fn(array $value): string => $value['type'] . ':' . $value['id'];
+$sameRef = static fn(array $left, array $right): bool => $left['type'] === $right['type'] && $left['id'] === $right['id'];
+$scope = static function (mixed $value, string $label) use ($obj, $keys, $ref): array {
+    $value = $obj($value, $label); $keys($value, ['organization_ref','application_ref','environment_ref'], $label);
+    foreach (['organization_ref','application_ref','environment_ref'] as $field) {
+        if ($value[$field] !== null) $value[$field] = $ref($value[$field], $label . '.' . $field);
+    }
+    return $value;
+};
+$recordKeys = static function (string $type): array {
+    if ($type === 'credentials') return ['id','status','version','scope','owner_ref','key_version_ref'];
+    if ($type === 'key_versions') return ['id','status','version','scope','credential_ref'];
+    return ['id','status','version','scope'];
+};
+$state = $obj($report['state'] ?? null, 'state'); $keys($state, ['source_at_snapshot','restored'], 'state');
+$stateDigests=[]; $normalizedState=[]; $sourceRecords=[]; $sourceLists=[];
+foreach (['source_at_snapshot','restored'] as $side) {
+    $summary = $obj($state[$side] ?? null, 'state.' . $side); $keys($summary, ['entities'], 'state.' . $side);
+    $lists = $obj($summary['entities'] ?? null, 'state.' . $side . '.entities'); $keys($lists, $entities, 'state.' . $side . '.entities');
+    $normalized = [];
+    foreach ($entities as $type) {
+        $items = $lists[$type] ?? null;
+        if (!is_array($items) || !array_is_list($items) || $items === []) throw new RuntimeException('state entity list must be nonempty: ' . $type);
+        $seenIds=[]; $clean=[];
+        foreach ($items as $item) {
+            $item=$obj($item, 'state entity'); $keys($item, $recordKeys($type), 'state entity');
+            foreach (['id','status','version'] as $field) {
+                $item[$field]=$str($item[$field] ?? null, 'state entity.' . $field);
+                if (preg_match('/^[A-Za-z0-9][A-Za-z0-9._:@-]{2,127}$/D', $item[$field]) !== 1) throw new RuntimeException('state entity ' . $field . ' must be stable pseudonymous metadata');
+            }
+            if (isset($seenIds[$item['id']])) throw new RuntimeException('state entity ID must be unique within its type');
+            $seenIds[$item['id']]=true; $item['scope']=$scope($item['scope'] ?? null, 'state entity.scope');
+            if ($type === 'credentials') { $item['owner_ref']=$ref($item['owner_ref'] ?? null, 'credential.owner_ref'); $item['key_version_ref']=$ref($item['key_version_ref'] ?? null, 'credential.key_version_ref'); }
+            if ($type === 'key_versions') $item['credential_ref']=$ref($item['credential_ref'] ?? null, 'key_version.credential_ref');
+            $clean[]=$item;
+        }
+        usort($clean, static fn(array $a, array $b): int => strcmp($a['id'], $b['id']));
+        $normalized[$type]=$clean; $stateDigests[$side][$type]=hash('sha256', sandIamCanonicalJson($clean));
+        if ($side === 'source_at_snapshot') foreach ($clean as $item) $sourceRecords[$type . ':' . $item['id']]=$item;
+    }
+    $normalizedState[$side]=sandIamCanonicalJson($normalized); $stateDigests[$side]['all']=hash('sha256', $normalizedState[$side]);
+}
+if ($normalizedState['source_at_snapshot'] !== $normalizedState['restored']) throw new RuntimeException('source-at-snapshot and restored entity lists differ');
+$mustRef = static function (mixed $value, string $type, string $label) use ($ref, $refKey, &$sourceRecords): array {
+    $value=$ref($value, $label); if ($value['type'] !== $type || !isset($sourceRecords[$refKey($value)])) throw new RuntimeException($label . ' must resolve to an existing ' . $type);
+    return $value;
+};
+foreach ($sourceRecords as $key => $item) {
+    [$type] = explode(':', $key, 2); $current=['type'=>$type,'id'=>$item['id']]; $s=$item['scope'];
+    if ($s['organization_ref'] === null || $s['organization_ref']['type'] !== 'organizations' || !isset($sourceRecords[$refKey($s['organization_ref'])])) throw new RuntimeException('entity scope must resolve an organization ownership chain');
+    if ($type === 'organizations') {
+        if (!$sameRef($s['organization_ref'], $current) || $s['application_ref'] !== null || $s['environment_ref'] !== null) throw new RuntimeException('organization scope must be self-owned only');
+        continue;
+    }
+    if ($s['application_ref'] === null || $s['application_ref']['type'] !== 'applications' || !isset($sourceRecords[$refKey($s['application_ref'])])) throw new RuntimeException('entity scope must resolve an application ownership chain');
+    $application=$sourceRecords[$refKey($s['application_ref'])];
+    if (!$sameRef($application['scope']['organization_ref'], $s['organization_ref'])) throw new RuntimeException('application organization ownership chain is inconsistent');
+    if ($type === 'applications') {
+        if (!$sameRef($s['application_ref'], $current) || $s['environment_ref'] !== null) throw new RuntimeException('application scope must be self-owned and have no environment');
+        continue;
+    }
+    if ($s['environment_ref'] !== null) {
+        if ($s['environment_ref']['type'] !== 'environments' || !isset($sourceRecords[$refKey($s['environment_ref'])])) throw new RuntimeException('entity scope environment_ref must resolve');
+        $environmentRecord=$sourceRecords[$refKey($s['environment_ref'])];
+        if (!$sameRef($environmentRecord['scope']['application_ref'], $s['application_ref']) || !$sameRef($environmentRecord['scope']['organization_ref'], $s['organization_ref'])) throw new RuntimeException('environment ownership chain is inconsistent');
+    }
+    if ($type === 'environments' && ($s['environment_ref'] === null || !$sameRef($s['environment_ref'], $current))) throw new RuntimeException('environment scope must be self-owned');
+    if ($type === 'users' && $s['environment_ref'] !== null) throw new RuntimeException('user scope must not invent an environment');
+    if ($type === 'service_identities' && $s['environment_ref'] === null) throw new RuntimeException('service identity scope must include an environment');
+    if ($type === 'credentials') {
+        if (!in_array($item['owner_ref']['type'], ['users','service_identities'], true) || !isset($sourceRecords[$refKey($item['owner_ref'])])) throw new RuntimeException('credential owner_ref must be an existing authenticatable identity');
+        $owner=$sourceRecords[$refKey($item['owner_ref'])];
+        if ($owner['scope'] !== $s || $item['key_version_ref']['type'] !== 'key_versions' || !isset($sourceRecords[$refKey($item['key_version_ref'])]) || !$sameRef($sourceRecords[$refKey($item['key_version_ref'])]['credential_ref'], $current)) throw new RuntimeException('credential ownership or key-version reverse lineage is inconsistent');
+    }
+    if ($type === 'key_versions') {
+        if ($item['credential_ref']['type'] !== 'credentials' || !isset($sourceRecords[$refKey($item['credential_ref'])]) || !$sameRef($sourceRecords[$refKey($item['credential_ref'])]['key_version_ref'], $current) || $sourceRecords[$refKey($item['credential_ref'])]['scope'] !== $s) throw new RuntimeException('key-version credential lineage is inconsistent');
+    }
+}
+$enum=static function(mixed $value,array $allowed,string $label):string{if(!is_string($value)||$value!==trim($value)||$value!==strtolower($value)||!in_array($value,$allowed,true))throw new RuntimeException($label.' must be a lowercase explicit enum');return $value;};
+$stateValue=static function(mixed $value,string $label) use ($obj,$keys,$str): array {$value=$obj($value,$label);$keys($value,['status','version'],$label);return ['status'=>$str($value['status']??null,$label.'.status'),'version'=>$str($value['version']??null,$label.'.version')];};
+$reconcile=$obj($report['reconcile']??null,'reconcile'); $keys($reconcile,['source_after_changes','target_after_reconcile','events','applications'],'reconcile');
+$deltaRecords=static function(mixed $value,string $label) use ($obj,$keys,$ref,$refKey,$stateValue,&$sourceRecords): array { $value=$obj($value,$label);$keys($value,['records'],$label);$records=$value['records']??null;if(!is_array($records)||!array_is_list($records)||$records===[])throw new RuntimeException($label.'.records must be a nonempty list');$out=[];foreach($records as $record){$record=$obj($record,$label.'.record');$keys($record,['entity_ref','status','version'],$label.'.record');$entity=$ref($record['entity_ref']??null,$label.'.record.entity_ref');if(!isset($sourceRecords[$refKey($entity)]))throw new RuntimeException($label.' references a missing typed state entity');$key=$refKey($entity);if(isset($out[$key]))throw new RuntimeException($label.' repeats an affected entity');$out[$key]=['entity_ref'=>$entity]+$stateValue(['status'=>$record['status'],'version'=>$record['version']],$label.'.record');}ksort($out,SORT_STRING);return $out; };
+$afterSource=$deltaRecords($reconcile['source_after_changes']??null,'reconcile.source_after_changes'); $afterTarget=$deltaRecords($reconcile['target_after_reconcile']??null,'reconcile.target_after_reconcile');
+$events=$reconcile['events']??null; $applications=$reconcile['applications']??null; if(!is_array($events)||!array_is_list($events)||$events===[]||!is_array($applications)||!array_is_list($applications)||$applications===[]) throw new RuntimeException('reconcile requires nonempty events and applications');
+$fold=[];$eventIds=[];$eventTargets=[];$eventDetails=[];$auditRefs=[];$previousSequence=0;$previousLsn=null;$eventKinds=[];$rotation=[];
+foreach($events as $event){$event=$obj($event,'reconcile event');$kind=$enum($event['kind']??null,['revocation','credential_rotation'],'reconcile event.kind');$required=['event_id','sequence','kind','entity_ref','before','after','source_at','source_monotonic_us','source_lsn','source_audit_ref'];if($kind==='credential_rotation')$required=array_merge($required,['new_credential_ref','new_before','new_after','key_version_ref']);$keys($event,$required,'reconcile event');$eventId=$str($event['event_id']??null,'reconcile event.event_id');if(isset($eventIds[$eventId]))throw new RuntimeException('reconcile event_id must be unique');$eventIds[$eventId]=true;$sequence=$int($event['sequence']??null,'reconcile event.sequence',1);if($sequence<=$previousSequence)throw new RuntimeException('reconcile event sequence must be strictly increasing');$previousSequence=$sequence;$entity=$mustRef($event['entity_ref']??null,'credentials','reconcile event.entity_ref');$before=$stateValue($event['before']??null,'reconcile event.before');$after=$stateValue($event['after']??null,'reconcile event.after');$key=$refKey($entity);$current=$fold[$key]??['status'=>$sourceRecords[$key]['status'],'version'=>$sourceRecords[$key]['version']];if($before!==$current)throw new RuntimeException('reconcile event before state does not match the folded state');$sourceAt=$utc($event['source_at']??null,'reconcile event.source_at');$sourceMono=$int($event['source_monotonic_us']??null,'reconcile event.source_monotonic_us',1);if($sourceAt<=$times['backup_end']||$sourceAt>$times['security_changes_end']||$sourceMono<=$timeline[3]['monotonic_us']||$sourceMono>$timeline[4]['monotonic_us'])throw new RuntimeException('reconcile source event is outside the security-change stage');$eventLsn=$lsn($event['source_lsn']??null,'reconcile event.source_lsn');if($previousLsn!==null&&$compareLsn($eventLsn,$previousLsn)<0)throw new RuntimeException('reconcile event LSN must be nondecreasing');$previousLsn=$eventLsn;$sourceAudit=$str($event['source_audit_ref']??null,'reconcile event.source_audit_ref');if(isset($auditRefs[$sourceAudit]))throw new RuntimeException('reconcile audit references must be unique');$auditRefs[$sourceAudit]=true;$fold[$key]=$after;$eventKinds[$kind]=true;
+    $eventTargets[$eventId]=['entity_ref'=>$entity,'resulting_state'=>$after];$eventDetails[$eventId]=['kind'=>$kind,'entity_ref'=>$entity,'resulting_state'=>$after];
+    if($kind==='revocation'){if($before['status']!=='active'||$after['status']!=='revoked')throw new RuntimeException('revocation must move the actual credential from active to revoked');}
+    else {$new=$mustRef($event['new_credential_ref']??null,'credentials','rotation.new_credential_ref');if($sameRef($new,$entity))throw new RuntimeException('credential rotation requires distinct old and new credentials');$newKey=$refKey($new);$newBefore=$stateValue($event['new_before']??null,'rotation.new_before');$newAfter=$stateValue($event['new_after']??null,'rotation.new_after');$newCurrent=$fold[$newKey]??['status'=>$sourceRecords[$newKey]['status'],'version'=>$sourceRecords[$newKey]['version']];if($newBefore!==$newCurrent||$before['status']!=='active'||$after['status']!=='revoked'||$newAfter['status']!=='active'||$event['key_version_ref']!==$sourceRecords[$newKey]['key_version_ref'])throw new RuntimeException('credential rotation must revoke the actual old credential and activate the linked new credential');if(!$sameRef($sourceRecords[$key]['owner_ref'],$sourceRecords[$newKey]['owner_ref'])||$sourceRecords[$key]['scope']!==$sourceRecords[$newKey]['scope'])throw new RuntimeException('credential rotation old and new credentials must share owner and scope');$fold[$newKey]=$newAfter;$rotation=['event_id'=>$eventId,'old'=>$entity,'new'=>$new,'old_after'=>$after,'new_after'=>$newAfter];}
+}
+if (!isset($eventKinds['revocation'],$eventKinds['credential_rotation'])) throw new RuntimeException('reconcile must include revocation and credential_rotation events');
+ksort($fold,SORT_STRING); $afterSourceStates=array_map(static fn(array $record):array=>['status'=>$record['status'],'version'=>$record['version']],$afterSource);$afterTargetStates=array_map(static fn(array $record):array=>['status'=>$record['status'],'version'=>$record['version']],$afterTarget);if($afterSourceStates!==$fold||$afterTargetStates!==$fold)throw new RuntimeException('reconcile folded states must equal source_after_changes and target_after_reconcile');
+$applicationsByEvent=[];foreach($applications as $application){$application=$obj($application,'reconcile application');$keys($application,['event_id','entity_ref','target_at','target_monotonic_us','target_audit_ref','resulting_state'],'reconcile application');$eventId=$str($application['event_id']??null,'reconcile application.event_id');if(!isset($eventIds[$eventId])||isset($applicationsByEvent[$eventId]))throw new RuntimeException('each reconcile event must have exactly one target application');$entity=$mustRef($application['entity_ref']??null,'credentials','reconcile application.entity_ref');$resulting=$stateValue($application['resulting_state']??null,'reconcile application.resulting_state');if(!$sameRef($entity,$eventTargets[$eventId]['entity_ref'])||$resulting!==$eventTargets[$eventId]['resulting_state'])throw new RuntimeException('reconcile target application must bind its event entity and resulting state');$targetAt=$utc($application['target_at']??null,'reconcile application.target_at');$targetMono=$int($application['target_monotonic_us']??null,'reconcile application.target_monotonic_us',1);if($targetAt<$times['reconcile_start']||$targetAt>$times['reconcile_end']||$targetMono<$timeline[7]['monotonic_us']||$targetMono>$timeline[8]['monotonic_us'])throw new RuntimeException('reconcile target application is outside reconcile stage');$audit=$str($application['target_audit_ref']??null,'reconcile application.target_audit_ref');if(isset($auditRefs[$audit]))throw new RuntimeException('reconcile audit references must be unique');$auditRefs[$audit]=true;$applicationsByEvent[$eventId]=$resulting;}
+if(count($applicationsByEvent)!==count($eventIds))throw new RuntimeException('each reconcile event must be applied exactly once');
+$probes=$obj($report['probes']??null,'probes');$keys($probes,['cases'],'probes');$cases=$probes['cases']??null;
+$probeRules=['allow'=>['allow','applied'],'deny'=>['deny','rejected'],'revoked'=>['deny','rejected'],'cross_tenant'=>['deny','rejected'],'cross_app'=>['deny','rejected'],'cross_env'=>['deny','rejected'],'wrong_audience'=>['deny','rejected'],'replay_or_expired'=>['deny','rejected'],'rotation_old'=>['deny','rejected'],'rotation_new'=>['allow','applied']];
+if(!is_array($cases)||!array_is_list($cases)||count($cases)!==count($probeRules))throw new RuntimeException('probes must contain ten fixed cases');
+$probeAudit=[];$requestIds=[];$relationships=[];
+foreach($cases as $index=>$probe){$probe=$obj($probe,'probe');$keys($probe,['type','decision','outcome','actor_ref','target_actor_ref','scope_ref','target_scope_ref','credential_ref','credential_owner_ref','credential_version','security_event_id','candidate','run_id','request_id','source_audit_ref','target_audit_ref','business_side_effect'],'probe');$type=array_keys($probeRules)[$index];if(($probe['type']??null)!==$type||($probe['decision']??null)!==$probeRules[$type][0]||($probe['outcome']??null)!==$probeRules[$type][1]||($probe['business_side_effect']??null)!==$probeRules[$type][1]||($probe['candidate']??null)!==$candidate||($probe['run_id']??null)!==$runId)throw new RuntimeException('probe type, fixed decision/side-effect, candidate, or run binding is invalid');
+    $actor=$ref($probe['actor_ref']??null,'probe.actor_ref');$targetActor=$ref($probe['target_actor_ref']??null,'probe.target_actor_ref');if(!in_array($actor['type'],['users','service_identities'],true)||!in_array($targetActor['type'],['users','service_identities'],true)||!isset($sourceRecords[$refKey($actor)],$sourceRecords[$refKey($targetActor)]))throw new RuntimeException('probe actor refs must be existing authenticatable identities');
+    $scopeRef=$mustRef($probe['scope_ref']??null,'environments','probe.scope_ref');$targetScopeRef=$mustRef($probe['target_scope_ref']??null,'environments','probe.target_scope_ref');
+    $credential=$mustRef($probe['credential_ref']??null,'credentials','probe.credential_ref');$credentialOwner=$ref($probe['credential_owner_ref']??null,'probe.credential_owner_ref');if(!$sameRef($sourceRecords[$refKey($credential)]['owner_ref'],$credentialOwner)||!$sameRef($credentialOwner,$actor))throw new RuntimeException('probe credential must bind the actual actor owner');
+    $credentialVersion=$str($probe['credential_version']??null,'probe.credential_version');$actorScope=$sourceRecords[$refKey($actor)]['scope'];$targetScope=$sourceRecords[$refKey($targetActor)]['scope'];foreach([[$actor,$actorScope,$scopeRef],[$targetActor,$targetScope,$targetScopeRef]] as [$principal,$principalScope,$executionScopeRef]){$executionScope=$sourceRecords[$refKey($executionScopeRef)]['scope'];if($principal['type']==='users'){if(!$sameRef($principalScope['organization_ref'],$executionScope['organization_ref'])||!$sameRef($principalScope['application_ref'],$executionScope['application_ref']))throw new RuntimeException('user probe environment must belong to the user organization and application');}elseif($principalScope['environment_ref']===null||!$sameRef($principalScope['environment_ref'],$executionScopeRef))throw new RuntimeException('service identity probe scope must be its execution environment');}
+    $relationship=$refKey($actor).'|'.$refKey($targetActor).'|'.$refKey($scopeRef).'|'.$refKey($targetScopeRef);if(isset($relationships[$relationship]))throw new RuntimeException('each probe requires a distinct typed ownership relationship');$relationships[$relationship]=true;
+    $sameOrg=$sameRef($actorScope['organization_ref'],$targetScope['organization_ref']);$sameApp=$sameRef($actorScope['application_ref'],$targetScope['application_ref']);$sameEnv=$sameRef($scopeRef,$targetScopeRef);
+    if($type==='allow'&&(!$sameOrg||!$sameApp||!$sameEnv))throw new RuntimeException('allow probe requires the same organization, application, and environment');
+    if($type==='cross_tenant'&&$sameOrg)throw new RuntimeException('cross_tenant probe requires different organizations');
+    if($type==='cross_app'&&(!$sameOrg||$sameApp))throw new RuntimeException('cross_app probe requires same organization and different applications');
+    if($type==='cross_env'&&(!$sameOrg||!$sameApp||$sameEnv))throw new RuntimeException('cross_env probe requires same organization/application and different environments');
+    $finalState=$fold[$refKey($credential)]??['status'=>$sourceRecords[$refKey($credential)]['status'],'version'=>$sourceRecords[$refKey($credential)]['version']];
+    if(in_array($type,['allow','rotation_new'],true)&&($finalState['status']!=='active'||$credentialVersion!==$finalState['version']))throw new RuntimeException('allowed probe must bind an active credential at its target-after-reconcile final version');
+    if($type==='revoked'){if(($probe['security_event_id']??null)===''||!isset($eventDetails[$probe['security_event_id']])||$eventDetails[$probe['security_event_id']]['kind']!=='revocation'||!$sameRef($eventDetails[$probe['security_event_id']]['entity_ref'],$credential)||$credentialVersion!==$finalState['version']||$eventDetails[$probe['security_event_id']]['resulting_state']!==$finalState||$finalState['status']!=='revoked')throw new RuntimeException('revoked probe must bind the actual revocation event, credential, and final version');}
+    if($type==='rotation_old'){if(($probe['security_event_id']??null)!==($rotation['event_id']??null)||!$sameRef($credential,$rotation['old'])||$credentialVersion!==$rotation['old_after']['version'])throw new RuntimeException('rotation_old probe must bind the rotated old credential');}
+    if($type==='rotation_new'){if(($probe['security_event_id']??null)!==($rotation['event_id']??null)||!$sameRef($credential,$rotation['new'])||$credentialVersion!==$rotation['new_after']['version'])throw new RuntimeException('rotation_new probe must bind the rotated new credential');}
+    if(!in_array($type,['revoked','rotation_old','rotation_new'],true)&&($probe['security_event_id']??null)!==null)throw new RuntimeException('ordinary probe must not claim an unrelated security event');
+    foreach(['request_id','source_audit_ref','target_audit_ref'] as $field){$value=$str($probe[$field]??null,'probe.'.$field);if($field==='request_id'){if(isset($requestIds[$value]))throw new RuntimeException('probe request_id must be unique');$requestIds[$value]=true;}elseif(isset($probeAudit[$value])||isset($auditRefs[$value]))throw new RuntimeException('probe audit reference must be unique and separate from reconcile');else $probeAudit[$value]=true;}
+}
+$queue=$obj($report['queue']??null,'queue'); $keys($queue,['pending','delivered','dead_letter','idempotency_keys','duplicate_side_effects','business_audit_refs','service_audit_refs'],'queue'); foreach(['pending','delivered','dead_letter','idempotency_keys'] as $f) $int($queue[$f]??null,'queue.'.$f); if (($queue['duplicate_side_effects']??null)!==0) throw new RuntimeException('queue has duplicate side effects'); foreach(['business_audit_refs','service_audit_refs'] as $f) if (!is_array($queue[$f]??null)||!array_is_list($queue[$f])||$queue[$f]===[]||count($queue[$f])!==count(array_unique($queue[$f]))) throw new RuntimeException('queue '.$f.' must be nonempty and unique');
+$encryption=$obj($report['encryption']??null,'encryption'); $keys($encryption,['algorithm','format','envelope','external_key_id','key_version','key_fingerprint','kms_custody_ref','access_audit_ref','retention_until','restore_key_access_audit_ref'],'encryption'); foreach(['algorithm','format','external_key_id','key_version','key_fingerprint','kms_custody_ref','access_audit_ref','retention_until','restore_key_access_audit_ref'] as $f) $str($encryption[$f]??null,'encryption.'.$f); $envelope = $boundFile($encryption['envelope'] ?? null, 'encryption.envelope'); if (!in_array(strtolower($encryption['algorithm']), ['aes-gcm-256','aes-256-gcm','chacha20-poly1305'], true)) throw new RuntimeException('encryption must be approved AEAD');
+$protectedObjects = ['candidate archive'=>$archiveInput, 'raw PostgreSQL dump'=>$rawDump, 'encrypted envelope'=>$envelope];
+foreach ($protectedObjects as $leftName => $left) foreach ($protectedObjects as $rightName => $right) {
+    if ($leftName >= $rightName) continue;
+    if ($left['sha256'] === $right['sha256'] || hash_equals($left['bytes'], $right['bytes'])) throw new RuntimeException($leftName . ' and ' . $rightName . ' must have distinct content and SHA-256');
+}
+$cleanup=$obj($report['cleanup']??null,'cleanup'); $keys($cleanup,['ordered_steps','residual_entities'],'cleanup'); if (!is_array($cleanup['ordered_steps']??null)||!array_is_list($cleanup['ordered_steps'])||count($cleanup['ordered_steps'])<3||($cleanup['residual_entities']??null)!==0) throw new RuntimeException('cleanup must be ordered and leave no residual entities');
+
+$evidence=$report['evidence']; $types=['timeline','state','reconcile','probes','queue','encryption','cleanup','backup']; if (!is_array($evidence)||!array_is_list($evidence)||count($evidence)!==count($types)) throw new RuntimeException('v3 requires exactly eight evidence classes'); $verified=[]; $protected=[$reportInput,$planInput,$archiveInput,$manifestInput,$rawDump,$archiveList,$envelope];
+foreach($evidence as $i=>$ref){ $ref=$obj($ref,'evidence'); $keys($ref,['type','path','sha256'],'evidence'); if(($ref['type']??null)!==$types[$i]) throw new RuntimeException('evidence types must be complete and ordered'); $file=$relativeSnapshot($ref['path']??null,'evidence.'.$ref['type']); if(!hash_equals($sha($ref['sha256']??null,'evidence.sha256'),$file['sha256'])) throw new RuntimeException('evidence hash mismatch'); $item=$read($file,'evidence.'.$ref['type']); $keys($item,['schema','type','run_id','candidate','environment','collector','plan_sha256','payload','payload_sha256'],'evidence'); if(($item['schema']??null)!=='sand-iam.backup-recovery-evidence/v3'||($item['type']??null)!==$ref['type']||($item['run_id']??null)!==$runId||($item['candidate']??null)!==$candidate||($item['environment']??null)!==$env||($item['collector']??null)!==$collector||($item['plan_sha256']??null)!==$planHash) throw new RuntimeException('evidence is reused across candidate, run, identity, collector, or plan'); $payload=$obj($item['payload']??null,'evidence.payload'); if(!hash_equals($sha($item['payload_sha256']??null,'evidence.payload_sha256'),hash('sha256',sandIamCanonicalJson($payload)))) throw new RuntimeException('evidence payload hash does not recompute'); if(($payload['report_section']??null)!==$report[$ref['type']]) throw new RuntimeException('evidence payload does not match independently validated report section'); $verified[$ref['type']]=$file['sha256']; $protected[]=$file; }
+foreach ($protected as $item) $verifySnapshot($item, 'protected input');
+echo json_encode(['schema'=>'sand-iam.backup-recovery-validation/v3','passed'=>true,'validator_structure_passed'=>true,'real_g'=>false,'run_id'=>$runId,'verified_plan_sha256'=>$planInput['sha256'],'verified_archive_sha256'=>$archiveHash,'verified_manifest_sha256'=>$manifestHash,'verified_raw_dump_sha256'=>$rawDump['sha256'],'verified_envelope_sha256'=>$envelope['sha256'],'verified_report_sha256'=>$reportInput['sha256'],'verified_state_sha256'=>$stateDigests['source_at_snapshot']['all'],'verified_state_entity_sha256'=>$stateDigests['source_at_snapshot'],'verified_evidence_sha256'=>$verified],JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR).PHP_EOL;

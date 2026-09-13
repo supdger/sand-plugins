@@ -9,7 +9,9 @@ use plugin\SandIam\app\model\AdminApplicationGrant;
 use plugin\SandIam\app\model\Application;
 use plugin\SandIam\app\model\Organization;
 use plugin\SandIam\app\service\AuditWriter;
+use plugin\SandIam\app\service\RequestId;
 use plugin\sandadmin\exception\ApiException;
+use support\Request;
 
 /**
  * Resolves the SandIAM control-plane boundary for the logged-in SandAdmin user.
@@ -80,7 +82,7 @@ final class AdminOrganizationAccess
             return;
         }
         $organizationId = $application === null ? null : (int) $application->organization_id;
-        (new AuditWriter())->write('admin', (string) $this->adminId, $organizationId, $applicationId > 0 ? $applicationId : null, 'application.access', 'application', $applicationId > 0 ? $applicationId : null, 'denied', bin2hex(random_bytes(16)));
+        (new AuditWriter())->write('admin', (string) $this->adminId, $organizationId, $applicationId > 0 ? $applicationId : null, 'application.access', 'application', $applicationId > 0 ? $applicationId : null, 'denied', $this->requestId());
         throw new ApiException('SAND_IAM_APPLICATION_ACCESS_DENIED: 当前账号未获授该接入应用的管理范围，请联系客户主体管理员授权', 403);
     }
 
@@ -102,7 +104,7 @@ final class AdminOrganizationAccess
             && ($this->isSuperAdmin() || in_array($organizationId, $this->organizationIds(), true))) {
             return;
         }
-        (new AuditWriter())->write('admin', (string) $this->adminId, $organizationId, $applicationId > 0 ? $applicationId : null, 'application.recovery_access', 'application', $applicationId > 0 ? $applicationId : null, 'denied', bin2hex(random_bytes(16)));
+        (new AuditWriter())->write('admin', (string) $this->adminId, $organizationId, $applicationId > 0 ? $applicationId : null, 'application.recovery_access', 'application', $applicationId > 0 ? $applicationId : null, 'denied', $this->requestId());
         throw new ApiException('SAND_IAM_APPLICATION_RECOVERY_ACCESS_DENIED: 当前账号无权恢复该停用接入应用，或其所属客户主体未启用', 403);
     }
 
@@ -115,7 +117,18 @@ final class AdminOrganizationAccess
 
     private function deny(string $action, ?int $organizationId): never
     {
-        (new AuditWriter())->write('admin', (string) $this->adminId, $organizationId, null, $action, 'organization', $organizationId, 'denied', bin2hex(random_bytes(16)));
+        (new AuditWriter())->write('admin', (string) $this->adminId, $organizationId, null, $action, 'organization', $organizationId, 'denied', $this->requestId());
         throw new ApiException('SAND_IAM_ORGANIZATION_ACCESS_DENIED: 当前账号未获授该客户主体的管理范围，请联系平台管理员授权', 403);
+    }
+
+    private function requestId(): string
+    {
+        if (!function_exists('request')) return RequestId::normalize('');
+        try {
+            $request = request();
+        } catch (\Throwable) {
+            return RequestId::normalize('');
+        }
+        return $request instanceof Request ? RequestId::fromRequestCached($request) : RequestId::normalize('');
     }
 }

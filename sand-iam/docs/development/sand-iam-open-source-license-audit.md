@@ -1,17 +1,17 @@
-# SandIAM 开源来源与许可证审计（候选方案）
+# SandIAM 开源来源与许可证审计（0.7.1 当前基线）
 
-> 审计日期：2026-09-12。状态：**方案待用户确认，不是法律意见，也未写入最终 LICENSE**。
-> 审计对象：SandIAM `0.7.0` 当前权威源码、review-only 包策略、锁文件、随包 vendor、SDK 与宿主接口依赖。
+> 审计日期：2026-09-12。状态：**Apache-2.0、Copyright 2026 supdger 和 DCO 已在权威源码落地**。
+> 本文不是法律意见；最终签名、来源权利链和正式发行仍须独立复核。
+> 审计对象：SandIAM `0.7.1` 当前权威源码、发布包策略、锁文件、随包 vendor、SDK 与宿主接口依赖。
 
 ## 1. 当前结论
 
-- 当前已识别依赖均为 MIT、BSD-3-Clause 或 Apache-2.0 宽松许可证，未发现 GPL、AGPL、SSPL、BUSL 或其他已知会要求 SandIAM/闭源接入应用同许可证发布的依赖。
-- 当前候选已携带 OneLogin PHP SAML、xmlseclibs 和 Composer autoloader 的原许可证文件，以及
-  `THIRD_PARTY_NOTICES.md`、`SECURITY.md`、`CONTRIBUTING.md`、公开变更记录和机器可读 SBOM；
-  但仍没有经权利人确认的 SandIAM 自身 `LICENSE` 与版权主体，因此不可发布。
-- 推荐 SandIAM 自身采用 **Apache License 2.0**：允许商用、修改、再分发和闭源系统集成，并比 MIT 多出明确的贡献者专利许可与终止条款。代价是再分发时需保留许可证、变更/版权/专利归属声明，并维护 NOTICE。
-- 备选是 **MIT**：与 SandAdmin 一致、义务更简单，但没有 Apache-2.0 的明确专利许可。若用户优先极简集成而非专利条款，可选 MIT。
-- Apache-2.0 与本次识别的 MIT/BSD-3-Clause/Apache-2.0 依赖可并存；第三方代码继续保留各自原许可证，不改成 SandIAM 的许可证。
+- 当前已识别依赖及随包 schema 许可为 MIT、BSD-3-Clause、Apache-2.0 或 W3C Software Notice and License，未发现 GPL、AGPL、SSPL、BUSL 或其他已知会要求 SandIAM/闭源接入应用同许可证发布的依赖。
+- SandIAM 自身以 **Apache License 2.0** 发布，`NOTICE` 载明 `Copyright 2026 supdger`，贡献治理采用
+  DCO。Apache-2.0 允许商用、修改、再分发和闭源系统集成，并提供明确的贡献者专利许可与终止条款。
+- 当前候选携带 OneLogin PHP SAML、xmlseclibs、Composer autoloader 及 W3C XML Signature Core Schema
+  的适用许可/notice，并包含 `THIRD_PARTY_NOTICES.md`、`SECURITY.md`、`CONTRIBUTING.md`、公开变更记录和机器可读 SBOM。
+- Apache-2.0 与本次识别的 MIT/BSD-3-Clause/Apache-2.0/W3C Software Notice and License 依赖可并存；第三方代码继续保留各自原许可证，不改成 SandIAM 的许可证。
 
 ## 2. 随安装包分发的运行时依赖
 
@@ -55,24 +55,15 @@ SandIAM 的安装包可以包含插件管理端源码，但不得把整个 SandA
 ## 5. 对照产品与来源边界
 
 - Casdoor 只用于功能与旅程对照，不复制其实现。Casdoor 官方仓库使用 Apache-2.0；对照报告需保留来源链接，不能据此主张 SandIAM 代码来源于 Casdoor。
-- 当前 `git log -- sand-iam` 显示本仓 SandIAM 提交作者集中为 `supdger`，但这不能代替法律上的版权归属确认，也不能证明所有历史输入均有再许可权。
-- 发布前需要用户确认：SandIAM 自身许可证、版权主体显示名/年份，以及是否存在未进入 Git 历史的第三方或雇佣成果权利约束。
+- 当前 `git log -- sand-iam` 显示本仓 SandIAM 提交作者集中为 `supdger`，但这不能代替对所有历史输入、
+  雇佣成果或仓外第三方材料的权利链复核。
 
-## 6. 推荐落地清单（确认后执行）
+## 6. 已落地材料与最终发行前复核
 
-1. 根与发布包加入标准 Apache-2.0 `LICENSE`，并在包策略中设为必需文件。
-2. 若选择 Apache-2.0，加入项目 `NOTICE`：SandIAM 自身归属和必要归属声明；第三方完整索引
-   继续由 `THIRD_PARTY_NOTICES.md` 与原许可证承载，不声称第三方背书。
-3. 加入机器可读 SBOM（建议 CycloneDX JSON）和 `THIRD_PARTY_NOTICES.md`，区分 vendored/runtime/dev/host-provided。
-4. 加入 `SECURITY.md`、`CONTRIBUTING.md`，明确漏洞私下报告通道、贡献默认按项目许可证提交、DCO/CLA 选择。
-5. 许可证确认后给可声明许可证的 PHP/TypeScript SDK manifest 补 SPDX 字段；Dart 包以根 LICENSE
-   为发布许可证依据。发布构建检查 LICENSE、适用的 NOTICE、SBOM 和 vendor 许可证完整性。
-6. 最终候选重新生成恢复描述器、可复现 ZIP、SHA256SUMS 与包外 Ed25519 签名，再做独立许可证复核。
-
-## 7. 待用户确认
-
-- 推荐选择：**Apache-2.0**。
-- 需要用户提供或确认的版权行：`Copyright (c) 2026 <法律主体或个人名称>`。
-- 需要用户确认贡献治理：轻量 DCO，或要求 CLA。
-
-在以上三项确认前，本任务继续推进不依赖最终许可证文本的源码、测试、文档与候选预门禁，但发布包许可门槛保持未通过。
+1. 根与三个可独立分发 SDK 都携带 Apache-2.0 `LICENSE` 与 `NOTICE`；PHP/TypeScript 元数据声明 SPDX，
+   Dart 包保留其支持的 repository、homepage 和 issue tracker 元数据。
+2. `THIRD_PARTY_NOTICES.md`、CycloneDX SBOM 与发布卫生检查共同覆盖 vendored/runtime/dev/host-provided
+   依赖，以及 W3C XML Signature schema 的独立 notice。
+3. 最终候选必须从最终 clean commit 重新生成 SBOM、可复现 ZIP、SHA256SUMS 和包外 Ed25519 签名，
+   再由独立人员复核许可证文本、notice、SBOM、来源权利链与签名身份。
+4. 已落地的许可证和 DCO 不替代安装升级、宿主验收、业务闭环、外部互操作、Casdoor 对照或 24 小时稳定性门槛。

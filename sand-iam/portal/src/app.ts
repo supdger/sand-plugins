@@ -34,6 +34,7 @@ import {
   portalForgotPassword,
   portalLogin,
   portalRegister,
+  portalIdentityVerification,
   verifyPortalMfaChallenge,
   verifyPortalPasskeyChallenge,
   portalResetPassword,
@@ -58,6 +59,13 @@ import type {
 import type { SandIamPortalMfaChallenge } from "./experienceContracts";
 
 interface PortalState {
+  verification: {
+    readonly organizationCode: string;
+    readonly applicationCode: string;
+    readonly identifier: string;
+    channel: "email" | "phone";
+    busy: boolean;
+  } | null;
   accessToken: string;
   requestId: string;
   organizationCode: string;
@@ -119,6 +127,7 @@ let casRequest = takeSensitiveQuery("cas_request") || takeSensitiveQuery("reques
 let oauthRequest = takeSensitiveQuery("oauth_request");
 
 const state: PortalState = {
+  verification: null,
   accessToken: "",
   requestId: "",
   organizationCode: params.get("organization_code") ?? "",
@@ -426,6 +435,7 @@ async function submitOAuthDecision(decision: "approve" | "deny"): Promise<void> 
 }
 
 async function loadExperience(): Promise<void> {
+  state.verification = null;
   state.organizationCode = inputValue("organization-code") || state.organizationCode;
   state.applicationCode = inputValue("application-code") || state.applicationCode;
   clearError();
@@ -453,18 +463,20 @@ async function submitLogin(): Promise<void> {
     return;
   }
   clearError();
+  const identifier = inputValue("login-identifier");
+  const organization = state.organizationCode;
+  const application = state.applicationCode;
   try {
     const result = await portalLogin(
       state.organizationCode,
       state.applicationCode,
-      inputValue("login-identifier"),
+      identifier,
       inputValue("login-password"),
       inputValue("login-captcha"),
     );
     rememberRequest(result.requestId);
     if (result.data.verificationRequired) {
-      state.errorTitle = "还需要完成验证";
-      state.errorDetail = "账号已识别，但还不能签发会话。请先完成邮箱或手机验证。";
+      openVerification(identifier, organization, application);
       render();
       return;
     }
@@ -480,7 +492,11 @@ async function submitLogin(): Promise<void> {
     await bindOAuthAfterLogin();
     render();
   } catch (error: unknown) {
-    setError(error);
+    if (error instanceof Error && error.message.includes("SAND_IAM_AUTH_VERIFICATION_REQUIRED")) {
+      openVerification(identifier, organization, application);
+    } else {
+      setError(error);
+    }
     render();
   }
 }
@@ -615,6 +631,8 @@ async function submitRegister(): Promise<void> {
   }
   const captcha = inputValue("register-captcha");
   if (captcha !== "") fields.captcha_token = captcha;
+  const organization = state.organizationCode;
+  const application = state.applicationCode;
   try {
     const result = await portalRegister(
       state.organizationCode,
@@ -623,8 +641,7 @@ async function submitRegister(): Promise<void> {
     );
     rememberRequest(result.requestId);
     if (result.data.verificationRequired) {
-      state.errorTitle = "还需要完成验证";
-      state.errorDetail = "注册已接受，但还不能签发会话。";
+      openVerification(fields.username, organization, application);
       render();
       return;
     }
@@ -642,6 +659,55 @@ async function submitRegister(): Promise<void> {
   } catch (error: unknown) {
     setError(error);
     render();
+  }
+}
+
+function openVerification(identifier: string, organization: string, application: string): void {
+  if (organization !== state.organizationCode || application !== state.applicationCode) return;
+  state.verification = {
+    organizationCode: organization, applicationCode: application, identifier,
+    channel: "email", busy: false,
+  };
+  state.pendingMfa = null;
+  state.errorTitle = "还需要完成验证";
+  state.errorDetail = "请选择账号登记的邮箱或手机完成验证，再重新登录。";
+}
+
+async function submitVerification(channel?: "email" | "phone"): Promise<void> {
+  const verification = state.verification;
+  if (verification === null || verification.busy) return;
+  const code = channel === undefined ? inputValue("verification-code").trim() : undefined;
+  if (code === "") {
+    state.errorTitle = "请填写验证码";
+    state.errorDetail = "输入收到的验证码后再确认。";
+    render();
+    return;
+  }
+  if (channel !== undefined) verification.channel = channel;
+  verification.busy = true;
+  clearError();
+  render();
+  try {
+    const result = await portalIdentityVerification(
+      verification.organizationCode, verification.applicationCode, verification.identifier,
+      verification.channel, code,
+    );
+    if (state.verification !== verification) return;
+    rememberRequest(result.requestId);
+    if (code === undefined) {
+      state.errorTitle = "验证请求已受理";
+      state.errorDetail = "如账号已登记所选联系方式且通道可用，您将收到验证码。未收到时请稍后重试或联系应用管理员。";
+    } else {
+      state.verification = null;
+      state.errorTitle = "本次联系方式验证已完成";
+      state.errorDetail = "请重新登录；若应用还要求其他验证，请按登录提示继续。";
+      render();
+    }
+  } catch (error: unknown) {
+    if (state.verification === verification) setError(error);
+  } finally {
+    verification.busy = false;
+    if (state.verification === verification) render();
   }
 }
 
@@ -1034,6 +1100,20 @@ function render(): void {
   document.getElementById("register-btn")?.addEventListener("click", () => {
     void submitRegister();
   });
+  document.getElementById("verification-email")?.addEventListener("click", () => {
+    void submitVerification("email");
+  });
+  document.getElementById("verification-phone")?.addEventListener("click", () => {
+    void submitVerification("phone");
+  });
+  document.getElementById("verification-confirm")?.addEventListener("click", () => {
+    void submitVerification();
+  });
+  document.getElementById("verification-back")?.addEventListener("click", () => {
+    state.verification = null;
+    clearError();
+    render();
+  });
   document.getElementById("forgot-btn")?.addEventListener("click", () => {
     void submitForgot();
   });
@@ -1181,6 +1261,22 @@ function renderExperience(): string {
 
 function renderLogin(): string {
   if (state.experience === null) return "";
+  if (state.verification !== null) {
+    const verification = state.verification;
+    const disabled = verification.busy ? "disabled" : "";
+    return `<section>
+      <h2>验证账号联系方式</h2>
+      <p>当前账号：${escapeHtml(verification.identifier)}</p>
+      <p class="hint">验证码发送到该账号已登记的联系方式。请选择需要验证的邮箱或手机。</p>
+      <button type="button" id="verification-email" ${disabled}>发送邮箱验证码</button>
+      <button type="button" id="verification-phone" ${disabled}>发送手机验证码</button>
+      <label>${verification.channel === "email" ? "邮箱" : "手机"}验证码
+        <input id="verification-code" autocomplete="one-time-code" ${disabled} />
+      </label>
+      <button type="button" id="verification-confirm" ${disabled}>确认验证</button>
+      <button type="button" id="verification-back" ${disabled}>返回登录</button>
+    </section>`;
+  }
   const passwordEnabled = experienceAllowsPassword(state.experience);
   const passkeyEnabled = experienceAllowsPasskey(state.experience);
   const externalMethods = externalLoginMethods(state.experience);

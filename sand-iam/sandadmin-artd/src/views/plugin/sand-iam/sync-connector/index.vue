@@ -36,6 +36,9 @@
   const connectors = ref<SandIamSyncConnectorRow[]>([])
   const runs = ref<SandIamSyncRunRow[]>([])
   const failedOutbox = ref<SandIamSyncOutboxRow[]>([])
+  const outboxLoading = ref(false)
+  let outboxRequestVersion = 0
+  let failedOutboxConnectorId: number | null = null
   const applicationId = ref('')
   const name = ref('')
   const code = ref('')
@@ -244,20 +247,32 @@
   /**
    * 只拉 failed 出站事件。请求不带载荷字段，解析器也不读取密文。
    */
+  function isCurrentOutboxRequest(version: number, connectorId: number): boolean {
+    return version === outboxRequestVersion && selectedId(selectedIdValue.value) === connectorId
+  }
+
   async function loadFailedOutbox(): Promise<void> {
     const id = selectedId(selectedIdValue.value)
     if (id === null || !canRuns.value) return
-    loading.value = true
+    const version = ++outboxRequestVersion
+    outboxLoading.value = true
+    failedOutbox.value = []
+    failedOutboxConnectorId = null
     requestError.value = null
     try {
-      failedOutbox.value = parseSandIamSyncOutboxRows(
+      const rows = parseSandIamSyncOutboxRows(
         await getSandIamAdmin('sync-connector/outbox', { id, state: 'failed' })
       )
+      if (!isCurrentOutboxRequest(version, id) || !canRuns.value) return
+      failedOutbox.value = rows
+      failedOutboxConnectorId = id
     } catch (error: unknown) {
+      if (!isCurrentOutboxRequest(version, id)) return
       requestError.value = describeSandIamError(error)
       failedOutbox.value = []
+      failedOutboxConnectorId = null
     } finally {
-      loading.value = false
+      if (isCurrentOutboxRequest(version, id)) outboxLoading.value = false
     }
   }
 
@@ -266,30 +281,47 @@
    * 只提交连接 id 与 outbox_id，不回传任何载荷。
    */
   async function retryFailedOutbox(row: SandIamSyncOutboxRow): Promise<void> {
-    const id = selectedId(selectedIdValue.value)
-    if (id === null || row.state !== 'failed') {
+    if (outboxLoading.value) return
+    const id = failedOutboxConnectorId
+    if (
+      id === null ||
+      id !== selectedId(selectedIdValue.value) ||
+      !canRun.value ||
+      row.state !== 'failed' ||
+      !failedOutbox.value.includes(row)
+    ) {
       requestError.value = describeSandIamError(
         new Error('SAND_IAM_SYNC_OUTBOX_NOT_RETRYABLE: 只有失败的出站事件可以重试')
       )
       return
     }
-    loading.value = true
+    const version = ++outboxRequestVersion
+    outboxLoading.value = true
     requestError.value = null
     try {
       await postSandIamAction('sync-connector/outbox-retry', { id, outbox_id: row.id })
+      if (!isCurrentOutboxRequest(version, id)) return
       ElMessage.success('已重新排队')
       await loadFailedOutbox()
     } catch (error: unknown) {
+      if (!isCurrentOutboxRequest(version, id)) return
       requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (isCurrentOutboxRequest(version, id)) outboxLoading.value = false
     }
   }
 
-  watch(selectedIdValue, () => {
-    runs.value = []
-    failedOutbox.value = []
-  })
+  watch(
+    selectedIdValue,
+    () => {
+      outboxRequestVersion++
+      failedOutboxConnectorId = null
+      outboxLoading.value = false
+      runs.value = []
+      failedOutbox.value = []
+    },
+    { flush: 'sync' }
+  )
 
   onMounted(() => {
     void loadApplications()
@@ -468,7 +500,11 @@
           <ElButton :disabled="!canRuns" :loading="loading" @click="loadRuns"
             >查看运行记录</ElButton
           >
-          <ElButton :disabled="!canRuns" :loading="loading" @click="loadFailedOutbox">
+          <ElButton
+            :disabled="!canRuns"
+            :loading="loading || outboxLoading"
+            @click="loadFailedOutbox"
+          >
             查看失败出站
           </ElButton>
         </ElFormItem>
@@ -517,7 +553,13 @@
         title="同步仍在执行"
         description="同一连接同一应用只允许一个运行中任务。执行结束前重试会被拒绝。"
       />
-      <ElTable :data="failedOutbox" border stripe empty-text="先选择连接并加载失败出站事件">
+      <ElTable
+        v-loading="outboxLoading"
+        :data="failedOutbox"
+        border
+        stripe
+        empty-text="先选择连接并加载失败出站事件"
+      >
         <ElTableColumn label="事件标识" min-width="180">
           <template #default="scope">{{ scope.row.event_id }}</template>
         </ElTableColumn>
@@ -542,7 +584,7 @@
               v-if="scope.row.state === 'failed'"
               size="small"
               :disabled="!canRun"
-              :loading="loading"
+              :loading="loading || outboxLoading"
               @click="retryFailedOutbox(scope.row)"
             >
               重试

@@ -28,6 +28,23 @@ require_once $root . '/sdk/php/src/SandIamClient.php';
 $client = new SandIamClient('https://iam.example.test', $config['organization_code'], $config['application_code'], 3, static fn (): array => ['status' => 200, 'body' => json_encode(['data' => ['allowed' => true, 'code' => 'allowed', 'policy_ids' => [1], 'scope' => ['equals' => ['organization_id' => 1001]], 'application_id' => 1, 'identity_id' => 2, 'api_code' => 'work_item.detail', 'api_version' => 'v1', 'resource_code' => 'work_item', 'action' => 'work_item.read', 'operation' => 'read', 'risk_level' => 'medium']], JSON_THROW_ON_ERROR)]);
 $decision = $client->authorizeEntity('test-token-from-environment-only', $config['actions']['WORK_ITEM_READ'], (object) ['organization_id' => 1001], static fn (object $workItem): array => ['organization_id' => $workItem->organization_id], [], 'v1', 'quickstart-sdk-001');
 quickstartAssert(($decision['allowed'] ?? false) === true, 'PHP SDK could not consume generated configuration');
+$integrationGuide = (string) file_get_contents($root . '/docs/user-guide/application-integration.md');
+$documentJson = static function (string $marker) use ($integrationGuide): array {
+    if (preg_match('/<!-- sand-iam-doc-contract: ' . preg_quote($marker, '/') . ' -->\s*```json\s*(\{.*?\})\s*```/s', $integrationGuide, $match) !== 1) {
+        throw new RuntimeException('documented authorization contract marker is missing: ' . $marker);
+    }
+    return json_decode($match[1], true, 64, JSON_THROW_ON_ERROR);
+};
+$allowEnvelope = $documentJson('decide.allow');
+$denyEnvelope = $documentJson('decide.deny');
+$errorEnvelope = $documentJson('decide.error');
+$documentAllowClient = new SandIamClient('https://iam.example.test', 'acme', 'workbench', 3, static fn (): array => ['status' => 200, 'body' => json_encode($allowEnvelope, JSON_THROW_ON_ERROR)]);
+$documentAllow = $documentAllowClient->authorize('document-token', 'work_item.read', ['organization_id' => 42], 'v1', 'document-allow-001');
+quickstartAssert(($documentAllow['allowed'] ?? false) === true && ($documentAllow['api_code'] ?? null) === 'work_item.read' && ($documentAllow['application_id'] ?? null) === 3 && ($documentAllow['identity_id'] ?? null) === 101, 'documented allow response is not consumable by the PHP SDK');
+$documentDenyClient = new SandIamClient('https://iam.example.test', 'acme', 'workbench', 3, static fn (): array => ['status' => 200, 'body' => json_encode($denyEnvelope, JSON_THROW_ON_ERROR)]);
+try { $documentDenyClient->authorize('document-token', 'work_item.read', ['organization_id' => 42], 'v1', 'document-deny-001'); quickstartAssert(false, 'documented deny response did not fail closed'); } catch (\Sand\Iam\Sdk\AuthorizationDenied $exception) { quickstartAssert($exception->errorCode === 'SAND_IAM_POLICY_DENIED', 'documented deny response changed the stable SDK error'); }
+$documentErrorClient = new SandIamClient('https://iam.example.test', 'acme', 'workbench', 3, static fn (): array => ['status' => 403, 'body' => json_encode($errorEnvelope, JSON_THROW_ON_ERROR)]);
+try { $documentErrorClient->authorize('document-token', 'work_item.read', ['organization_id' => 42], 'v1', 'document-error-001'); quickstartAssert(false, 'documented error response did not fail closed'); } catch (\Sand\Iam\Sdk\SandIamException $exception) { quickstartAssert($exception->errorCode === 'SAND_IAM_RESOURCE_SCOPE_DENIED' && $exception->httpStatus === 403, 'documented error response changed the stable SDK error'); }
 
 $typescript = $root . '/sdk/typescript/node_modules/.bin/tsc';
 if (is_executable($typescript)) {

@@ -18,6 +18,7 @@ final class EnvironmentController extends ApplicationResourceController
     protected array $writeFields = ['application_id', 'code', 'name', 'status'];
     protected array $requiredFields = ['application_id', 'code', 'name'];
     protected string $resourceType = 'environment';
+    protected bool $atomicCreateAudit = true;
     #[Permission('SandIAM 应用环境列表', 'sand_iam:environment:index')] public function index(Request $request): Response { return parent::index($request); }
     #[Permission('SandIAM 应用环境读取', 'sand_iam:environment:read')] public function read(Request $request): Response { return parent::read($request); }
     #[Permission('SandIAM 应用环境保存', 'sand_iam:environment:save')]

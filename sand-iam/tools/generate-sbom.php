@@ -71,6 +71,32 @@ foreach (['packages' => 'required', 'packages-dev' => 'optional'] as $section =>
     }
 }
 
+// php-saml redistributes this schema as a distinct W3C work. Composer's
+// package-level MIT declaration does not replace the schema's own notice.
+$xmlDsigSchema = 'plugin/sand-iam/vendor/onelogin/php-saml/src/Saml2/schemas/xmldsig-core-schema.xsd';
+if (!is_file($root . '/' . $xmlDsigSchema)) {
+    throw new RuntimeException('distributed W3C XML Signature schema is missing');
+}
+$add([
+    'type' => 'data',
+    'bom-ref' => 'urn:sandiam:vendored:w3c-xmldsig-core-schema@2002-02-08',
+    'name' => 'W3C XML Signature Core Schema',
+    'version' => '2002-02-08',
+    'scope' => 'required',
+    'licenses' => [[
+        'license' => [
+            'name' => 'W3C Software Notice and License',
+            'url' => 'https://www.w3.org/Consortium/Legal/copyright-software-19980720',
+        ],
+    ]],
+    'properties' => [
+        ['name' => 'sandiam:distributed-path', 'value' => $xmlDsigSchema],
+        ['name' => 'sandiam:license-evidence', 'value' => $xmlDsigSchema],
+        ['name' => 'sandiam:notice', 'value' => 'THIRD_PARTY_NOTICES.md'],
+        ['name' => 'sandiam:source-url', 'value' => 'http://www.w3.org/2000/09/xmldsig#'],
+    ],
+]);
+
 /** @param array<string,array{id?:string,expression?:string,evidence:string}> $licenseMap */
 $readPnpm = static function (string $relative, array $licenseMap) use ($root, $add, $licenseChoice): void {
     $source = file_get_contents($root . '/' . $relative);

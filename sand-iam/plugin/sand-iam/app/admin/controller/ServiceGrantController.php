@@ -24,6 +24,7 @@ final class ServiceGrantController extends AdminResourceController
     protected array $writeFields = ['workload_client_id', 'service_action_id', 'audience', 'quota_policy', 'data_class', 'network_policy', 'expire_time', 'status'];
     protected array $requiredFields = ['workload_client_id', 'service_action_id', 'audience'];
     protected string $resourceType = 'service_grant';
+    protected bool $atomicCreateAudit = true;
     #[Permission('SandIAM 服务授权列表', 'sand_iam:grant:index')] public function index(Request $request): Response { return parent::index($request); }
     #[Permission('SandIAM 服务授权读取', 'sand_iam:grant:read')] public function read(Request $request): Response { return parent::read($request); }
     #[Permission('SandIAM 服务授权保存', 'sand_iam:grant:save')] public function save(Request $request): Response { return parent::save($request); }

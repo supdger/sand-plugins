@@ -1063,6 +1063,8 @@ function liveRun(string $chainId, array $chain, array $targets, array $authoriza
     };
     $successful = true;
     $cleanupOk = true;
+    $cleanupPhysicalExecuted = 0;
+    $cleanupStatusExecuted = 0;
     try {
         foreach ($chain['steps'] as $step) {
             try {
@@ -1076,6 +1078,7 @@ function liveRun(string $chainId, array $chain, array $targets, array $authoriza
         // Cleanup is intentionally independent: a failed business step must not
         // hide a later cleanup attempt or turn a disabled record into “zero residual”.
         foreach ($chain['cleanup']['steps'] as $step) {
+            if (!liveShouldRunStep($step, $variables)) continue;
             try {
                 if (is_array($step['verifier'] ?? null) && ($step['verifier']['kind'] ?? null) === 'postgres_readonly') {
                     $outcome = livePostgresReadonlyVerify($step, ['captured_ids' => $capturedIds]);
@@ -1084,14 +1087,27 @@ function liveRun(string $chainId, array $chain, array $targets, array $authoriza
                 } elseif (!$execute($step)) {
                     $cleanupOk = false;
                 }
+                if (($step['proof'] ?? null) === 'physical_cleanup') $cleanupPhysicalExecuted++;
+                if (($step['proof'] ?? null) === 'zero_residual') $cleanupStatusExecuted++;
             } catch (Throwable $exception) {
                 $checks[] = ['label' => (string) ($step['id'] ?? 'cleanup'), 'ok' => false, 'detail' => '清理步骤异常：' . $exception->getMessage()];
                 $cleanupOk = false;
             }
         }
     } finally { foreach ($cookieJars as $cookieJar) @unlink($cookieJar); }
+    $c01V2 = $chainId === 'organization-application-environment'
+        && in_array(2, array_map(static fn (mixed $step): int => (int) (($step['body']['contract_version'] ?? 0)), $chain['cleanup']['steps'] ?? []), true);
+    $cleanupState = $cleanupOk ? 'confirmed' : 'failed';
+    if ($c01V2 && ($cleanupPhysicalExecuted === 0 || $cleanupStatusExecuted === 0)) {
+        $cleanupOk = false;
+        $cleanupState = 'not_confirmed';
+        $checks[] = ['label' => 'C01 cleanup confirmation', 'ok' => false, 'detail' => 'C01 未执行匹配的物理清理和零残留状态检查；夹具状态未确认。'];
+    }
     $passed = count(array_filter($checks, static fn (array $check): bool => $check['ok']));
-    return ['id' => $chainId, 'checks' => $checks, 'fixture_ids' => array_values(array_unique($fixtures)), 'captured_ids' => $capturedIds, 'cleanup' => ['ok' => $cleanupOk, 'detail' => $cleanupOk ? '自动清理和零残留查询均已通过。' : '自动清理或零残留查询失败。'], 'passed' => $passed, 'total' => count($checks), 'status' => $successful && $cleanupOk && $passed === count($checks) ? 'passed' : 'failed'];
+    $status = $successful && $cleanupOk && $passed === count($checks)
+        ? 'passed'
+        : ($cleanupState === 'not_confirmed' ? 'blocked' : 'failed');
+    return ['id' => $chainId, 'checks' => $checks, 'fixture_ids' => array_values(array_unique($fixtures)), 'captured_ids' => $capturedIds, 'cleanup' => ['ok' => $cleanupOk, 'state' => $cleanupState, 'detail' => $cleanupOk ? '自动清理和零残留查询均已通过。' : ($cleanupState === 'not_confirmed' ? '未执行匹配的自动清理和零残留检查，状态未确认。' : '自动清理或零残留查询失败。')], 'passed' => $passed, 'total' => count($checks), 'status' => $status];
 }
 
 if (!defined('SAND_IAM_LIVE_DRIVER_LIBRARY')) try {

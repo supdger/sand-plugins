@@ -1107,7 +1107,12 @@
             <span v-else>{{ displayValue(column.key, scope.row[column.key], scope.row) }}</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn v-if="showWrites" label="操作" min-width="280" fixed="right">
+        <ElTableColumn
+          v-if="showWrites || $slots['row-actions']"
+          label="操作"
+          min-width="280"
+          fixed="right"
+        >
           <template #default="scope">
             <ElSpace wrap>
               <ElButton
@@ -1280,6 +1285,7 @@
               >
                 撤销
               </ElButton>
+              <slot name="row-actions" :row="scope.row" />
             </ElSpace>
           </template>
         </ElTableColumn>

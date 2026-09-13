@@ -25,6 +25,10 @@ php tools/verify-release-bundle.php \
   --public-key=/trusted-keys/sand-iam-ed25519.pub
 ```
 
+命令中的 `tools/...` 表示从可信源码 revision 取得的验证工具；`/downloads/...` 和
+`/trusted-keys/...` 是发布时必须填写的参数占位，须替换为分别从独立可信渠道取得的候选文件和公钥。
+它们不是安装包内路径，也不是任何固定机器路径。
+
 验证器会同时检查：
 
 1. 公钥、签名和证明文件的 schema；

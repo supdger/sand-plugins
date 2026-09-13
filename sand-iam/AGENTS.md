@@ -13,5 +13,5 @@
 - 任务状态唯一来源：[SandIAM 任务看板](docs/development/sand-iam-task-board.md)
 - 协作边界：[PostgreSQL 协作约定](docs/development/sand-iam-pg-collaboration.md)
 - Codex 独占：`plugin/sand-iam/`（PHP、SQL、菜单/路由、契约）
-- Cursor 独占：`sandadmin-artd/src/views/plugin/sand-iam/`
+- 当前覆盖（2026-09-13）：Web 前端 `sandadmin-artd/src/views/plugin/sand-iam/` 由 Codex 接管，Astra 负责前端设计与实现，并由不同上下文的 Astra 独立验收；历史 Cursor 分工仅供追溯，不代表当前写者。
 - 未冻结字段不得猜测实现。业务拒绝用 `plugin\sandadmin\exception\ApiException`，显式传 `400`/`401`。

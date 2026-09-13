@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema", "run_id", "status", "real_l04", "before_first_write", "transport_initialized", "database_factory_initialized", "action_registry_sha256", "steps"],
+  "properties": {
+    "schema": {"const": "sand-iam.consumer-acceptance-v2-report/v1"}, "run_id": {"$ref": "#/$defs/id"},
+    "status": {"enum": ["preflight_blocked", "authorized_offline"]}, "real_l04": {"const": false},
+    "before_first_write": {"const": true}, "transport_initialized": {"const": false}, "database_factory_initialized": {"const": false},
+    "action_registry_sha256": {"$ref": "#/$defs/sha256"},
+    "steps": {"type": "array", "minItems": 6, "maxItems": 6, "prefixItems": [{"const": "preflight"}, {"const": "allow"}, {"const": "deny"}, {"const": "revoke"}, {"const": "audit"}, {"const": "cleanup"}], "items": false}
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{2,95}$"}}
+}

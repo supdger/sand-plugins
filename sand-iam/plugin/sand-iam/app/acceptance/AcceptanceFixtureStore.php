@@ -32,6 +32,23 @@ interface AcceptanceFixtureStore
     public function allCreationAuditIds(string $action, string $resourceType, string $requestId, string $prefix): array;
 
     /**
+     * C01 v2 binds each creation audit to the platform administrator that
+     * created the controlled fixture, rather than trusting a delegated-grant
+     * subject as proof of the creator.
+     */
+    public function creationAuditCreatedBy(string $action, string $resourceType, string $requestId, int $resourceId, string $prefix, int $adminId): bool;
+
+    /**
+     * Discovers every C01 v2 root carrying the controlled prefix and every
+     * grant attached to one of the discovered applications. This is a
+     * discovered universe, not a caller-selected lookup: an omitted root or
+     * grant must stop cleanup before it can mutate any fixture.
+     *
+     * @return array<string,list<array<string,mixed>>>
+     */
+    public function organizationApplicationEnvironmentUniverse(string $prefix, bool $lock): array;
+
+    /**
      * The MFA verification audit is only valid when its actor, application
      * and challenge resource all belong to the submitted acceptance identity.
      */

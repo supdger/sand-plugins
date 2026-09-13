@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace plugin\SandIam\app\admin\support;
 
 use plugin\SandIam\app\service\AuditWriter;
+use plugin\SandIam\app\service\IdempotencyService;
 use plugin\SandIam\app\service\RequestId;
 use plugin\sandadmin\basic\BaseController;
 use plugin\sandadmin\exception\ApiException;
@@ -21,6 +22,11 @@ abstract class AdminResourceController extends BaseController
     protected array $requiredFields = ['code', 'name'];
     protected string $resourceType;
     protected bool $requiresSuperAdmin = false;
+    /**
+     * Opt in only for create routes whose object and audit must be atomic.
+     * Existing resource controllers retain their established behavior.
+     */
+    protected bool $atomicCreateAudit = false;
     protected ?string $keywordField = 'name';
 
     public function index(Request $request): Response
@@ -57,6 +63,26 @@ abstract class AdminResourceController extends BaseController
         $this->assertReferences($payload);
         $this->assertPayloadAccess($payload);
         $modelClass = $this->modelClass;
+        if ($this->atomicCreateAudit) {
+            $token = $request->header('check_admin', []);
+            $adminId = is_array($token) ? (int) ($token['id'] ?? 0) : 0;
+            $execution = (new IdempotencyService())->execute(
+                'admin',
+                (string) $adminId,
+                $this->resourceType . '.create',
+                RequestId::fromRequestCached($request),
+                IdempotencyService::fingerprint($payload),
+                $this->resourceType,
+                function () use ($modelClass, $payload, $request): array {
+                    $model = $modelClass::create($payload);
+                    $this->audit('create', (int) $model->id, $request);
+                    return ['resource_id' => (int) $model->id, 'result' => ['id' => (int) $model->id]];
+                },
+            );
+            $result = $execution['result'];
+            unset($result['secret_available']);
+            return $this->success($result, '保存成功');
+        }
         $model = $modelClass::create($payload);
         $this->audit('create', (int) $model->id, $request);
         return $this->success(['id' => (int) $model->id], '保存成功');

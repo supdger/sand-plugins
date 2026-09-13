@@ -3,80 +3,56 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__, 3);
+require_once $root . '/tools/release-bundle-attestation.php';
 $validator = $root . '/tools/validate-backup-recovery.php';
-/** @return array{0:int,1:string} */
-$run = static function (string $report) use ($validator): array {
-    $output = [];
-    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($validator) . ' --report=' . escapeshellarg($report) . ' 2>&1', $output, $status);
-    return [$status, implode("\n", $output)];
-};
-$removeTree = null;
-$removeTree = static function (string $path) use (&$removeTree): void {
-    if (is_link($path) || is_file($path)) { unlink($path); return; }
-    foreach (scandir($path) ?: [] as $entry) if ($entry !== '.' && $entry !== '..') $removeTree($path . '/' . $entry);
-    rmdir($path);
-};
-$seed = tempnam('/private/tmp', 'sand-iam-recovery-');
-if ($seed === false || !unlink($seed) || !mkdir($seed, 0700) || !mkdir($seed . '/evidence', 0700)) throw new RuntimeException('cannot create recovery fixture');
-
+$dir = sys_get_temp_dir() . '/sand-iam-recovery-v3-' . bin2hex(random_bytes(6));
+if (!mkdir($dir, 0700)) throw new RuntimeException('cannot create fixture');
+$run = static function (array $args): array { exec(implode(' ', array_map('escapeshellarg', $args)) . ' 2>&1', $out, $status); return [$status, implode("\n", $out)]; };
+$json = static function (string $path, array $value): void { file_put_contents($path, json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)); };
+$ref = static fn(string $type, string $id): array => ['type'=>$type, 'id'=>$id];
+$scope = static fn(array $org, array $app, ?array $env): array => ['organization_ref'=>$org, 'application_ref'=>$app, 'environment_ref'=>$env];
 try {
-    $types = ['backup-command', 'archive-list', 'restore-command', 'source-state', 'restored-state', 'business-probes', 'cleanup'];
-    $evidence = [];
-    foreach ($types as $type) {
-        $path = 'evidence/' . $type . '.json';
-        $bytes = json_encode(['type' => $type, 'result' => 'redacted-pass'], JSON_THROW_ON_ERROR) . "\n";
-        file_put_contents($seed . '/' . $path, $bytes);
-        $evidence[] = ['type' => $type, 'path' => $path, 'sha256' => hash('sha256', $bytes)];
-    }
-    $state = [
-        'logical_state_sha256' => str_repeat('d', 64), 'audit_chain_sha256' => str_repeat('e', 64),
-        'sand_iam_tables' => 86, 'migration_rows' => 37, 'organizations' => 2, 'applications' => 3,
-        'environments' => 4, 'identities' => 5, 'active_credentials' => 2, 'revoked_credentials' => 1,
-        'revoked_sessions' => 1, 'audit_rows' => 25,
-    ];
-    $checks = array_fill_keys(['archive_list_complete', 'restore_single_transaction', 'migration_ledger_equal', 'authorization_allow_equal', 'authorization_deny_equal', 'revoked_access_denied', 'revoked_sessions_not_resurrected', 'audit_chain_equal', 'signature_verification_equal', 'post_restore_audit_append', 'host_objects_unchanged', 'other_plugins_unchanged', 'cleanup_verified'], true);
-    $valid = [
-        'schema' => 'sand-iam.backup-recovery/v1',
-        'candidate' => ['version' => '0.7.0', 'archive_sha256' => str_repeat('a', 64), 'artifact_manifest_sha256' => str_repeat('b', 64)],
-        'reviewer' => ['id' => 'independent-recovery-reviewer', 'independent' => true, 'conflict_statement' => 'I did not perform the restore implementation.'],
-        'environment' => ['fingerprint' => str_repeat('c', 64), 'host' => 'isolated-restore-host', 'postgresql' => '18', 'source_dsn_sha256' => str_repeat('1', 64), 'restore_dsn_sha256' => str_repeat('2', 64), 'restore_target_precreated' => true, 'production_target' => false],
-        'backup' => ['format' => 'custom', 'archive_sha256' => str_repeat('3', 64), 'archive_list_sha256' => str_repeat('4', 64), 'pg_dump_version' => '18.0', 'pg_restore_version' => '18.0', 'started_at' => '2026-09-12T00:00:00Z', 'completed_at' => '2026-09-12T00:10:00Z', 'restore_flags' => ['--exit-on-error', '--single-transaction', '--no-owner', '--no-acl']],
-        'state' => ['source' => $state, 'restored' => $state], 'checks' => $checks,
-        'unresolved_failures' => 0, 'evidence' => $evidence,
-    ];
-    $reportPath = $seed . '/report.json';
-    $write = static fn (array $report): int|false => file_put_contents($reportPath, json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
-    $write($valid);
-    [$validStatus, $validOutput] = $run($reportPath);
-
-    $sameDatabase = $valid;
-    $sameDatabase['environment']['restore_dsn_sha256'] = $sameDatabase['environment']['source_dsn_sha256'];
-    $write($sameDatabase);
-    [$sameStatus, $sameOutput] = $run($reportPath);
-
-    $unsafeFlags = $valid;
-    $unsafeFlags['backup']['restore_flags'][] = '--clean';
-    $write($unsafeFlags);
-    [$flagsStatus, $flagsOutput] = $run($reportPath);
-
-    $resurrected = $valid;
-    $resurrected['state']['restored']['revoked_sessions'] = 0;
-    $write($resurrected);
-    [$stateStatus, $stateOutput] = $run($reportPath);
-
-    $missingEvidence = $valid;
-    array_pop($missingEvidence['evidence']);
-    $write($missingEvidence);
-    [$evidenceStatus, $evidenceOutput] = $run($reportPath);
-
-    $passed = $validStatus === 0 && str_contains($validOutput, '"checks_verified": 13') && str_contains($validOutput, '"evidence_files_verified": 7')
-        && $sameStatus !== 0 && str_contains($sameOutput, 'DSN fingerprints must differ')
-        && $flagsStatus !== 0 && str_contains($flagsOutput, 'restore flags contain forbidden --clean')
-        && $stateStatus !== 0 && str_contains($stateOutput, 'source/restored state mismatch: revoked_sessions')
-        && $evidenceStatus !== 0 && str_contains($evidenceOutput, 'recovery evidence is missing types: cleanup');
-    if (!$passed) throw new RuntimeException('backup recovery validator did not enforce isolated, safe, state-equivalent evidence');
-} finally {
-    $removeTree($seed);
-}
-
-echo "SandIAM backup recovery evidence checks passed\n";
+    $archivePath = $dir . '/sand-iam.zip'; $zip = new ZipArchive();
+    if ($zip->open($archivePath, ZipArchive::CREATE) !== true || !$zip->addFromString('README.md', "# SandIAM\n") || !$zip->addFromString('update.sql', "-- lifecycle fixture\n") || !$zip->addFromString('release-build-contract.json', "{\"schema\":\"sand-iam.release-build-contract/v1\"}\n") || !$zip->close()) throw new RuntimeException('cannot create ZIP fixture');
+    $archive = sandIamInspectReleaseZip($archivePath); $archiveSha = hash_file('sha256', $archivePath); $archiveBytes = filesize($archivePath);
+    $manifestPath = $dir . '/manifest.json';
+    $json($manifestPath, ['schema'=>'sand-iam.artifact-manifest/v8','kind'=>'release-candidate-unsigned','release_state'=>'release/unsigned','archive_authority_parity'=>['passed'=>true,'normal_package_recovery_descriptors'=>'excluded'],'reproducibility'=>['bit_identical_zip'=>true,'entry_list_identical'=>true],'package'=>['app'=>'sand-iam','version'=>'0.7.1','archive'=>basename($archivePath),'sha256'=>$archiveSha,'bytes'=>$archiveBytes,'entry_count'=>$archive['entry_count']],'source_revision'=>['vcs'=>'git','commit'=>str_repeat('b',40),'tree'=>str_repeat('c',40),'subtree'=>'sand-iam/','clean'=>true],'source_provenance'=>['mode'=>'git-blob-only','commit'=>str_repeat('b',40),'tree'=>str_repeat('c',40),'stage_matches_git_blobs'=>true,'independent_git_stage_rebuild'=>true,'build_contract_sha256'=>$archive['files']['release-build-contract.json']['sha256']],'source_snapshot'=>['sha256'=>str_repeat('d',64)],'files'=>$archive['files']]);
+    $org1=$ref('organizations','org-001'); $org2=$ref('organizations','org-002'); $app1=$ref('applications','app-001'); $app2=$ref('applications','app-002'); $app3=$ref('applications','app-003');
+    $env1=$ref('environments','env-001'); $env2=$ref('environments','env-002'); $env3=$ref('environments','env-003'); $env4=$ref('environments','env-004');
+    $s1=$scope($org1,$app1,$env1); $s2=$scope($org1,$app1,$env2); $s3=$scope($org1,$app2,$env3); $s4=$scope($org2,$app3,$env4);
+    $record = static fn(string $id, array $scope, string $status='active', string $version='ver-001'): array => ['id'=>$id,'status'=>$status,'version'=>$version,'scope'=>$scope];
+    $orgScope = static fn(array $org): array => ['organization_ref'=>$org,'application_ref'=>null,'environment_ref'=>null];
+    $appScope = static fn(array $org, array $app): array => ['organization_ref'=>$org,'application_ref'=>$app,'environment_ref'=>null];
+    $entities = ['organizations'=>[$record('org-001',$orgScope($org1)),$record('org-002',$orgScope($org2))],'applications'=>[$record('app-001',$appScope($org1,$app1)),$record('app-002',$appScope($org1,$app2)),$record('app-003',$appScope($org2,$app3))],'environments'=>[$record('env-001',$s1),$record('env-002',$s2),$record('env-003',$s3),$record('env-004',$s4)]];
+    foreach (['users','groups','roles','resources','policies','data_scopes','grants','audit','outbox','sync_cursors','idempotency_keys'] as $type) $entities[$type]=[$record(substr($type,0,3).'-001',$s1)];
+    $entities['users'] = [$record('use-001',$appScope($org1,$app1))];
+    $services=[]; foreach (['svc-001'=>$s1,'svc-002'=>$s2,'svc-003'=>$s3,'svc-004'=>$s4,'svc-005'=>$s1,'svc-006'=>$s1,'svc-007'=>$s1,'svc-008'=>$s1] as $id=>$ownedScope) $services[]=$record($id,$ownedScope); $entities['service_identities']=$services;
+    $owners=['cred-allow'=>$ref('service_identities','svc-001'),'cred-deny'=>$ref('users','use-001'),'cred-revoke'=>$ref('service_identities','svc-002'),'cred-tenant'=>$ref('service_identities','svc-001'),'cred-appxx'=>$ref('service_identities','svc-001'),'cred-envxx'=>$ref('service_identities','svc-001'),'cred-audxx'=>$ref('service_identities','svc-005'),'cred-reply'=>$ref('service_identities','svc-006'),'cred-oldxx'=>$ref('service_identities','svc-007'),'cred-newxx'=>$ref('service_identities','svc-007')];
+    $entities['credentials']=[]; $entities['key_versions']=[]; foreach ($owners as $id=>$owner) { $ownedScope = $owner['type']==='users' ? $entities['users'][0]['scope'] : array_values(array_filter($services, static fn(array $item): bool => $item['id'] === $owner['id']))[0]['scope']; $keyId='key-'.substr($id,5); $entities['credentials'][]=['id'=>$id,'status'=>'active','version'=>'ver-001','scope'=>$ownedScope,'owner_ref'=>$owner,'key_version_ref'=>$ref('key_versions',$keyId)]; $entities['key_versions'][]=['id'=>$keyId,'status'=>'active','version'=>'ver-001','scope'=>$ownedScope,'credential_ref'=>$ref('credentials',$id)]; }
+    $candidate=['version'=>'0.7.1','archive_sha256'=>$archiveSha,'archive_bytes'=>$archiveBytes,'artifact_manifest_sha256'=>hash_file('sha256',$manifestPath),'source_revision'=>['commit'=>str_repeat('b',40),'tree'=>str_repeat('c',40)]];
+    $environment=['id'=>'env-fixture','collector'=>['id'=>'fixture','version'=>'ver-001'],'source'=>['system_identifier'=>'101','database_oid'=>'201','database_name_hex'=>'736f75726365'],'target'=>['system_identifier'=>'102','database_oid'=>'202','database_name_hex'=>'746172676574']];
+    $plan=['schema'=>'sand-iam.backup-recovery-plan/v2','run_id'=>'run-001','candidate'=>$candidate,'environment'=>$environment,'collector'=>$environment['collector'],'thresholds'=>['rpo_limit_seconds'=>10,'rto_limit_seconds'=>10,'minimum_consistency_lsn'=>'0/10']];
+    $planPath=$dir.'/plan.json'; $json($planPath,$plan);
+    file_put_contents($dir.'/raw.dump',"PGDMP fixture\n"); file_put_contents($dir.'/archive.list',"TABLE DATA public sand_iam_application\n"); file_put_contents($dir.'/envelope.bin',"encrypted fixture bytes\n");
+    $timeline=[]; foreach (['source_snapshot','consistency_point','backup_start','backup_end','security_changes_end','restore_start','restore_end','reconcile_start','reconcile_end','probe','cleanup'] as $i=>$stage) $timeline[]=['stage'=>$stage,'at'=>sprintf('2026-01-01T00:00:%02d.000000Z',$i),'monotonic_us'=>1000000+1000000*$i];
+    $state=['entities'=>$entities]; $credential = static fn(string $id): array => $ref('credentials',$id);
+    $delta = static fn(string $id,string $status,string $version): array => ['entity_ref'=>$credential($id),'status'=>$status,'version'=>$version];
+    $events=[['event_id'=>'evt-revoke','sequence'=>1,'kind'=>'revocation','entity_ref'=>$credential('cred-revoke'),'before'=>['status'=>'active','version'=>'ver-001'],'after'=>['status'=>'revoked','version'=>'ver-002'],'source_at'=>'2026-01-01T00:00:03.100000Z','source_monotonic_us'=>4100000,'source_lsn'=>'0/11','source_audit_ref'=>'audit-src-001'],['event_id'=>'evt-rotate','sequence'=>2,'kind'=>'credential_rotation','entity_ref'=>$credential('cred-oldxx'),'before'=>['status'=>'active','version'=>'ver-001'],'after'=>['status'=>'revoked','version'=>'ver-002'],'new_credential_ref'=>$credential('cred-newxx'),'new_before'=>['status'=>'active','version'=>'ver-001'],'new_after'=>['status'=>'active','version'=>'ver-002'],'key_version_ref'=>$ref('key_versions','key-newxx'),'source_at'=>'2026-01-01T00:00:03.200000Z','source_monotonic_us'=>4200000,'source_lsn'=>'0/12','source_audit_ref'=>'audit-src-002']];
+    $applications=[]; foreach ([['evt-revoke','cred-revoke','revoked'],['evt-rotate','cred-oldxx','revoked']] as $i=>$item) $applications[]=['event_id'=>$item[0],'entity_ref'=>$credential($item[1]),'target_at'=>'2026-01-01T00:00:07.'.($i+1).'00000Z','target_monotonic_us'=>8100000+$i*100000,'target_audit_ref'=>'audit-tgt-00'.($i+1),'resulting_state'=>['status'=>$item[2],'version'=>'ver-002']];
+    $probeDefs=[['allow','svc-001',$env1,'svc-001',$env1,'cred-allow',null],['deny','use-001',$env1,'use-001',$env1,'cred-deny',null],['revoked','svc-002',$env2,'svc-001',$env1,'cred-revoke','evt-revoke'],['cross_tenant','svc-001',$env1,'svc-004',$env4,'cred-tenant',null],['cross_app','svc-001',$env1,'svc-003',$env3,'cred-appxx',null],['cross_env','svc-001',$env1,'svc-002',$env2,'cred-envxx',null],['wrong_audience','svc-005',$env1,'svc-005',$env1,'cred-audxx',null],['replay_or_expired','svc-006',$env1,'svc-006',$env1,'cred-reply',null],['rotation_old','svc-007',$env1,'svc-007',$env1,'cred-oldxx','evt-rotate'],['rotation_new','svc-007',$env1,'svc-001',$env1,'cred-newxx','evt-rotate']];
+    $probes=[]; foreach($probeDefs as $i=>[$type,$actor,$actorEnv,$target,$targetEnv,$cred,$event]) { $allow=$type==='allow'||$type==='rotation_new';$actorType=$actor==='use-001'?'users':'service_identities';$targetType=$target==='use-001'?'users':'service_identities'; $probes[]=['type'=>$type,'decision'=>$allow?'allow':'deny','outcome'=>$allow?'applied':'rejected','actor_ref'=>$ref($actorType,$actor),'target_actor_ref'=>$ref($targetType,$target),'scope_ref'=>$actorEnv,'target_scope_ref'=>$targetEnv,'credential_ref'=>$credential($cred),'credential_owner_ref'=>$owners[$cred],'credential_version'=>in_array($type,['revoked','rotation_old','rotation_new'],true)?'ver-002':'ver-001','security_event_id'=>$event,'candidate'=>$candidate,'run_id'=>'run-001','request_id'=>'req-'.str_pad((string)$i,3,'0',STR_PAD_LEFT),'source_audit_ref'=>'probe-src-'.str_pad((string)$i,3,'0',STR_PAD_LEFT),'target_audit_ref'=>'probe-tgt-'.str_pad((string)$i,3,'0',STR_PAD_LEFT),'business_side_effect'=>$allow?'applied':'rejected']; }
+    $report=['schema'=>'sand-iam.backup-recovery/v3','run_id'=>'run-001','candidate'=>$candidate,'reviewer'=>['id'=>'reviewer-001','independent'=>true,'conflict_statement'=>'independent review'],'environment'=>$environment,'plan_sha256'=>hash_file('sha256',$planPath),'timeline'=>$timeline,'timing'=>['snapshot_us'=>1000000,'backup_us'=>1000000,'restore_us'=>1000000,'reconcile_us'=>1000000,'probe_us'=>1000000,'cleanup_us'=>1000000,'rpo_us'=>2000000,'rto_us'=>4000000],'backup'=>['format'=>'custom','backup_id'=>'backup-001','consistency_lsn'=>'0/10','raw_dump'=>['path'=>'raw.dump','sha256'=>hash_file('sha256',$dir.'/raw.dump'),'bytes'=>filesize($dir.'/raw.dump')],'archive_list'=>['path'=>'archive.list','sha256'=>hash_file('sha256',$dir.'/archive.list'),'bytes'=>filesize($dir.'/archive.list')],'rpo_seconds'=>2,'rpo_limit_seconds'=>10,'rto_seconds'=>4,'rto_limit_seconds'=>10],'state'=>['source_at_snapshot'=>$state,'restored'=>$state],'reconcile'=>['source_after_changes'=>['records'=>[$delta('cred-revoke','revoked','ver-002'),$delta('cred-oldxx','revoked','ver-002'),$delta('cred-newxx','active','ver-002')]],'target_after_reconcile'=>['records'=>[$delta('cred-revoke','revoked','ver-002'),$delta('cred-oldxx','revoked','ver-002'),$delta('cred-newxx','active','ver-002')]],'events'=>$events,'applications'=>$applications],'probes'=>['cases'=>$probes],'queue'=>['pending'=>0,'delivered'=>1,'dead_letter'=>0,'idempotency_keys'=>1,'duplicate_side_effects'=>0,'business_audit_refs'=>['biz-001'],'service_audit_refs'=>['svc-audit-001']],'encryption'=>['algorithm'=>'aes-256-gcm','format'=>'fixture','envelope'=>['path'=>'envelope.bin','sha256'=>hash_file('sha256',$dir.'/envelope.bin'),'bytes'=>filesize($dir.'/envelope.bin')],'external_key_id'=>'kms-key-001','key_version'=>'key-version-001','key_fingerprint'=>'fingerprint-001','kms_custody_ref'=>'custody-001','access_audit_ref'=>'access-001','retention_until'=>'retain-001','restore_key_access_audit_ref'=>'restore-access-001'],'cleanup'=>['ordered_steps'=>['close','verify','remove'],'residual_entities'=>0]];
+    $write = static function (array &$report) use ($dir,$json): string { $report['evidence']=[]; foreach(['timeline','state','reconcile','probes','queue','encryption','cleanup','backup'] as $type){$payload=['report_section'=>$report[$type]];$e=['schema'=>'sand-iam.backup-recovery-evidence/v3','type'=>$type,'run_id'=>$report['run_id'],'candidate'=>$report['candidate'],'environment'=>$report['environment'],'collector'=>$report['environment']['collector'],'plan_sha256'=>$report['plan_sha256'],'payload'=>$payload,'payload_sha256'=>hash('sha256',sandIamCanonicalJson($payload))];$path=$dir.'/evidence-'.$type.'.json';$json($path,$e);$report['evidence'][]=['type'=>$type,'path'=>basename($path),'sha256'=>hash_file('sha256',$path)];}$path=$dir.'/report.json';$json($path,$report);return $path;};
+    $reportPath=$write($report); [$ok,$output]=$run([PHP_BINARY,$validator,'--report='.$reportPath,'--plan='.$planPath,'--archive='.$archivePath,'--artifact-manifest='.$manifestPath]); if($ok!==0||!str_contains($output,'"real_g": false'))throw new RuntimeException('v3 executable positive fixture failed: '.$output);
+    $fail = static function (callable $mutate, string $expected) use (&$report,$write,$run,$validator,$planPath,$archivePath,$manifestPath): void {$copy=$report;$mutate($copy);[$status,$output]=$run([PHP_BINARY,$validator,'--report='.$write($copy),'--plan='.$planPath,'--archive='.$archivePath,'--artifact-manifest='.$manifestPath]);if($status===0||!str_contains($output,$expected))throw new RuntimeException('forged v3 evidence was accepted or wrong rejection: '.$output);};
+    $fail(static function(array &$r):void{$r['state']['source_at_snapshot']['entities']['credentials'][0]['owner_ref']=['type'=>'groups','id'=>'gro-001'];$r['state']['restored']['entities']['credentials'][0]['owner_ref']=['type'=>'groups','id'=>'gro-001'];},'credential owner_ref');
+    $fail(static function(array &$r)use($ref,$env3):void{$r['probes']['cases'][3]['target_actor_ref']=$ref('service_identities','svc-003');$r['probes']['cases'][3]['target_scope_ref']=$env3;},'cross_tenant probe');
+    $fail(static function(array &$r):void{$r['reconcile']['applications'][0]['resulting_state']=['status'=>'active','version'=>'ver-001'];},'target application must bind');
+    $fail(static function(array &$r)use($credential,$ref):void{$r['probes']['cases'][0]['credential_ref']=$credential('cred-revoke');$r['probes']['cases'][0]['credential_owner_ref']=$ref('service_identities','svc-002');},'credential must bind');
+    $fail(static function(array &$r):void{$r['probes']['cases'][2]['security_event_id']='evt-rotate';},'revoked probe must bind the actual revocation event');
+    $fail(static function(array &$r)use($credential,$ref,$env2):void{$probe=&$r['probes']['cases'][0];$probe['actor_ref']=$ref('service_identities','svc-002');$probe['target_actor_ref']=$ref('service_identities','svc-002');$probe['scope_ref']=$env2;$probe['target_scope_ref']=$env2;$probe['credential_ref']=$credential('cred-revoke');$probe['credential_owner_ref']=$ref('service_identities','svc-002');$probe['credential_version']='ver-002';},'allowed probe must bind an active credential');
+    $fail(static function(array &$r)use($ref):void{foreach(['source_at_snapshot','restored'] as $side)$r['state'][$side]['entities']['credentials'][0]['key_version_ref']=$ref('key_versions','key-deny');},'key-version reverse lineage');
+    $fail(static function(array &$r)use($ref,$s2):void{foreach(['source_at_snapshot','restored'] as $side){foreach($r['state'][$side]['entities']['credentials'] as &$item)if($item['id']==='cred-newxx'){$item['owner_ref']=$ref('service_identities','svc-002');$item['scope']=$s2;}unset($item);foreach($r['state'][$side]['entities']['key_versions'] as &$item)if($item['id']==='key-newxx')$item['scope']=$s2;unset($item);}},'credentials must share owner and scope');
+    $fail(static function(array &$r)use($env3):void{$r['probes']['cases'][1]['scope_ref']=$env3;$r['probes']['cases'][1]['target_scope_ref']=$env3;},'user probe environment must belong');
+} finally { foreach (scandir($dir) ?: [] as $file) if ($file !== '.' && $file !== '..') unlink($dir.'/'.$file); rmdir($dir); }
+echo "SandIAM backup recovery v3 runtime evidence checks passed: 1 positive, 9 forged negatives\n";

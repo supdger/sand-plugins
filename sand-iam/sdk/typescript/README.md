@@ -6,9 +6,36 @@
 
 网络、事实、数据分级、配额和幂等冲突均以稳定 `SAND_IAM_*` code 抛出：`SAND_IAM_SERVICE_NETWORK_FORBIDDEN`、`SAND_IAM_INVOCATION_FACTS_UNVERIFIED`、`SAND_IAM_DATA_CLASS_FORBIDDEN`、`SAND_IAM_SERVICE_QUOTA_EXCEEDED`、`SAND_IAM_IDEMPOTENCY_CONFLICT`。遇到它们必须拒绝，不得回退为匿名调用。
 
-## 本地安装与发布前门禁
+## 包外 consumer 安装与最小程序
 
-先执行 `pnpm test`，再用 `pnpm pack --pack-destination /private/tmp` 生成 tarball；在空目录以 `pnpm add /private/tmp/<tarball>` 安装并运行 issue/verify mock。该步骤不调用 `npm publish`。包仅导出 `dist` 和本说明；SandIAM 项目采用 [Apache-2.0](../../LICENSE)，但 npm 发布元数据、registry 与公开发布仍须由维护者单独确认。
+在独立 Node.js consumer 中，从已检出的源码安装：
+
+```sh
+pnpm add ../sand-plugins/sand-iam/sdk/typescript
+```
+
+这只安装本地目录，不能推断 npm registry 已有发布包。安装后，服务端 consumer 可导入并完成最小的“签发 → 验证”闭环：
+
+```ts
+import { SandIamClient } from '@sand/iam-browser'
+
+const iam = new SandIamClient({
+  baseUrl: 'https://iam.example.com',
+  organizationCode: 'your_organization',
+  applicationCode: 'your_application',
+  accessToken: () => process.env.SAND_IAM_ACCESS_TOKEN ?? '',
+})
+const issued = await iam.issueContext({
+  credential: process.env.SAND_IAM_WORKLOAD_CREDENTIAL ?? '',
+  serviceCode: 'document-service', audience: 'document-service', actions: ['document.read'], requestId: 'issue-001',
+})
+const claims = await iam.verifyContext({
+  context: issued.context, serviceCode: 'document-service', audience: 'document-service', actions: ['document.read'], requestId: 'verify-001',
+})
+if (claims.context_id !== issued.context_id) throw new Error('SandIAM context verification failed')
+```
+
+只在可信服务端运行该程序；凭证和短期 context 不得进入浏览器、日志或前端构建物。请在自己的隔离环境运行并核对审计；本 README 不把示例视为真实调用已通过。
 
 `dist/` 是受锁定的本地 `pnpm-lock.yaml` 与 TypeScript 工具链从 `src/` 生成的 ESM
 消费载荷，不是手工维护的源码。修改 SDK 时只改 `src/`，执行 `pnpm run build`，并确认
@@ -16,7 +43,7 @@
 字节一致。安装候选时只应消费 ZIP 内这四个构建物；不要从开发工作树、`node_modules` 或
 自行编辑的 `dist` 回退。
 
-当前可审查构建参数固定在 [`release-build-contract.json`](../../release-build-contract.json)：
+可审查构建参数固定在 [`release-build-contract.json`](../../release-build-contract.json)：
 pnpm `11.19.0`、Node `v24.11.1`、TypeScript `5.9.3`，并使用 `pnpm install --offline
 --frozen-lockfile --ignore-scripts` 与 `pnpm exec tsc -p tsconfig.json`。构建前必须校验 lock 中的
 `typescript@5.9.3` SHA-512 integrity；更新 lock、工具链或四个构建物必须先做两份隔离构建的逐字节比对，

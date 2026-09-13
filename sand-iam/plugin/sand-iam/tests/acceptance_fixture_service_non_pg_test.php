@@ -211,6 +211,27 @@ namespace {
             return $result;
         }
 
+        /** @var array<string,int> */
+        public array $creationAuditActors = [];
+
+        public function creationAuditCreatedBy(string $action, string $resourceType, string $requestId, int $resourceId, string $prefix, int $adminId): bool
+        {
+            $key = $requestId . '|' . $action . '|' . $resourceType . '|' . $resourceId;
+            return ($this->creationAuditActors[$key] ?? 1) === $adminId;
+        }
+
+        public function organizationApplicationEnvironmentUniverse(string $prefix, bool $lock): array
+        {
+            $this->operations[] = 'records:organization_application_environment_universe:' . ($lock ? 'lock' : 'read');
+            $roots = ['organization' => array_values(array_filter($this->rows['organization'] ?? [], static fn (array $row): bool => str_starts_with((string) ($row['code'] ?? ''), $prefix)))];
+            $organizationIds = array_map(static fn (array $row): int => (int) $row['id'], $roots['organization']);
+            $roots['application'] = array_values(array_filter($this->rows['application'] ?? [], static fn (array $row): bool => str_starts_with((string) ($row['code'] ?? ''), $prefix) || in_array((int) ($row['organization_id'] ?? 0), $organizationIds, true)));
+            $applicationIds = array_map(static fn (array $row): int => (int) $row['id'], $roots['application']);
+            $roots['environment'] = array_values(array_filter($this->rows['environment'] ?? [], static fn (array $row): bool => str_starts_with((string) ($row['code'] ?? ''), $prefix) || in_array((int) ($row['application_id'] ?? 0), $applicationIds, true)));
+            $roots['admin_application_grant'] = array_values(array_filter($this->rows['admin_application_grant'] ?? [], static fn (array $row): bool => in_array((int) ($row['application_id'] ?? 0), $applicationIds, true)));
+            return $roots;
+        }
+
         public function humanAuthArtifacts(array $identityIds, int $applicationId, bool $lock): array
         {
             $this->operations[] = 'records:human_auth_artifacts:' . ($lock ? 'lock' : 'read');
@@ -609,6 +630,98 @@ namespace {
         ],
         'chain 1 cleanup did not revoke first and purge child before parent',
     );
+    $emptyRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain1-empty';
+    $emptyRows = acceptanceFixtureRows();
+    foreach (['organization', 'application', 'environment', 'admin_application_grant'] as $type) $emptyRows[$type] = [];
+    $emptyPayload = acceptanceFixturePayload($emptyRequest);
+    $emptyPayload['contract_version'] = 2;
+    $emptyPayload['creator_admin_id'] = 1;
+    unset($emptyPayload['organization_id'], $emptyPayload['application_id']);
+    $emptyPayload['object_ids'] = [];
+    $emptyPayload['object_request_ids'] = [];
+    $emptyStore = new AcceptanceFixtureMemoryStore($emptyRows, acceptanceFixtureAudits($emptyRequest));
+    [$emptyIdempotent, $emptyAudit] = acceptanceFixtureDoubles();
+    $emptyService = new AcceptanceFixtureService($emptyStore, $emptyIdempotent, $emptyAudit);
+    $empty = $emptyService->cleanup($emptyPayload, 1, $emptyRequest);
+    acceptanceFixtureAssert(array_sum($empty['residual']) === 0 && !in_array('revoke:organization', $emptyStore->operations, true), 'C01 empty closed stage was not a no-op after an empty universe check');
+    $partialRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain1-org-only';
+    $partialRows = acceptanceFixtureRows();
+    unset($partialRows['application'][22], $partialRows['environment'][33], $partialRows['admin_application_grant'][44]);
+    $partialPayload = acceptanceFixturePayload($partialRequest);
+    $partialPayload['contract_version'] = 2;
+    $partialPayload['creator_admin_id'] = 1;
+    unset($partialPayload['application_id'], $partialPayload['object_ids']['application'], $partialPayload['object_ids']['environment'], $partialPayload['object_request_ids']['application'], $partialPayload['object_request_ids']['environment']);
+    $partialStore = new AcceptanceFixtureMemoryStore($partialRows, acceptanceFixtureAudits($partialRequest));
+    [$partialIdempotent, $partialAudit] = acceptanceFixtureDoubles();
+    $partialService = new AcceptanceFixtureService($partialStore, $partialIdempotent, $partialAudit);
+    $partial = $partialService->cleanup($partialPayload, 1, $partialRequest);
+    acceptanceFixtureAssert(($partial['purged']['organization'] ?? 0) === 0
+        && (($partial['retained']['organization'] ?? null) === [['id' => 11, 'status' => 2]])
+        && array_sum($partial['residual']) === 0, 'C01 organization-only interrupted create did not retain its disabled audit anchor');
+    $fullGrantRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain1-full-grant';
+    $fullGrantRows = acceptanceFixtureRows();
+    $fullGrantRows['admin_application_grant'][44]['admin_user_id'] = 77;
+    $fullGrantAudits = acceptanceFixtureAudits($fullGrantRequest);
+    $fullGrantAudits[$fullGrantRequest . '-chain1-grant-create|admin_application_grant.create|admin_application_grant'] = [44];
+    $fullGrantPayload = acceptanceFixturePayload($fullGrantRequest);
+    $fullGrantPayload['contract_version'] = 2;
+    $fullGrantPayload['creator_admin_id'] = 1;
+    $fullGrantPayload['scoped_admin_id'] = 77;
+    $fullGrantPayload['object_ids']['admin_application_grant'] = [44];
+    $fullGrantPayload['object_request_ids']['admin_application_grant'] = [$fullGrantRequest . '-chain1-grant-create'];
+    $fullGrantStore = new AcceptanceFixtureMemoryStore($fullGrantRows, $fullGrantAudits);
+    [$fullGrantIdempotent, $fullGrantAudit] = acceptanceFixtureDoubles();
+    $fullGrantService = new AcceptanceFixtureService($fullGrantStore, $fullGrantIdempotent, $fullGrantAudit);
+    $fullGrant = $fullGrantService->cleanup($fullGrantPayload, 1, $fullGrantRequest);
+    acceptanceFixtureAssert(array_sum($fullGrant['residual']) === 0
+        && (($fullGrant['retained'] ?? null) === ['organization' => [['id' => 11, 'status' => 2]], 'application' => [['id' => 22, 'status' => 2]]])
+        && array_values(array_filter($fullGrantStore->operations, static fn (string $operation): bool => str_starts_with($operation, 'purge:'))) === ['purge:admin_application_grant', 'purge:environment'], 'C01 full plus grant did not retain disabled audit anchors after removing grant and environment');
+
+    $fullOmitGrant = $fullGrantPayload;
+    unset($fullOmitGrant['scoped_admin_id'], $fullOmitGrant['object_ids']['admin_application_grant'], $fullOmitGrant['object_request_ids']['admin_application_grant']);
+    $fullOmitGrantStore = new AcceptanceFixtureMemoryStore($fullGrantRows, $fullGrantAudits);
+    [$fullOmitGrantIdempotent, $fullOmitGrantAudit] = acceptanceFixtureDoubles();
+    $fullOmitGrantService = new AcceptanceFixtureService($fullOmitGrantStore, $fullOmitGrantIdempotent, $fullOmitGrantAudit);
+    acceptanceFixtureExpect(static fn () => $fullOmitGrantService->cleanup($fullOmitGrant, 1, $fullGrantRequest), 'SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED');
+    acceptanceFixtureAssert(isset($fullOmitGrantStore->rows['environment'][33], $fullOmitGrantStore->rows['organization'][11]), 'C01 full stage omitted an actual grant and reached cleanup mutation');
+    $wrongGrantActor = $fullGrantPayload;
+    $wrongGrantActor['scoped_admin_id'] = 78;
+    $wrongGrantStore = new AcceptanceFixtureMemoryStore($fullGrantRows, $fullGrantAudits);
+    [$wrongGrantIdempotent, $wrongGrantAudit] = acceptanceFixtureDoubles();
+    $wrongGrantService = new AcceptanceFixtureService($wrongGrantStore, $wrongGrantIdempotent, $wrongGrantAudit);
+    acceptanceFixtureExpect(static fn () => $wrongGrantService->cleanup($wrongGrantActor, 1, $fullGrantRequest), 'SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED');
+    acceptanceFixtureAssert(isset($wrongGrantStore->rows['organization'][11]), 'C01 scoped-grant actor mismatch reached cleanup mutation');
+
+    $wrongCreator = $fullGrantPayload;
+    $wrongCreator['creator_admin_id'] = 2;
+    $wrongCreatorStore = new AcceptanceFixtureMemoryStore($fullGrantRows, $fullGrantAudits);
+    [$wrongCreatorIdempotent, $wrongCreatorAudit] = acceptanceFixtureDoubles();
+    $wrongCreatorService = new AcceptanceFixtureService($wrongCreatorStore, $wrongCreatorIdempotent, $wrongCreatorAudit);
+    acceptanceFixtureExpect(static fn () => $wrongCreatorService->cleanup($wrongCreator, 1, $fullGrantRequest), 'SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED');
+    acceptanceFixtureAssert(isset($wrongCreatorStore->rows['organization'][11]), 'C01 creator mismatch reached cleanup mutation');
+
+    $wrongCreationAuditStore = new AcceptanceFixtureMemoryStore($fullGrantRows, $fullGrantAudits);
+    $wrongCreationAuditStore->creationAuditActors[$fullGrantRequest . '-org|organization.create|organization|11'] = 2;
+    [$wrongCreationAuditIdempotent, $wrongCreationAudit] = acceptanceFixtureDoubles();
+    $wrongCreationAuditService = new AcceptanceFixtureService($wrongCreationAuditStore, $wrongCreationAuditIdempotent, $wrongCreationAudit);
+    acceptanceFixtureExpect(static fn () => $wrongCreationAuditService->cleanup($fullGrantPayload, 1, $fullGrantRequest), 'SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED');
+    acceptanceFixtureAssert(isset($wrongCreationAuditStore->rows['organization'][11]), 'C01 creation-audit actor mismatch reached cleanup mutation');
+
+    $extraDependentRows = $fullGrantRows;
+    $extraDependentRows['environment'][45] = ['id' => 45, 'application_id' => 22, 'code' => 'ordinary_environment', 'status' => 1];
+    $extraDependentStore = new AcceptanceFixtureMemoryStore($extraDependentRows, $fullGrantAudits);
+    [$extraDependentIdempotent, $extraDependentAudit] = acceptanceFixtureDoubles();
+    $extraDependentService = new AcceptanceFixtureService($extraDependentStore, $extraDependentIdempotent, $extraDependentAudit);
+    acceptanceFixtureExpect(static fn () => $extraDependentService->cleanup($fullGrantPayload, 1, $fullGrantRequest), 'SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED');
+    acceptanceFixtureAssert(isset($extraDependentStore->rows['environment'][45], $extraDependentStore->rows['organization'][11]), 'C01 non-prefixed dependency reached cleanup mutation');
+
+    $ordinaryChildRows = acceptanceFixtureRows();
+    $ordinaryChildRows['application'][46] = ['id' => 46, 'organization_id' => 11, 'code' => 'ordinary_application', 'status' => 1];
+    $ordinaryChildStore = new AcceptanceFixtureMemoryStore($ordinaryChildRows, acceptanceFixtureAudits($partialRequest));
+    [$ordinaryChildIdempotent, $ordinaryChildAudit] = acceptanceFixtureDoubles();
+    $ordinaryChildService = new AcceptanceFixtureService($ordinaryChildStore, $ordinaryChildIdempotent, $ordinaryChildAudit);
+    acceptanceFixtureExpect(static fn () => $ordinaryChildService->cleanup($partialPayload, 1, $partialRequest), 'SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED');
+    acceptanceFixtureAssert(isset($ordinaryChildStore->rows['application'][46], $ordinaryChildStore->rows['organization'][11]), 'C01 ordinary-code child application reached cleanup mutation');
     $operationCount = count($store->operations);
     $replayed = $service->cleanup($payload, 1, $requestId);
     acceptanceFixtureAssert($replayed['replayed'] === true && count($store->operations) === $operationCount + 2, 'successful cleanup was not idempotently replayed without another purge');

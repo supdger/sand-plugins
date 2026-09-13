@@ -254,6 +254,23 @@ export async function portalRegister(
   return { requestId: result.requestId, data: tokens };
 }
 
+export async function portalIdentityVerification(
+  organizationCode: string,
+  applicationCode: string,
+  identifier: string,
+  channel: "email" | "phone",
+  code?: string,
+): Promise<SandIamPortalResult<unknown>> {
+  return portalPublicAuth(code === undefined ? "/verification/request" : "/verification/confirm", {
+    organization_code: organizationCode,
+    application_code: applicationCode,
+    identifier,
+    channel,
+    purpose: channel === "email" ? "email_verify" : "phone_verify",
+    ...(code === undefined ? {} : { code }),
+  });
+}
+
 export async function verifyPortalMfaChallenge(
   organizationCode: string,
   applicationCode: string,

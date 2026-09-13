@@ -7,10 +7,25 @@
   import type { SandIamFilterKey, SandIamResourceColumn } from '../api/types'
   import { getSandIamAdmin } from '../api/write'
   import ResourceListPage from '../components/ResourceListPage.vue'
+  import LogoutDeliveries from './LogoutDeliveries.vue'
+  import { normalizeReferenceValue } from '../api/referenceValues'
+  import type { SandIamResourceRow } from '../api/types'
 
   const { hasAuth } = useAuth()
   const signingHint = ref('尚未加载签发密钥状态。')
   const signingForbidden = ref(false)
+  const logoutClient = ref<{ id: number; name: string } | null>(null)
+
+  function openLogoutDeliveries(row: SandIamResourceRow): void {
+    if (!hasAuth('sand_iam:oauth_client:read')) return
+    const id = normalizeReferenceValue(row.id)
+    if (id !== null) {
+      logoutClient.value = {
+        id,
+        name: typeof row.name === 'string' ? row.name : 'OAuth 客户端'
+      }
+    }
+  }
 
   const columns: SandIamResourceColumn[] = [
     { key: 'name', label: '客户端名称', minWidth: 180 },
@@ -22,7 +37,12 @@
     { key: 'backchannel_logout_uri', label: '后通道登出' },
     { key: 'secret_version', label: '客户端密钥状态' },
     { key: 'status', label: '状态' },
-    { key: 'code', label: '系统代码（用于接口配置）', minWidth: 180, copyable: true }
+    {
+      key: 'code',
+      label: '系统代码（用于接口配置）',
+      minWidth: 180,
+      copyable: true
+    }
   ]
   const filters: SandIamFilterKey[] = ['keywords', 'organization_id', 'application_id', 'status']
 
@@ -77,6 +97,15 @@
     :filters="filters"
     :form-fields="oauthClientFields"
   >
+    <template #row-actions="{ row }">
+      <ElButton
+        v-if="hasAuth('sand_iam:oauth_client:read')"
+        size="small"
+        @click="openLogoutDeliveries(row)"
+      >
+        失败登出通知
+      </ElButton>
+    </template>
     <template #extra>
       <ElAlert
         class="mt-4"
@@ -87,4 +116,11 @@
       />
     </template>
   </ResourceListPage>
+  <LogoutDeliveries
+    v-if="logoutClient"
+    :key="logoutClient.id"
+    :client-id="logoutClient.id"
+    :client-name="logoutClient.name"
+    @close="logoutClient = null"
+  />
 </template>

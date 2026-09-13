@@ -10,9 +10,24 @@
 - 临时测试签名仅是非正式测试材料。受控目录、同 UID TOCTOU、真实密钥信任、Git 独立重建分别是未闭合的信任边界；正式 signing 尚未执行。
 - 不改变计分：发布 **0/10**、FLOW **28/48**，F/L/D 不变。
 
+### OSS 静态材料门禁批次（2026-09-13）
+
+本批只修复开源材料静态门禁：W3C vendored schema 已补独立 `NOTICE` 并登记为独立 SBOM component；PHP、TypeScript、Dart SDK 已补独立 `LICENSE`/`NOTICE` 与 metadata；public path 漏检已修复。当前静态门禁为 hygiene **16/16**、policy **16/16**、SBOM **80**；经 Astra 独立复核 **ACCEPT（P0/P1/P2=0）**。这些结果不改变 R09 **未通过**、P **20/20**、F **0/7**、L **0/4**、D **0/8**、FLOW **28/48**、C **0/7** 或发布 **0/10**。
+
+最终 clean 候选、正式签名、宿主 HTTP（默认关闭）、宿主生命周期、外部互操作、Casdoor 对照和同一最终候选 24 小时运行仍未通过；因此当前仍不得称为可发布、已部署或线上验证。
+
+### 2026-09-13 三批离线材料回写
+
+- **vendor CRLF 规范化批次**：完成 vendor CRLF 规范化；package integrity **25/26**；Astra independent **ACCEPT**。唯一失败为 clean/tracked source，不能把 dirty clean-source 误报为正式来源通过；本批不改变 P **20/20**、F **0/7**、L **0/4**、D **0/8**、FLOW **28/48** 或发布 **0/10**。
+- **public docs 13 文档批次**：`developer_quickstart` **PASS**、payload **16/16**、links **16/16**，Astra independent **ACCEPT**。本批静态 P1 关闭；`HOST-202609-002-sandpackage-frontend-activation-contract.md` 已发送，待宿主接收处理（不等于已接单或已修复），真实独立开发者旅程仍未通过；不改变 R09、F/L/D、FLOW 或发布计分。
+- **Consumer A / Provider B 离线接入批次（最终结果）**：Consumer A standalone 源码离线 Astra **ACCEPT（P0/P1/P2=0）**，autoload **6/6**、lint **11/11**、offline、payload **16/16** 及 early rejection audit 通过；Provider B provider+caller 源码离线 Astra **ACCEPT（P0/P1/P2=0）**，tests **13/13**、lint **15/15**、payload **16/16**，Git/无 Git offline Composer+autoload 及 failure audit 通过。两者均未完成真实 HTTP、PostgreSQL、撤权或审计，因此 **L04=0**，F/L/D、FLOW **28/48** 和发布 **0/10** 不变。临时目录 `provider-b-independent.6VkMjk` 清理被 hook 拒绝；该临时状态不写成发布包内容，也不改变上述计分。
+- **Consumer live v2 整体离线契约批次**：nonPG **46/46**、schema static-rule **167**、lint **6/6**、payload **16/16**，Astra 独立复核 **ACCEPT（P0/P1/P2=0）**；完整 plan capability 绑定、信任文件/父目录隔离、正确 admin URL/effect 与 map 键序语义均已覆盖。无 live adapter、真实 cleanup、HTTP 或 DB，`real_l04=false`；同 UID TOCTOU 与标准 JSON Schema 尚未完全证明，因此 **F/L/D/发布门槛** 计数不变。
+- **Consumer acceptance runner / 防循环核查**：consumer acceptance runner v1 strict validate **49/49**，Astra **ACCEPT（P0/P1/P2=0）**；live 明确 `unsupported`、`real_l04=false`，不计真实 L04。只读核查确认无 `automation.toml`、Codex/Cursor autopilot disabled、旧任务无近期 `active` 证据；App list 工具被 hook 拦截，按边界记录，不外推为运行或验收证据。`HOST-202609-002-sandpackage-frontend-activation-contract.md` 已发送，待宿主接收处理（不等于已接单或已修复）。所有计数不变。
+- **C01 原子创建、F04 审计与 F05 前端批次**：C01 源码与离线独立复核获 Astra 综合 **ACCEPT（P0/P1/P2=0）**；既有 `AdminOrganizationAccess` 请求号关联源码修复、新行为/恢复回归，以及四 create 原子事务两批均独立 **ACCEPT**。既有真实 Service 响应完整 13 步 `passed`、cleanup confirmed；四阶段部分清理、四类全集、真实 creator 审计、真实 grant allow/revoke/env 停用均有记录。C01 v2 保留 disabled org/app audit anchors；真实 retained ID/status=2，environment/grant 物理零且 active 残留为 0，不宣称全行物理零。三项用户可观察源码行为已完成；zero-capture 因凭证 transport=0、firstwrite unknown 仍为 **blocked/not_confirmed**，不是完成或正式 C01/F/L/D 通过。C01 原子创建保持 `data.id`、权限先验证和生产 `IdempotencyService` 语义；实际 PostgreSQL 并发尚未验收，额外 dynamic probe 被 hook 阻挡，仅作源码核对。F05 OAuth failed logout UI 五文件已实现，DTO test 主控与独立 Astra PASS，目标 eslint、SandIAM scoped `vue-tsc`（exit 0、日志 0）和隔离 Vite build 均 PASS（21.71s）；独立 `astramedium__logout_review` 源码/离线复核未发现确定阻止缺陷。主控与独立 Astra 已核对 OAuth HTTP 200 业务错误的稳定 message/code；“必丢错误码”假设已撤回，未修改兼容代码。真实浏览器/API、两视口、角色仍未验收；全量宿主 types 仍单独受 SandPackage 测试配置 TS2307 阻断，不计正式 F05 通过。sync-connector/index.vue 与 `failedOutbox.behavior.test.cjs` 已修复连接切换旧响应污染/错配重试（原代码红例 `1010!=2020`，修后主控及独立 `astramedium__logout_review` 实际 Vue 脚本延迟回归 PASS）；目标 ESLint、格式与 diff 检查 PASS，独立源码离线未发现确定缺陷。既有 OAuth 临时 overlay 仅覆盖 sync 两文件；SandIAM scoped `vue-tsc` exit 0，Vite build exit 0（4487 modules，18.91s）；原源码已冻结。该结果仍不是浏览器/HTTP、完整页面、正式 F 或业务链通过。门户本批 IAM-T01/F03 的注册验证源码、既有测试、受控 DOM/fetch 回归、type、隔离 build、主控复跑及独立 Astra 源审均 PASS，权威 `account.js`/`index` 原生生成物与独立 `write:false` 构建字节一致，生成物缺口已关闭，公开用户指南已补；真实 API、短信/邮件与浏览器仍未验收，F03/C/L/D/发布计数不变。C04 service grant controller 已开启原子 create；审计失败三类记录回滚、同请求重放不重复，变更 payload 返回 409、撤权返回 403、引用错误返回 400；既有服务调用控制回归 PASS。该批为非 PostgreSQL/HTTP 证据，不改变 F/L/D、FLOW **28/48**、C **0/7** 或发布 **0/10**。
+
 本节是当前状态入口；下方 2026-09-08 表格保留为历史证据索引。0.7.0 的 `fa344cd`/tree
 `6465…` 与 v70/v71 摘要均为历史基线；旧结论只有在本轮绑定到当前
-SandIAM 源码树、候选包和适用运行环境并逐原子复核后才可继承，不因旧任务曾勾选而自动通过。`0.7.0-v71` 仅是历史 0.7.0 材料，不能作为 0.7.1 证据。
+SandIAM 源码树、候选包和适用运行环境，按第 9 节逐项判定复用或重验后才可继承，不因旧任务曾勾选而自动通过；身份标识变化不等于全部业务证据失效。`0.7.0-v71` 仍是历史 0.7.0 材料，不能改写成 0.7.1 实跑证据。
 
 | 当前事实 | 只读证据 | 结论 |
 | --- | --- | --- |
@@ -21,7 +36,7 @@ SandIAM 源码树、候选包和适用运行环境并逐原子复核后才可继
 | 包内一致性 | 当前静态状态：safe **114**、PHP lint **507**、package **24/24 PASS**；Composer **58** 与 TypeScript `dist` **4** 已双隔离重建并完成锁校验 | 仅证明当前源码包内部契约，不证明生命周期 |
 | 冻结 review-only artifact | v12 内容自洽；旧 verifier 对 manifest/validation 自报 `release/unsigned`、clean committed source/hygiene PASS | 独立 Astra 发现 verifier 只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件；自报已被推翻，v12 仅为历史快照，不能作为正式来源或升级包 |
 | 历史 review-only 清单 | `0.7.0-v70/v71` payload 相同；v70 archive `6cae3a2f…cfd97cf82`、635 entries、descriptor-excluded payload `4bbf9289…` | 仅作历史 0.7.0 证据，不能作为 0.7.1 证据；v71 B 已因 rsync size+mtime 假阴性被独立 REJECT |
-| 开源材料 | 已有 `CHANGELOG.md`、79/79 组件含 SPDX 与许可证证据引用的 `SBOM.cdx.json`、精确坐标许可证策略、`THIRD_PARTY_NOTICES.md`、`SECURITY.md`、`CONTRIBUTING.md` 和八份公开中文指南 | v12 来源完整性仍 REJECT；主树 integrity 25/26；发布材料门槛未通过 |
+| 开源材料 | 已有 `CHANGELOG.md`、SBOM **80** 个组件（含 W3C vendored schema 独立 component）及 SPDX/许可证证据引用、精确坐标许可证策略、独立 SDK `LICENSE`/`NOTICE` 与 metadata、`THIRD_PARTY_NOTICES.md`、`SECURITY.md`、`CONTRIBUTING.md` 和八份公开中文指南；hygiene **16/16**、policy **16/16**，public path 漏检已修复，Astra 独立复核 **ACCEPT（P0/P1/P2=0）** | 仅修复开源材料静态门禁；v12 来源完整性仍 REJECT，最终 clean 候选、签名和发布材料门槛未通过 |
 | 旧循环 | Codex 与 Cursor Autopilot/DETECT 均已 `enabled=false` | 旧任务不会作为当前 Goal 的自动执行入口 |
 
 ### 当前 FLOW 复核计分
@@ -145,7 +160,7 @@ P01–P20 在 2026-09-08 的严格计数为 **20/20**。P14 与 P19 均经独立
 
 ## 4. 正式 FLOW F01–F07
 
-F01–F07 是横跨适用模块和业务链的七个**证据维度**，不是升级票据七项，也不是 C01–C07 七条业务链。一个 F 原子只有在当前同一候选范围内，对所有适用链路都完成该纵向证据后才通过；局部链路不能按比例折算。
+F01–F07 是横跨适用模块和业务链的七个**证据维度**，不是升级票据七项，也不是 C01–C07 七条业务链。一个 F 原子只有在当前同一候选范围内，对所有适用链路都完成该纵向证据后才通过；局部链路不能按比例折算。开发期按第 9 节保留已证实不受影响的业务证据；F07 及最终同候选验证要求仍须实际满足，不以复用记录冒充实跑。F 汇总尚未通过不抹去已验收 C 链的成果；在现有任务板单列具体链的入口、通过项和缺口，不另加 FLOW 分子。
 
 | ID | 正式验收原子与完成定义 | 允许证据 | 不计分证据 | 2026-09-08 证据与状态 |
 | --- | --- | --- | --- | --- |
@@ -187,7 +202,9 @@ D01–D08 在 2026-09-08 的严格计数为 **0/8**。
 
 ## 7. 七条业务链 C01–C07 映射
 
-C01–C07 是产品体验契约中的业务场景，不是新的计分关口。每条链都必须穿过 F01–F07；下表中的 R/P/L/D 只是说明它验证哪些既有原子，不能据此重复加分。P01、P19 和 D01/D02/D08 是所有链的共同基础，未在每格重复展开。
+C01–C07 是产品体验契约中的业务场景，不是新的计分关口。每条链都必须覆盖适用的 F01–F07；下表中的 R/P/L/D 是证据覆盖映射，不是执行依赖或重复测试要求，不能据此重复加分。各链所需的 P01/P19 能力、候选来源与安装安全前提须满足，但不要求先将完整 D01/D02/D08 全部验收通过再开始 C 链。
+
+当前操作的前提按真实路径判定：正常安装/升级必须满足来源、版本、备份、数据库前置状态、兼容性及本次授权；实际处于失败状态则先满足对应恢复条件。健康宿主的正常升级不因其他失败恢复路径尚未验收而自动阻塞；若具体风险会影响本次升级，仍须先修复或排除。D08 完整恢复/回滚验收、发布审批、协议互操作、Casdoor 对照与最终同候选 24 小时等原定门槛继续保留，未通过不得称完整发布。
 
 | 链 ID | 业务链 | 主要产品原子 | 正式证据维度 | 本地闭环 | 主要部署原子 |
 | --- | --- | --- | --- | --- | --- |
@@ -218,9 +235,9 @@ REC01–REC08 在 2026-09-08 快照中为 **2/8**。后续只有对应步骤出�
 
 ## 9. 更新纪律
 
-1. 任何 FLOW 数字变化，先更新本账本对应 ID 的证据和状态，再同步任务板与终极验收矩阵。
+1. 本账本保存原子定义与证据索引，任务板是任务状态唯一来源。FLOW 数字变化时先核对对应 ID 的证据，再更新任务板状态；终极验收矩阵引用同一依据，不另行复制一套验收或为了同步文档重跑测试。
 2. 一个原子从未通过改为通过时，必须列出完成定义中的全部证据；不能只写“测试通过”。
-3. 候选、宿主、数据库或页面发生变化后，旧动态证据自动降为历史，除非完成内容寻址的一致性证明且该原子允许复用。
+3. 候选、宿主、数据库或页面变化后，先在已有证据索引记录旧/新标识、实际差异及依赖、受影响原子/业务链、复用或重验判定及理由。已证明实现、依赖、配置和相关数据前提未受影响且满足原条款的业务证据可复用；影响未知或相关条件已变的项不得继承通过，先核查或重验。共享鉴权/权限/数据边界变化须覆盖全部受影响链；不能只因文件未改就继承。原始证据保留真实版本、时间和环境，不重标为新候选实跑。包来源/摘要/签名等必须绑定具体候选的条款，以及 F07、最终同候选完整验收与 24 小时实跑要求，不能以开发期复用替代。仅不影响运行的说明文案变更不清零业务证据，但须复核受影响的包与文档项。
 4. 升级票据、REC 子检查或 C 业务链进度可以单独汇报，但不得加到 2026-09-08 基线的 **28/48**。
 5. “实现完成”“正式 FLOW 通过”“本地闭环”“可上线”“已部署”“线上验证”分别下结论。
 
@@ -229,3 +246,16 @@ REC01–REC08 在 2026-09-08 快照中为 **2/8**。后续只有对应步骤出�
 - 已提交：`6e190953dc260f32e7428e751c3c6318dc9fcd8d`（HOST-202609-001）、`a7edcebb37ea06b2da3dc445d5b7307d3111a7ab`（生命周期）和 `1aba9b444ae8ec69972faa2c1e6fe8e6ebc32d48`（外部验收）。它们不构成任何 F/L/D 或 G 原子通过。
 - 生命周期提交的非 vendor `git diff --cached --check` 为零；完整检查只有 18 个原样第三方 vendor 文件的 whitespace 报告，未改写其字节，故不记整体 diff-check 通过。
 - BLOCKED-B 的 7 个备份恢复文件未提交：`docs/user-guide/backup-and-restore.md`、`plugin/sand-iam/tests/backup_recovery_evidence_non_pg_test.php`、`plugin/sand-iam/tests/backup_restore_command_guard_non_pg_test.php`、`plugin/sand-iam/tests/external_acceptance_template_non_pg_test.php`、`tools/validate-backup-recovery.php`、`tools/prepare-external-acceptance.php`、`tools/README.md`；G 继续为未通过。
+
+## 2026-09-13 backup v3 离线证据契约批次
+
+| 项目 | 结果与边界 |
+| --- | --- |
+| 契约版本 | `schema v3` / `plan v2` |
+| 覆盖范围 | typed ownership + staged reconcile；generator/template roundtrip |
+| 核心结果 | **1 个正例 + 9 个 hash 重算负例** |
+| 独立验收 | 六文件由 Astra 独立验收 **ACCEPT（P0/P1/P2=0）** |
+| validator SHA-256 | `fece73aa13ec4917f5c122f563716c2ab0945572ecd84d88245968022aa1206f` |
+| 真实环境 | `real_g=false`；未执行真实 PostgreSQL、KMS 或恢复演练 |
+
+本批只证明离线契约、生成器/模板往返和 hash 负例边界，不构成真实备份、恢复、D06、正式 FLOW、业务闭环、部署或线上验证通过。不得因此改变冻结统计：正式 FLOW **0/7**、本地业务闭环 **0/4**、可上线部署 **0/8**、完整目标 **28/48**、发布门槛 **0/10**；也不得回写其他过时全仓统计。

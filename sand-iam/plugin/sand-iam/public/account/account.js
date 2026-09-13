@@ -703,6 +703,16 @@ async function portalRegister(organizationCode, applicationCode, fields) {
   }
   return { requestId: result.requestId, data: tokens };
 }
+async function portalIdentityVerification(organizationCode, applicationCode, identifier, channel, code) {
+  return portalPublicAuth(code === void 0 ? "/verification/request" : "/verification/confirm", {
+    organization_code: organizationCode,
+    application_code: applicationCode,
+    identifier,
+    channel,
+    purpose: channel === "email" ? "email_verify" : "phone_verify",
+    ...code === void 0 ? {} : { code }
+  });
+}
 async function verifyPortalMfaChallenge(organizationCode, applicationCode, challengeToken, method, code) {
   const result = await portalPublicAuth("/mfa/challenge/verify", {
     organization_code: organizationCode,
@@ -1242,6 +1252,7 @@ var invitationAcceptedName = "";
 var casRequest = takeSensitiveQuery("cas_request") || takeSensitiveQuery("request");
 var oauthRequest = takeSensitiveQuery("oauth_request");
 var state = {
+  verification: null,
   accessToken: "",
   requestId: "",
   organizationCode: params.get("organization_code") ?? "",
@@ -1503,6 +1514,7 @@ async function submitOAuthDecision(decision) {
   }
 }
 async function loadExperience() {
+  state.verification = null;
   state.organizationCode = inputValue("organization-code") || state.organizationCode;
   state.applicationCode = inputValue("application-code") || state.applicationCode;
   clearError();
@@ -1529,18 +1541,20 @@ async function submitLogin() {
     return;
   }
   clearError();
+  const identifier = inputValue("login-identifier");
+  const organization = state.organizationCode;
+  const application = state.applicationCode;
   try {
     const result = await portalLogin(
       state.organizationCode,
       state.applicationCode,
-      inputValue("login-identifier"),
+      identifier,
       inputValue("login-password"),
       inputValue("login-captcha")
     );
     rememberRequest(result.requestId);
     if (result.data.verificationRequired) {
-      state.errorTitle = "\u8FD8\u9700\u8981\u5B8C\u6210\u9A8C\u8BC1";
-      state.errorDetail = "\u8D26\u53F7\u5DF2\u8BC6\u522B\uFF0C\u4F46\u8FD8\u4E0D\u80FD\u7B7E\u53D1\u4F1A\u8BDD\u3002\u8BF7\u5148\u5B8C\u6210\u90AE\u7BB1\u6216\u624B\u673A\u9A8C\u8BC1\u3002";
+      openVerification(identifier, organization, application);
       render();
       return;
     }
@@ -1556,7 +1570,11 @@ async function submitLogin() {
     await bindOAuthAfterLogin();
     render();
   } catch (error) {
-    setError(error);
+    if (error instanceof Error && error.message.includes("SAND_IAM_AUTH_VERIFICATION_REQUIRED")) {
+      openVerification(identifier, organization, application);
+    } else {
+      setError(error);
+    }
     render();
   }
 }
@@ -1681,6 +1699,8 @@ async function submitRegister() {
   }
   const captcha = inputValue("register-captcha");
   if (captcha !== "") fields.captcha_token = captcha;
+  const organization = state.organizationCode;
+  const application = state.applicationCode;
   try {
     const result = await portalRegister(
       state.organizationCode,
@@ -1689,8 +1709,7 @@ async function submitRegister() {
     );
     rememberRequest(result.requestId);
     if (result.data.verificationRequired) {
-      state.errorTitle = "\u8FD8\u9700\u8981\u5B8C\u6210\u9A8C\u8BC1";
-      state.errorDetail = "\u6CE8\u518C\u5DF2\u63A5\u53D7\uFF0C\u4F46\u8FD8\u4E0D\u80FD\u7B7E\u53D1\u4F1A\u8BDD\u3002";
+      openVerification(fields.username, organization, application);
       render();
       return;
     }
@@ -1708,6 +1727,59 @@ async function submitRegister() {
   } catch (error) {
     setError(error);
     render();
+  }
+}
+function openVerification(identifier, organization, application) {
+  if (organization !== state.organizationCode || application !== state.applicationCode) return;
+  state.verification = {
+    organizationCode: organization,
+    applicationCode: application,
+    identifier,
+    channel: "email",
+    busy: false
+  };
+  state.pendingMfa = null;
+  state.errorTitle = "\u8FD8\u9700\u8981\u5B8C\u6210\u9A8C\u8BC1";
+  state.errorDetail = "\u8BF7\u9009\u62E9\u8D26\u53F7\u767B\u8BB0\u7684\u90AE\u7BB1\u6216\u624B\u673A\u5B8C\u6210\u9A8C\u8BC1\uFF0C\u518D\u91CD\u65B0\u767B\u5F55\u3002";
+}
+async function submitVerification(channel) {
+  const verification = state.verification;
+  if (verification === null || verification.busy) return;
+  const code = channel === void 0 ? inputValue("verification-code").trim() : void 0;
+  if (code === "") {
+    state.errorTitle = "\u8BF7\u586B\u5199\u9A8C\u8BC1\u7801";
+    state.errorDetail = "\u8F93\u5165\u6536\u5230\u7684\u9A8C\u8BC1\u7801\u540E\u518D\u786E\u8BA4\u3002";
+    render();
+    return;
+  }
+  if (channel !== void 0) verification.channel = channel;
+  verification.busy = true;
+  clearError();
+  render();
+  try {
+    const result = await portalIdentityVerification(
+      verification.organizationCode,
+      verification.applicationCode,
+      verification.identifier,
+      verification.channel,
+      code
+    );
+    if (state.verification !== verification) return;
+    rememberRequest(result.requestId);
+    if (code === void 0) {
+      state.errorTitle = "\u9A8C\u8BC1\u8BF7\u6C42\u5DF2\u53D7\u7406";
+      state.errorDetail = "\u5982\u8D26\u53F7\u5DF2\u767B\u8BB0\u6240\u9009\u8054\u7CFB\u65B9\u5F0F\u4E14\u901A\u9053\u53EF\u7528\uFF0C\u60A8\u5C06\u6536\u5230\u9A8C\u8BC1\u7801\u3002\u672A\u6536\u5230\u65F6\u8BF7\u7A0D\u540E\u91CD\u8BD5\u6216\u8054\u7CFB\u5E94\u7528\u7BA1\u7406\u5458\u3002";
+    } else {
+      state.verification = null;
+      state.errorTitle = "\u672C\u6B21\u8054\u7CFB\u65B9\u5F0F\u9A8C\u8BC1\u5DF2\u5B8C\u6210";
+      state.errorDetail = "\u8BF7\u91CD\u65B0\u767B\u5F55\uFF1B\u82E5\u5E94\u7528\u8FD8\u8981\u6C42\u5176\u4ED6\u9A8C\u8BC1\uFF0C\u8BF7\u6309\u767B\u5F55\u63D0\u793A\u7EE7\u7EED\u3002";
+      render();
+    }
+  } catch (error) {
+    if (state.verification === verification) setError(error);
+  } finally {
+    verification.busy = false;
+    if (state.verification === verification) render();
   }
 }
 async function submitMfaLogin() {
@@ -2072,6 +2144,20 @@ function render() {
   document.getElementById("register-btn")?.addEventListener("click", () => {
     void submitRegister();
   });
+  document.getElementById("verification-email")?.addEventListener("click", () => {
+    void submitVerification("email");
+  });
+  document.getElementById("verification-phone")?.addEventListener("click", () => {
+    void submitVerification("phone");
+  });
+  document.getElementById("verification-confirm")?.addEventListener("click", () => {
+    void submitVerification();
+  });
+  document.getElementById("verification-back")?.addEventListener("click", () => {
+    state.verification = null;
+    clearError();
+    render();
+  });
   document.getElementById("forgot-btn")?.addEventListener("click", () => {
     void submitForgot();
   });
@@ -2204,6 +2290,22 @@ function renderExperience() {
 }
 function renderLogin() {
   if (state.experience === null) return "";
+  if (state.verification !== null) {
+    const verification = state.verification;
+    const disabled = verification.busy ? "disabled" : "";
+    return `<section>
+      <h2>\u9A8C\u8BC1\u8D26\u53F7\u8054\u7CFB\u65B9\u5F0F</h2>
+      <p>\u5F53\u524D\u8D26\u53F7\uFF1A${escapeHtml(verification.identifier)}</p>
+      <p class="hint">\u9A8C\u8BC1\u7801\u53D1\u9001\u5230\u8BE5\u8D26\u53F7\u5DF2\u767B\u8BB0\u7684\u8054\u7CFB\u65B9\u5F0F\u3002\u8BF7\u9009\u62E9\u9700\u8981\u9A8C\u8BC1\u7684\u90AE\u7BB1\u6216\u624B\u673A\u3002</p>
+      <button type="button" id="verification-email" ${disabled}>\u53D1\u9001\u90AE\u7BB1\u9A8C\u8BC1\u7801</button>
+      <button type="button" id="verification-phone" ${disabled}>\u53D1\u9001\u624B\u673A\u9A8C\u8BC1\u7801</button>
+      <label>${verification.channel === "email" ? "\u90AE\u7BB1" : "\u624B\u673A"}\u9A8C\u8BC1\u7801
+        <input id="verification-code" autocomplete="one-time-code" ${disabled} />
+      </label>
+      <button type="button" id="verification-confirm" ${disabled}>\u786E\u8BA4\u9A8C\u8BC1</button>
+      <button type="button" id="verification-back" ${disabled}>\u8FD4\u56DE\u767B\u5F55</button>
+    </section>`;
+  }
   const passwordEnabled = experienceAllowsPassword(state.experience);
   const passkeyEnabled = experienceAllowsPasskey(state.experience);
   const externalMethods = externalLoginMethods(state.experience);

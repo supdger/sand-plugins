@@ -1,6 +1,16 @@
 {
   "name": "@sand/iam-browser",
   "version": "0.1.0",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/supdger/sand-plugins",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/supdger/sand-plugins.git",
+    "directory": "sand-iam/sdk/typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/supdger/sand-plugins/issues"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -11,7 +21,9 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=18"

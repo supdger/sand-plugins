@@ -26,13 +26,13 @@ final class IdentityGroupService
             $depth = $parentId === null ? 1 : $this->parent($parentId, $applicationId)->depth + 1;
             if ($depth > 8) throw new ApiException('SAND_IAM_IDENTITY_GROUP_DEPTH_EXCEEDED', 409);
             $group = IdentityGroup::create(['application_id' => $applicationId, 'parent_id' => $parentId, 'code' => $code, 'name' => $name, 'description' => mb_substr(trim($description), 0, 500), 'depth' => $depth, 'status' => 1]);
+            $this->writeAudit($application, 'identity_group.create', (int) $group->id, $actor, $requestId);
             Db::commit();
         } catch (\Throwable $exception) {
             Db::rollback();
             if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_IDENTITY_GROUP_CONFLICT', 409);
             throw $exception;
         }
-        $this->writeAudit($application, 'identity_group.create', (int) $group->id, $actor, $requestId);
         return (int) $group->id;
     }
 
@@ -54,9 +54,9 @@ final class IdentityGroupService
             if ((int) $group->parent_id !== (int) ($parentId ?? 0) && IdentityGroup::where('parent_id', $id)->where('application_id', $applicationId)->where('status', 1)->count() > 0) throw new ApiException('SAND_IAM_IDENTITY_GROUP_HAS_CHILDREN', 409);
             if ($status === 2) $this->assertEmpty($id, $applicationId);
             $group->save(['name' => $name, 'parent_id' => $parentId, 'description' => mb_substr(trim($description), 0, 500), 'depth' => $depth, 'status' => $status]);
+            $this->writeAudit($application, 'identity_group.update', $id, $actor, $requestId);
             Db::commit();
         } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
-        $this->writeAudit($application, 'identity_group.update', $id, $actor, $requestId);
     }
 
     public function addMember(int $groupId, int $identityId, int $applicationId, string $actor, string $requestId): int
@@ -73,9 +73,9 @@ final class IdentityGroupService
             if ($member === null) { $member = IdentityGroupMember::create(['identity_group_id' => $groupId, 'application_id' => $applicationId, 'identity_id' => $identityId, 'status' => 1]); $changed = true; }
             elseif ((int) $member->status !== 1) { $member->save(['status' => 1]); $changed = true; }
             if ($changed) (new IdentityEventPublisher())->publish($application, $identity, 'identity.updated', ['groups'], $requestId);
+            $this->writeAudit($application, 'identity_group.member_add', $groupId, $actor, $requestId, ['identity_id' => $identityId]);
             Db::commit();
         } catch (\Throwable $exception) { Db::rollback(); if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_IDENTITY_GROUP_MEMBER_CONFLICT', 409); throw $exception; }
-        $this->writeAudit($application, 'identity_group.member_add', $groupId, $actor, $requestId, ['identity_id' => $identityId]);
         return (int) $member->id;
     }
 
@@ -89,12 +89,12 @@ final class IdentityGroupService
             if ($member === null || $identity === null) throw new ApiException('SAND_IAM_IDENTITY_GROUP_MEMBER_NOT_FOUND', 404);
             $member->save(['status' => 2]);
             (new IdentityEventPublisher())->publish($application, $identity, 'identity.updated', ['groups'], $requestId);
+            $this->writeAudit($application, 'identity_group.member_remove', $groupId, $actor, $requestId, ['identity_id' => $identityId]);
             Db::commit();
         } catch (\Throwable $exception) {
             Db::rollback();
             throw $exception;
         }
-        $this->writeAudit($application, 'identity_group.member_remove', $groupId, $actor, $requestId, ['identity_id' => $identityId]);
     }
 
     private function assertNotDescendant(IdentityGroup $group, IdentityGroup $candidate): void

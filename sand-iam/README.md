@@ -22,7 +22,7 @@ clean Git commit 的 blob 构建，不能以本机缓存或 ignored 文件替代
 管理 OpenAPI 中的 `0.13.0-candidate` 是接口契约版本，不等于插件发行版本。
 当前可证实的迁移与发布材料变化见[变更日志](CHANGELOG.md)。
 
-`0.7.1` 尚未发布：候选提交尚未推送，来源修复仍未提交，且 v12 正式来源验收已拒绝。不要把当前源码候选当作可下载或可安装的正式发行版。
+`0.7.1` 尚未发布：最终 clean commit、可复现候选 ZIP、包外签名和正式宿主验收尚未同时形成。不要把当前源码、历史候选或静态检查当作可下载或可安装的正式发行版。
 
 本源码候选尚未正式发布。不要把源码构建、静态检查或候选包生成视为生产可用证明；
 部署前应在隔离环境完成安装、升级、协议互操作、权限安全、备份恢复和业务闭环验证。
@@ -47,7 +47,7 @@ manifest 和 ZIP 内逐文件摘要，再执行安装。
 
 - [Webman 业务应用示例](examples/webman-business-app/README.md)：应用、资源、动作、接口、路由和数据范围接入。
 - [机器调用服务示例](examples/machine-service-client/README.md)：机器身份、服务授权、凭证和受众校验。
-- `sdk/php/`、`sdk/typescript/`、`sdk/dart/`：三种客户端 SDK。
+- [PHP SDK](sdk/php/README.md)、[TypeScript SDK](sdk/typescript/README.md) 和 [Dart SDK](sdk/dart/README.md)：三种客户端 SDK。
 - `portal/`：独立应用用户自助门户源码与构建产物。
 
 应用管理员可继续阅读[应用接入](docs/user-guide/application-integration.md)，最终用户可阅读

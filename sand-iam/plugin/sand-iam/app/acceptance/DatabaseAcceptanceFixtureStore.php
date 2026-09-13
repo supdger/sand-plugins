@@ -127,6 +127,50 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
         return $result;
     }
 
+    public function creationAuditCreatedBy(string $action, string $resourceType, string $requestId, int $resourceId, string $prefix, int $adminId): bool
+    {
+        return Db::table('sand_iam_audit_log')
+            ->where('action', $action)
+            ->where('resource_type', $resourceType)
+            ->where('resource_id', $resourceId)
+            ->where('request_id', $requestId)
+            ->whereRaw('left(request_id, ?) = ?', [strlen($prefix), $prefix])
+            ->where('actor_type', 'admin')
+            ->where('actor_ref', (string) $adminId)
+            ->where('outcome', 'succeeded')
+            ->exists();
+    }
+
+    public function organizationApplicationEnvironmentUniverse(string $prefix, bool $lock): array
+    {
+        $organizationQuery = Db::table($this->table('organization'))
+            ->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
+        if ($lock) $organizationQuery->lock(true);
+        $roots = ['organization' => $this->queryRows($organizationQuery)];
+
+        $organizationIds = $this->sortedIds($roots['organization']);
+        $applicationQuery = Db::table($this->table('application'))
+            ->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
+        if ($organizationIds !== []) $applicationQuery->whereOr('organization_id', 'in', $organizationIds);
+        if ($lock) $applicationQuery->lock(true);
+        $roots['application'] = $this->queryRows($applicationQuery);
+        $applicationIds = $this->sortedIds($roots['application']);
+        $environmentQuery = Db::table($this->table('environment'))
+            ->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
+        if ($applicationIds !== []) $environmentQuery->whereOr('application_id', 'in', $applicationIds);
+        if ($lock) $environmentQuery->lock(true);
+        $roots['environment'] = $this->queryRows($environmentQuery);
+        $grants = [];
+        if ($applicationIds !== []) {
+            $query = Db::table($this->table('admin_application_grant'))
+                ->whereIn('application_id', $applicationIds);
+            if ($lock) $query->lock(true);
+            $grants = $this->queryRows($query);
+        }
+
+        return $roots + ['admin_application_grant' => $grants];
+    }
+
     public function mfaLoginChallengeAuditExists(int $applicationId, int $identityId, string $requestId, string $prefix): bool
     {
         return Db::table('sand_iam_audit_log')->alias('audit')
@@ -435,5 +479,13 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
         $rows = $query->select();
         $values = is_object($rows) && method_exists($rows, 'toArray') ? $rows->toArray() : $rows;
         return is_array($values) ? array_values(array_filter($values, 'is_array')) : [];
+    }
+
+    /** @param list<array<string,mixed>> $rows @return list<int> */
+    private function sortedIds(array $rows): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map(static fn (array $row): int => (int) ($row['id'] ?? 0), $rows), static fn (int $id): bool => $id > 0)));
+        sort($ids);
+        return $ids;
     }
 }

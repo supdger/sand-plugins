@@ -6,9 +6,30 @@
 
 网络、事实、数据分级、配额和幂等错误保持稳定机器码：`SAND_IAM_SERVICE_NETWORK_FORBIDDEN`、`SAND_IAM_INVOCATION_FACTS_UNVERIFIED`、`SAND_IAM_DATA_CLASS_FORBIDDEN`、`SAND_IAM_SERVICE_QUOTA_EXCEEDED`、`SAND_IAM_IDEMPOTENCY_CONFLICT`。它们都应 fail-closed。
 
-## 本地安装与发布前门禁
+## 包外 consumer 安装与最小程序
 
-在独立 consumer 的 `composer.json` 使用本目录的 `path` repository 安装 `sand/iam-sdk`，并通过 mock transport 运行 issue/verify。执行 `composer dump-autoload`、PHP lint 与 SDK 测试后才可评审发布；本次不执行 Composer 发布或任何公网操作。
+从源码目录使用本地 path repository 的 consumer，可执行：
+
+```sh
+composer config repositories.sand-iam path ../sand-plugins/sand-iam/sdk/php
+composer require sand/iam-sdk:*
+```
+
+这只安装已检出的 SDK，不能推断 Composer Registry 已有发布包。安装后，服务端 consumer 可导入并完成最小的“签发 → 验证”闭环（示例中的值必须替换为已登记的服务、受众、动作和由密钥管理系统注入的凭证）：
+
+```php
+<?php
+require 'vendor/autoload.php';
+
+use Sand\Iam\Sdk\SandIamClient;
+
+$iam = new SandIamClient('https://iam.example.com', 'your_organization', 'your_application');
+$issued = $iam->issueContext(getenv('SAND_IAM_WORKLOAD_CREDENTIAL'), 'document-service', 'document-service', ['document.read'], null, 'issue-001');
+$claims = $iam->verifyContext($issued['context'], 'document-service', 'document-service', ['document.read'], null, 'verify-001');
+if (($claims['context_id'] ?? '') !== $issued['context_id']) throw new RuntimeException('SandIAM context verification failed');
+```
+
+`issueContext` 仅能在可信服务端使用；把短期 context 经内部可信通道交给目标服务，目标服务验证成功后才执行副作用。请在自己的隔离环境运行该程序并核对审计；本 README 不把示例视为真实调用已通过。
 
 ## 管理面客户端
 

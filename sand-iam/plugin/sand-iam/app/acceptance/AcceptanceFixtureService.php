@@ -109,6 +109,20 @@ final class AcceptanceFixtureService
             'scope_types' => ['environment', 'resource', 'identity'],
         ],
     ];
+    private const C01_V2 = [
+        'types' => ['organization', 'application', 'environment', 'admin_application_grant'],
+        // Audit rows keep restrictive references to their organization and
+        // application. C01 v2 therefore removes only disposable children and
+        // retains the two audited anchors in disabled state.
+        'purge_order' => ['admin_application_grant', 'environment'],
+        'revoke_order' => ['admin_application_grant', 'environment', 'application', 'organization'],
+        'actions' => [
+            'organization' => 'organization.create',
+            'application' => 'application.create',
+            'environment' => 'environment.create',
+            'admin_application_grant' => 'admin_application_grant.create',
+        ],
+    ];
 
     private readonly AcceptanceFixtureStore $store;
     private readonly Closure $idempotentExecute;
@@ -164,6 +178,11 @@ final class AcceptanceFixtureService
     public function cleanup(array $payload, int $adminId, string $headerRequestId): array
     {
         $request = $this->validateRequest($payload, $headerRequestId);
+        if ($request['chain_id'] === 'organization-application-environment'
+            && $request['contract_version'] === 2
+            && $request['creator_admin_id'] !== $adminId) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: C01 创建者必须与执行清理的后台管理员精确一致', 403);
+        }
         $fingerprint = IdempotencyService::fingerprint($request);
         $failureContext = [];
         try {
@@ -210,6 +229,9 @@ final class AcceptanceFixtureService
                             'purged' => $purged,
                             'residual' => $residual,
                         ];
+                        if ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2) {
+                            $result += $this->c01V2RetentionReport($request);
+                        }
                         ($this->audit)((string) $adminId, $request['request_id'], 'acceptance_fixture.cleanup', 'succeeded', $this->auditContext($request, $result));
                         return ['result' => $result];
                     },
@@ -235,11 +257,15 @@ final class AcceptanceFixtureService
     {
         $request = $this->validateRequest($payload, $headerRequestId);
         $records = $this->verifiedRecords($request, false, false);
-        return [
+        $result = [
             'chain_id' => $request['chain_id'],
             'request_id' => $request['request_id'],
             'residual' => $this->residual($request, $records),
         ];
+        if ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2) {
+            $result += $this->c01V2RetentionReport($request);
+        }
+        return $result;
     }
 
     /** @param array<string,mixed> $payload @return array<string,mixed> */
@@ -248,16 +274,24 @@ final class AcceptanceFixtureService
         $chainId = trim((string) ($payload['chain_id'] ?? ''));
         $spec = self::CHAINS[$chainId] ?? null;
         if ($spec === null) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_CHAIN_UNSUPPORTED: 当前业务链尚未提供受控自动清理', 400);
+        $c01Version = $chainId === 'organization-application-environment' ? (int) ($payload['contract_version'] ?? 1) : 1;
+        if ($chainId === 'organization-application-environment' && !in_array($c01Version, [1, 2], true)) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: C01 仅支持已冻结的 contract_version 1 或 2', 400);
+        }
+        $c01V2 = $chainId === 'organization-application-environment' && $c01Version === 2;
+        if ($c01V2) $spec = self::C01_V2;
         $prefix = trim((string) ($payload['prefix'] ?? ''));
         if (preg_match(self::PREFIX_PATTERN, $prefix) !== 1) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_PREFIX_INVALID: 验收前缀必须使用 sand_iam_acceptance_ 加 16 位小写十六进制标识和结尾下划线', 400);
         if (($payload['confirmation'] ?? null) !== self::CONFIRMATION) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_CONFIRMATION_REQUIRED: 请明确确认只清理本轮验收数据', 400);
         $requestId = $this->requestId($payload['request_id'] ?? null, '清理请求');
         $this->assertRequestPrefix($requestId, $prefix, '清理请求');
         if ($requestId !== $this->requestId($headerRequestId, '请求头')) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUEST_MISMATCH: 请求头与请求内容中的请求编号必须一致', 400);
-        $organizationId = $this->positiveId($payload['organization_id'] ?? null, '客户主体');
-        $applicationId = $this->positiveId($payload['application_id'] ?? null, '接入应用');
+        $organizationId = $c01V2 ? $this->nullablePositiveId($payload['organization_id'] ?? null, '客户主体') : $this->positiveId($payload['organization_id'] ?? null, '客户主体');
+        $applicationId = $c01V2 ? $this->nullablePositiveId($payload['application_id'] ?? null, '接入应用') : $this->positiveId($payload['application_id'] ?? null, '接入应用');
         $scopeIds = [];
         $expectedRoleId = null;
+        $scopedAdminId = null;
+        $creatorAdminId = null;
         foreach ($spec['scope_types'] ?? [] as $type) {
             $scopeIds[$type] = $this->positiveId($payload[$type . '_id'] ?? null, $this->scopeLabel($type));
         }
@@ -266,9 +300,36 @@ final class AcceptanceFixtureService
         $expectedTypes = $spec['types'];
         sort($submittedTypes);
         sort($expectedTypes);
+        if ($c01V2) {
+            $closedStages = [
+                '',
+                'organization',
+                'application,organization',
+                'application,environment,organization',
+                'admin_application_grant,application,environment,organization',
+            ];
+            if (!in_array(implode(',', $submittedTypes), $closedStages, true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: C01 仅允许组织、组织加应用、完整层级或完整层级加委派的闭合清理集合', 400);
+            }
+            if ((in_array('organization', $submittedTypes, true) && $organizationId === null)
+                || (!in_array('organization', $submittedTypes, true) && $organizationId !== null)
+                || (in_array('application', $submittedTypes, true) && $applicationId === null)
+                || (!in_array('application', $submittedTypes, true) && $applicationId !== null)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: C01 父级范围必须与已创建的闭合对象集合精确对应', 400);
+            }
+            $rawC01ObjectIds = $payload['object_ids'] ?? null;
+            if (is_array($rawC01ObjectIds) && array_key_exists('admin_application_grant', $rawC01ObjectIds)) {
+                $scopedAdminId = $this->positiveId($payload['scoped_admin_id'] ?? null, '受委派后台管理员');
+            } elseif (array_key_exists('scoped_admin_id', $payload)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: C01 未创建委派时不得提交受委派后台管理员', 400);
+            }
+            $creatorAdminId = $this->positiveId($payload['creator_admin_id'] ?? null, 'C01 创建后台管理员');
+        } elseif ($organizationId === null || $applicationId === null) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 验收清理必须提供客户主体和接入应用边界', 400);
+        }
         $partialTypes = (bool) ($spec['partial_types'] ?? false);
         if (!is_array($inputIds)
-            || (!$partialTypes && $submittedTypes !== $expectedTypes)
+            || (!$c01V2 && !$partialTypes && $submittedTypes !== $expectedTypes)
             || ($partialTypes && ($submittedTypes === [] || array_diff($submittedTypes, $expectedTypes) !== []))) {
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 必须按固定对象类型逐项提交精确编号', 400);
         }
@@ -422,6 +483,7 @@ final class AcceptanceFixtureService
         }
         return [
             'chain_id' => $chainId,
+            'contract_version' => $c01Version,
             'spec' => $spec,
             'request_id' => $requestId,
             'organization_id' => $organizationId,
@@ -434,6 +496,8 @@ final class AcceptanceFixtureService
             'human_auth_action_request_ids' => $humanAuthActionRequestIds,
             'human_auth_session_actions' => $humanAuthSessionActions,
             'expected_role_id' => $expectedRoleId,
+            'scoped_admin_id' => $scopedAdminId,
+            'creator_admin_id' => $creatorAdminId,
             'prefix' => $prefix,
         ];
     }
@@ -466,6 +530,19 @@ final class AcceptanceFixtureService
         if ($request['chain_id'] === 'oauth-cas-api-governance') {
             $this->verifiedOAuthCasApiGovernanceScope($request, $lock);
         }
+        if ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2) {
+            $universe = $this->store->organizationApplicationEnvironmentUniverse($request['prefix'], $lock);
+            foreach ($request['spec']['types'] as $type) {
+                $actualIds = $this->sortedIds($universe[$type] ?? []);
+                $expectedIds = $requirePresent || in_array($type, ['organization', 'application'], true)
+                    ? ($request['object_ids'][$type] ?? [])
+                    : [];
+                if ($actualIds !== $expectedIds) {
+                    throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: C01 当前前缀对象全集与提交集合不一致，拒绝清理', 400);
+                }
+                foreach ($universe[$type] ?? [] as $row) $this->assertRecordBoundary($request, $type, $row);
+            }
+        }
         foreach (array_keys($request['object_ids']) as $type) {
             $ids = $request['object_ids'][$type];
             $rows = $this->store->records($type, $ids, $lock, $request['prefix']);
@@ -480,6 +557,17 @@ final class AcceptanceFixtureService
                 $recordExists = array_filter($records[$type] ?? [], static fn (array $row): bool => (int) ($row['id'] ?? 0) === $id) !== [];
                 if (!$requirePresent && !$recordExists) continue;
                 $this->assertCreationAudit($request, $type, $id, $request['object_request_ids'][$type][$offset], $records[$type] ?? []);
+            }
+        }
+        if ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2 && $requirePresent) {
+            foreach ($request['object_ids'] as $type => $ids) {
+                foreach ($ids as $offset => $id) {
+                    $actualIds = $this->store->allCreationAuditIds($request['spec']['actions'][$type], $type, $request['object_request_ids'][$type][$offset], $request['prefix']);
+                    if ($actualIds !== [$id]) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: C01 创建审计与本轮精确对象集合不一致', 400);
+                    if (!$this->store->creationAuditCreatedBy($request['spec']['actions'][$type], $type, $request['object_request_ids'][$type][$offset], $id, $request['prefix'], $request['creator_admin_id'])) {
+                        throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: C01 创建审计不属于冻结的创建后台管理员', 400);
+                    }
+                }
             }
         }
         if ($request['chain_id'] === 'workload-credential-invocation') {
@@ -826,7 +914,7 @@ final class AcceptanceFixtureService
         if ($type === 'organization' && (int) ($row['id'] ?? 0) !== $request['organization_id']) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 客户主体边界不匹配', 400);
         if ($type === 'application' && ((int) ($row['id'] ?? 0) !== $request['application_id'] || (int) ($row['organization_id'] ?? 0) !== $request['organization_id'])) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 接入应用边界不匹配', 400);
         if ($type === 'environment' && (int) ($row['application_id'] ?? 0) !== $request['application_id']) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 应用环境边界不匹配', 400);
-        if ($type === 'admin_application_grant' && (int) ($row['application_id'] ?? 0) !== $request['application_id']) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 管理委派不属于指定接入应用', 400);
+        if ($type === 'admin_application_grant' && ((int) ($row['application_id'] ?? 0) !== $request['application_id'] || ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2 && (int) ($row['admin_user_id'] ?? 0) !== $request['scoped_admin_id']))) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 管理委派不属于指定接入应用或受委派后台管理员', 400);
         if (in_array($type, ['identity', 'identity_group', 'identity_group_member', 'identity_group_role'], true)
             && (int) ($row['application_id'] ?? 0) !== $request['application_id']) {
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 身份、用户组或关系不属于指定接入应用', 400);
@@ -1014,6 +1102,19 @@ final class AcceptanceFixtureService
     /** @param array<string,mixed> $request @param array<string,list<array<string,mixed>>> $records @return array<string,int> */
     private function residual(array $request, array $records): array
     {
+        if ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2) {
+            $universe = $this->store->organizationApplicationEnvironmentUniverse($request['prefix'], false);
+            $residual = [];
+            foreach (['environment', 'admin_application_grant'] as $type) {
+                $residual[$type] = count($universe[$type] ?? []);
+            }
+            $activeBusinessResidual = 0;
+            foreach (['organization', 'application'] as $type) {
+                foreach ($universe[$type] ?? [] as $row) if ((int) ($row['status'] ?? 0) !== 2) $activeBusinessResidual++;
+            }
+            $residual['active_business_residual'] = $activeBusinessResidual;
+            return $residual;
+        }
         $residual = [];
         foreach (array_keys($request['object_ids']) as $type) $residual[$type] = count($this->store->records($type, $request['object_ids'][$type], false, $request['prefix']));
         if ($request['chain_id'] === 'human-auth-session-mfa') {
@@ -1048,6 +1149,25 @@ final class AcceptanceFixtureService
             $residual[$type] = $ids === [] ? 0 : count($this->store->records($type, $ids, false, ''));
         }
         return $residual;
+    }
+
+    /** @param array<string,mixed> $request @return array<string,mixed> */
+    private function c01V2RetentionReport(array $request): array
+    {
+        $universe = $this->store->organizationApplicationEnvironmentUniverse($request['prefix'], false);
+        $retained = [];
+        foreach (['organization', 'application'] as $type) {
+            $expectedIds = $request['object_ids'][$type] ?? [];
+            $actualIds = $this->sortedIds($universe[$type] ?? []);
+            if ($actualIds !== $expectedIds) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_RESIDUAL: C01 审计锚点未按精确集合保留，事务已回滚', 400);
+            }
+            $retained[$type] = array_map(static fn (array $row): array => [
+                'id' => (int) $row['id'],
+                'status' => (int) ($row['status'] ?? 0),
+            ], $universe[$type] ?? []);
+        }
+        return ['retained' => $retained];
     }
 
     /** @param array<string,mixed> $request @param array<string,list<array<string,mixed>>> $records @return array<string,list<int>> */
@@ -1112,7 +1232,7 @@ final class AcceptanceFixtureService
             $key = strtolower((string) substr($path, strrpos($path, '/') + 1));
             if (is_int($value) && $value >= 0) return;
             if (is_bool($value) && $key === 'unchanged') return;
-            if ($value === null && in_array($key, ['identity_id', 'application_id', 'parent_id', 'status', 'revoked_time'], true)) return;
+            if ($value === null && in_array($key, ['organization_id', 'identity_id', 'application_id', 'parent_id', 'status', 'revoked_time'], true)) return;
             if (is_string($value) && $key === 'prefix_sha256' && preg_match('/^[a-f0-9]{64}$/', $value) === 1) return;
             if (is_string($value) && $key === 'chain_id' && isset(self::CHAINS[$value])) return;
             if (is_string($value) && $key === 'failure_code' && preg_match('/^SAND_IAM_[A-Z0-9_]+$/', $value) === 1) return;
@@ -1134,6 +1254,12 @@ final class AcceptanceFixtureService
             throw new ApiException("SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: {$label}编号必须是正整数", 400);
         }
         return (int) $text;
+    }
+
+    private function nullablePositiveId(mixed $value, string $label): ?int
+    {
+        if ($value === null || $value === '') return null;
+        return $this->positiveId($value, $label);
     }
 
     private function failureCode(\Throwable $exception): string

@@ -51,12 +51,18 @@
                     "organization-application-environment": {
                         "api_available": true,
                         "cleanup_step_ids": [
-                            "controlled cleanup organization application environment",
-                            "zero residual organization application environment"
+                            "controlled cleanup full organization application environment grant",
+                            "zero residual full organization application environment grant",
+                            "controlled cleanup full organization application environment",
+                            "zero residual full organization application environment",
+                            "controlled cleanup organization application",
+                            "zero residual organization application",
+                            "controlled cleanup organization",
+                            "zero residual organization"
                         ],
                         "action_contracts": [
                             {
-                                "cleanup_step_id": "controlled cleanup organization application environment",
+                                "cleanup_step_id": "controlled cleanup full organization application environment grant",
                                 "write_bindings": [
                                     {
                                         "step_id": "create organization",
@@ -77,7 +83,19 @@
                                         ]
                                     },
                                     {
-                                        "step_id": "disable",
+                                        "step_id": "create scoped application grant",
+                                        "capture_ids": [
+                                            "admin_application_grant_id"
+                                        ]
+                                    },
+                                    {
+                                        "step_id": "disable scoped application grant",
+                                        "capture_ids": [
+                                            "admin_application_grant_id"
+                                        ]
+                                    },
+                                    {
+                                        "step_id": "disable this-run environment",
                                         "capture_ids": [
                                             "environment_id"
                                         ]
@@ -88,12 +106,57 @@
                                 "capture_ids": [
                                     "organization_id",
                                     "application_id",
-                                    "environment_id"
+                                    "environment_id",
+                                    "admin_application_grant_id"
                                 ],
-                                "zero_residual_step_id": "zero residual organization application environment"
+                                "run_if_capture_ids": [
+                                    "admin_application_grant_id"
+                                ],
+                                "run_unless_capture_ids": [],
+                                "zero_residual_step_id": "zero residual full organization application environment grant"
+                            },
+                            {
+                                "cleanup_step_id": "controlled cleanup full organization application environment",
+                                "write_bindings": [
+                                    {"step_id": "create organization", "capture_ids": ["organization_id"]},
+                                    {"step_id": "create application", "capture_ids": ["application_id"]},
+                                    {"step_id": "create environment", "capture_ids": ["environment_id"]},
+                                    {"step_id": "disable this-run environment", "capture_ids": ["environment_id"]}
+                                ],
+                                "method": "POST",
+                                "endpoint": "/app/sand-iam/admin/acceptance-fixture/cleanup",
+                                "capture_ids": ["organization_id", "application_id", "environment_id"],
+                                "run_if_capture_ids": ["environment_id"],
+                                "run_unless_capture_ids": ["admin_application_grant_id"],
+                                "zero_residual_step_id": "zero residual full organization application environment"
+                            },
+                            {
+                                "cleanup_step_id": "controlled cleanup organization application",
+                                "write_bindings": [
+                                    {"step_id": "create organization", "capture_ids": ["organization_id"]},
+                                    {"step_id": "create application", "capture_ids": ["application_id"]}
+                                ],
+                                "method": "POST",
+                                "endpoint": "/app/sand-iam/admin/acceptance-fixture/cleanup",
+                                "capture_ids": ["organization_id", "application_id"],
+                                "run_if_capture_ids": ["application_id"],
+                                "run_unless_capture_ids": ["environment_id"],
+                                "zero_residual_step_id": "zero residual organization application"
+                            },
+                            {
+                                "cleanup_step_id": "controlled cleanup organization",
+                                "write_bindings": [
+                                    {"step_id": "create organization", "capture_ids": ["organization_id"]}
+                                ],
+                                "method": "POST",
+                                "endpoint": "/app/sand-iam/admin/acceptance-fixture/cleanup",
+                                "capture_ids": ["organization_id"],
+                                "run_if_capture_ids": ["organization_id"],
+                                "run_unless_capture_ids": ["application_id"],
+                                "zero_residual_step_id": "zero residual organization"
                             }
                         ],
-                        "zero_residual_step_id": "zero residual organization application environment"
+                        "zero_residual_step_id": "zero residual full organization application environment grant"
                     },
                     "identity-group-role-policy": {
                         "api_available": true,
@@ -604,6 +667,35 @@
                     }
                 },
                 {
+                    "id": "create scoped application grant",
+                    "proof": "create",
+                    "target": "sandiam",
+                    "auth": "platform_admin",
+                    "request_id": "${prefix}chain1-grant-create",
+                    "method": "POST",
+                    "write": true,
+                    "path": "/app/sand-iam/admin/admin-application-grant/save",
+                    "body": {
+                        "admin_user_id": "__REQUIRED_SCOPED_ADMIN_ID__",
+                        "application_id": "${application_id}"
+                    },
+                    "expect_http": 200,
+                    "assert": {
+                        "json": {
+                            "code": 200,
+                            "data.id": {
+                                "exists": true
+                            }
+                        }
+                    },
+                    "capture": {
+                        "admin_application_grant_id": {
+                            "from": "json",
+                            "path": "data.id"
+                        }
+                    }
+                },
+                {
                     "id": "scoped allow",
                     "proof": "allow",
                     "target": "sandiam",
@@ -662,7 +754,47 @@
                     }
                 },
                 {
-                    "id": "disable",
+                    "id": "disable scoped application grant",
+                    "proof": "revoke_or_recover",
+                    "target": "sandiam",
+                    "auth": "platform_admin",
+                    "method": "POST",
+                    "write": true,
+                    "fixture_capture_ids": [
+                        "admin_application_grant_id"
+                    ],
+                    "path": "/app/sand-iam/admin/admin-application-grant/disable",
+                    "body": {
+                        "id": "${admin_application_grant_id}"
+                    },
+                    "expect_http": 200,
+                    "assert": {
+                        "json": {
+                            "code": 200
+                        }
+                    }
+                },
+                {
+                    "id": "same scoped revoked deny",
+                    "proof": "revoke_effective",
+                    "target": "sandiam",
+                    "auth": "scoped_admin",
+                    "method": "GET",
+                    "write": false,
+                    "path": "/app/sand-iam/admin/environment/read?id=${environment_id}",
+                    "expect_http": [
+                        400,
+                        401,
+                        403
+                    ],
+                    "assert": {
+                        "body": {
+                            "contains": "__REQUIRED_REVOKED_SCOPE_DENY_MESSAGE__"
+                        }
+                    }
+                },
+                {
+                    "id": "disable this-run environment",
                     "proof": "revoke_or_recover",
                     "target": "sandiam",
                     "auth": "platform_admin",
@@ -683,7 +815,7 @@
                     }
                 },
                 {
-                    "id": "disabled is status two",
+                    "id": "platform reads disabled environment",
                     "proof": "revoke_effective",
                     "target": "sandiam",
                     "auth": "platform_admin",
@@ -703,21 +835,27 @@
                 "api_available": true,
                 "steps": [
                     {
-                        "id": "controlled cleanup organization application environment",
+                        "id": "controlled cleanup full organization application environment grant",
                         "proof": "physical_cleanup",
                         "target": "sandiam",
                         "auth": "platform_admin",
-                        "request_id": "${prefix}chain1-cleanup",
+                        "request_id": "${prefix}chain1-cleanup-full-grant",
                         "method": "POST",
                         "write": true,
+                        "run_if_capture_ids": [
+                            "admin_application_grant_id"
+                        ],
                         "path": "/app/sand-iam/admin/acceptance-fixture/cleanup",
                         "body": {
                             "chain_id": "organization-application-environment",
-                            "request_id": "${prefix}chain1-cleanup",
+                            "contract_version": 2,
+                            "request_id": "${prefix}chain1-cleanup-full-grant",
                             "prefix": "${prefix}",
                             "confirmation": "I_CONFIRM_DELETE_ONLY_THIS_ACCEPTANCE_FIXTURE",
                             "organization_id": "${organization_id}",
                             "application_id": "${application_id}",
+                            "creator_admin_id": "__REQUIRED_PLATFORM_ADMIN_ID__",
+                            "scoped_admin_id": "__REQUIRED_SCOPED_ADMIN_ID__",
                             "object_ids": {
                                 "organization": [
                                     "${organization_id}"
@@ -727,6 +865,9 @@
                                 ],
                                 "environment": [
                                     "${environment_id}"
+                                ],
+                                "admin_application_grant": [
+                                    "${admin_application_grant_id}"
                                 ]
                             },
                             "object_request_ids": {
@@ -738,6 +879,9 @@
                                 ],
                                 "environment": [
                                     "${prefix}chain1-env-create"
+                                ],
+                                "admin_application_grant": [
+                                    "${prefix}chain1-grant-create"
                                 ]
                             }
                         },
@@ -761,7 +905,19 @@
                                 ]
                             },
                             {
-                                "step_id": "disable",
+                                "step_id": "create scoped application grant",
+                                "capture_ids": [
+                                    "admin_application_grant_id"
+                                ]
+                            },
+                            {
+                                "step_id": "disable scoped application grant",
+                                "capture_ids": [
+                                    "admin_application_grant_id"
+                                ]
+                            },
+                            {
+                                "step_id": "disable this-run environment",
                                 "capture_ids": [
                                     "environment_id"
                                 ]
@@ -770,36 +926,181 @@
                         "capture_ids": [
                             "organization_id",
                             "application_id",
-                            "environment_id"
+                            "environment_id",
+                            "admin_application_grant_id"
                         ],
                         "expect_http": 200,
                         "assert": {
                             "json": {
                                 "code": 200,
-                                "data.residual.organization": 0,
-                                "data.residual.application": 0,
-                                "data.residual.environment": 0
+                                "data.residual.environment": 0,
+                                "data.residual.admin_application_grant": 0,
+                                "data.residual.active_business_residual": 0,
+                                "data.retained.organization.0.id": "${organization_id}",
+                                "data.retained.organization.0.status": 2,
+                                "data.retained.application.0.id": "${application_id}",
+                                "data.retained.application.0.status": 2
                             }
                         }
                     },
                     {
-                        "id": "zero residual organization application environment",
+                        "id": "zero residual full organization application environment grant",
                         "proof": "zero_residual",
                         "target": "sandiam",
                         "auth": "platform_admin",
-                        "request_id": "${prefix}chain1-status",
+                        "request_id": "${prefix}chain1-status-full-grant",
                         "method": "GET",
                         "write": false,
-                        "path": "/app/sand-iam/admin/acceptance-fixture/status?chain_id=organization-application-environment&request_id=${prefix}chain1-status&prefix=${prefix}&confirmation=I_CONFIRM_DELETE_ONLY_THIS_ACCEPTANCE_FIXTURE&organization_id=${organization_id}&application_id=${application_id}&object_ids%5Borganization%5D%5B%5D=${organization_id}&object_ids%5Bapplication%5D%5B%5D=${application_id}&object_ids%5Benvironment%5D%5B%5D=${environment_id}&object_request_ids%5Borganization%5D%5B%5D=${prefix}chain1-org-create&object_request_ids%5Bapplication%5D%5B%5D=${prefix}chain1-app-create&object_request_ids%5Benvironment%5D%5B%5D=${prefix}chain1-env-create",
+                        "run_if_capture_ids": [
+                            "admin_application_grant_id"
+                        ],
+                        "path": "/app/sand-iam/admin/acceptance-fixture/status?chain_id=organization-application-environment&contract_version=2&request_id=${prefix}chain1-status-full-grant&prefix=${prefix}&confirmation=I_CONFIRM_DELETE_ONLY_THIS_ACCEPTANCE_FIXTURE&organization_id=${organization_id}&application_id=${application_id}&creator_admin_id=__REQUIRED_PLATFORM_ADMIN_ID__&scoped_admin_id=__REQUIRED_SCOPED_ADMIN_ID__&object_ids%5Borganization%5D%5B%5D=${organization_id}&object_ids%5Bapplication%5D%5B%5D=${application_id}&object_ids%5Benvironment%5D%5B%5D=${environment_id}&object_ids%5Badmin_application_grant%5D%5B%5D=${admin_application_grant_id}&object_request_ids%5Borganization%5D%5B%5D=${prefix}chain1-org-create&object_request_ids%5Bapplication%5D%5B%5D=${prefix}chain1-app-create&object_request_ids%5Benvironment%5D%5B%5D=${prefix}chain1-env-create&object_request_ids%5Badmin_application_grant%5D%5B%5D=${prefix}chain1-grant-create",
                         "expect_http": 200,
                         "assert": {
                             "json": {
                                 "code": 200,
-                                "data.residual.organization": 0,
-                                "data.residual.application": 0,
-                                "data.residual.environment": 0
+                                "data.residual.environment": 0,
+                                "data.residual.admin_application_grant": 0,
+                                "data.residual.active_business_residual": 0,
+                                "data.retained.organization.0.id": "${organization_id}",
+                                "data.retained.organization.0.status": 2,
+                                "data.retained.application.0.id": "${application_id}",
+                                "data.retained.application.0.status": 2
                             }
                         }
+                    },
+                    {
+                        "id": "controlled cleanup full organization application environment",
+                        "proof": "physical_cleanup",
+                        "target": "sandiam",
+                        "auth": "platform_admin",
+                        "request_id": "${prefix}chain1-cleanup-full",
+                        "method": "POST",
+                        "write": true,
+                        "run_if_capture_ids": ["environment_id"],
+                        "run_unless_capture_ids": ["admin_application_grant_id"],
+                        "path": "/app/sand-iam/admin/acceptance-fixture/cleanup",
+                        "body": {
+                            "chain_id": "organization-application-environment",
+                            "contract_version": 2,
+                            "request_id": "${prefix}chain1-cleanup-full",
+                            "prefix": "${prefix}",
+                            "confirmation": "I_CONFIRM_DELETE_ONLY_THIS_ACCEPTANCE_FIXTURE",
+                            "organization_id": "${organization_id}",
+                            "application_id": "${application_id}",
+                            "creator_admin_id": "__REQUIRED_PLATFORM_ADMIN_ID__",
+                            "object_ids": {"organization": ["${organization_id}"], "application": ["${application_id}"], "environment": ["${environment_id}"]},
+                            "object_request_ids": {"organization": ["${prefix}chain1-org-create"], "application": ["${prefix}chain1-app-create"], "environment": ["${prefix}chain1-env-create"]}
+                        },
+                        "cleanup_for": [
+                            {"step_id": "create organization", "capture_ids": ["organization_id"]},
+                            {"step_id": "create application", "capture_ids": ["application_id"]},
+                            {"step_id": "create environment", "capture_ids": ["environment_id"]},
+                            {"step_id": "disable this-run environment", "capture_ids": ["environment_id"]}
+                        ],
+                        "capture_ids": ["organization_id", "application_id", "environment_id"],
+                        "expect_http": 200,
+                        "assert": {"json": {"code": 200, "data.residual.environment": 0, "data.residual.admin_application_grant": 0, "data.residual.active_business_residual": 0, "data.retained.organization.0.status": 2, "data.retained.application.0.status": 2}}
+                    },
+                    {
+                        "id": "zero residual full organization application environment",
+                        "proof": "zero_residual",
+                        "target": "sandiam",
+                        "auth": "platform_admin",
+                        "request_id": "${prefix}chain1-status-full",
+                        "method": "GET",
+                        "write": false,
+                        "run_if_capture_ids": ["environment_id"],
+                        "run_unless_capture_ids": ["admin_application_grant_id"],
+                        "path": "/app/sand-iam/admin/acceptance-fixture/status?chain_id=organization-application-environment&contract_version=2&request_id=${prefix}chain1-status-full&prefix=${prefix}&confirmation=I_CONFIRM_DELETE_ONLY_THIS_ACCEPTANCE_FIXTURE&organization_id=${organization_id}&application_id=${application_id}&creator_admin_id=__REQUIRED_PLATFORM_ADMIN_ID__&object_ids%5Borganization%5D%5B%5D=${organization_id}&object_ids%5Bapplication%5D%5B%5D=${application_id}&object_ids%5Benvironment%5D%5B%5D=${environment_id}&object_request_ids%5Borganization%5D%5B%5D=${prefix}chain1-org-create&object_request_ids%5Bapplication%5D%5B%5D=${prefix}chain1-app-create&object_request_ids%5Benvironment%5D%5B%5D=${prefix}chain1-env-create",
+                        "expect_http": 200,
+                        "assert": {"json": {"code": 200, "data.residual.environment": 0, "data.residual.admin_application_grant": 0, "data.residual.active_business_residual": 0, "data.retained.organization.0.status": 2, "data.retained.application.0.status": 2}}
+                    },
+                    {
+                        "id": "controlled cleanup organization application",
+                        "proof": "physical_cleanup",
+                        "target": "sandiam",
+                        "auth": "platform_admin",
+                        "request_id": "${prefix}chain1-cleanup-org-app",
+                        "method": "POST",
+                        "write": true,
+                        "run_if_capture_ids": ["application_id"],
+                        "run_unless_capture_ids": ["environment_id"],
+                        "path": "/app/sand-iam/admin/acceptance-fixture/cleanup",
+                        "body": {
+                            "chain_id": "organization-application-environment",
+                            "contract_version": 2,
+                            "request_id": "${prefix}chain1-cleanup-org-app",
+                            "prefix": "${prefix}",
+                            "confirmation": "I_CONFIRM_DELETE_ONLY_THIS_ACCEPTANCE_FIXTURE",
+                            "organization_id": "${organization_id}",
+                            "application_id": "${application_id}",
+                            "creator_admin_id": "__REQUIRED_PLATFORM_ADMIN_ID__",
+                            "object_ids": {"organization": ["${organization_id}"], "application": ["${application_id}"]},
+                            "object_request_ids": {"organization": ["${prefix}chain1-org-create"], "application": ["${prefix}chain1-app-create"]}
+                        },
+                        "cleanup_for": [
+                            {"step_id": "create organization", "capture_ids": ["organization_id"]},
+                            {"step_id": "create application", "capture_ids": ["application_id"]}
+                        ],
+                        "capture_ids": ["organization_id", "application_id"],
+                        "expect_http": 200,
+                        "assert": {"json": {"code": 200, "data.residual.environment": 0, "data.residual.admin_application_grant": 0, "data.residual.active_business_residual": 0, "data.retained.organization.0.status": 2, "data.retained.application.0.status": 2}}
+                    },
+                    {
+                        "id": "zero residual organization application",
+                        "proof": "zero_residual",
+                        "target": "sandiam",
+                        "auth": "platform_admin",
+                        "request_id": "${prefix}chain1-status-org-app",
+                        "method": "GET",
+                        "write": false,
+                        "run_if_capture_ids": ["application_id"],
+                        "run_unless_capture_ids": ["environment_id"],
+                        "path": "/app/sand-iam/admin/acceptance-fixture/status?chain_id=organization-application-environment&contract_version=2&request_id=${prefix}chain1-status-org-app&prefix=${prefix}&confirmation=I_CONFIRM_DELETE_ONLY_THIS_ACCEPTANCE_FIXTURE&organization_id=${organization_id}&application_id=${application_id}&creator_admin_id=__REQUIRED_PLATFORM_ADMIN_ID__&object_ids%5Borganization%5D%5B%5D=${organization_id}&object_ids%5Bapplication%5D%5B%5D=${application_id}&object_request_ids%5Borganization%5D%5B%5D=${prefix}chain1-org-create&object_request_ids%5Bapplication%5D%5B%5D=${prefix}chain1-app-create",
+                        "expect_http": 200,
+                        "assert": {"json": {"code": 200, "data.residual.environment": 0, "data.residual.admin_application_grant": 0, "data.residual.active_business_residual": 0, "data.retained.organization.0.status": 2, "data.retained.application.0.status": 2}}
+                    },
+                    {
+                        "id": "controlled cleanup organization",
+                        "proof": "physical_cleanup",
+                        "target": "sandiam",
+                        "auth": "platform_admin",
+                        "request_id": "${prefix}chain1-cleanup-org",
+                        "method": "POST",
+                        "write": true,
+                        "run_if_capture_ids": ["organization_id"],
+                        "run_unless_capture_ids": ["application_id"],
+                        "path": "/app/sand-iam/admin/acceptance-fixture/cleanup",
+                        "body": {
+                            "chain_id": "organization-application-environment",
+                            "contract_version": 2,
+                            "request_id": "${prefix}chain1-cleanup-org",
+                            "prefix": "${prefix}",
+                            "confirmation": "I_CONFIRM_DELETE_ONLY_THIS_ACCEPTANCE_FIXTURE",
+                            "organization_id": "${organization_id}",
+                            "creator_admin_id": "__REQUIRED_PLATFORM_ADMIN_ID__",
+                            "object_ids": {"organization": ["${organization_id}"]},
+                            "object_request_ids": {"organization": ["${prefix}chain1-org-create"]}
+                        },
+                        "cleanup_for": [{"step_id": "create organization", "capture_ids": ["organization_id"]}],
+                        "capture_ids": ["organization_id"],
+                        "expect_http": 200,
+                        "assert": {"json": {"code": 200, "data.residual.environment": 0, "data.residual.admin_application_grant": 0, "data.residual.active_business_residual": 0, "data.retained.organization.0.status": 2}}
+                    },
+                    {
+                        "id": "zero residual organization",
+                        "proof": "zero_residual",
+                        "target": "sandiam",
+                        "auth": "platform_admin",
+                        "request_id": "${prefix}chain1-status-org",
+                        "method": "GET",
+                        "write": false,
+                        "run_if_capture_ids": ["organization_id"],
+                        "run_unless_capture_ids": ["application_id"],
+                        "path": "/app/sand-iam/admin/acceptance-fixture/status?chain_id=organization-application-environment&contract_version=2&request_id=${prefix}chain1-status-org&prefix=${prefix}&confirmation=I_CONFIRM_DELETE_ONLY_THIS_ACCEPTANCE_FIXTURE&organization_id=${organization_id}&creator_admin_id=__REQUIRED_PLATFORM_ADMIN_ID__&object_ids%5Borganization%5D%5B%5D=${organization_id}&object_request_ids%5Borganization%5D%5B%5D=${prefix}chain1-org-create",
+                        "expect_http": 200,
+                        "assert": {"json": {"code": 200, "data.residual.environment": 0, "data.residual.admin_application_grant": 0, "data.residual.active_business_residual": 0, "data.retained.organization.0.status": 2}}
                     }
                 ]
             }

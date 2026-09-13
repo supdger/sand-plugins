@@ -18,6 +18,7 @@ final class ApplicationController extends AdminResourceController
     protected array $writeFields = ['organization_id', 'code', 'name', 'status'];
     protected array $requiredFields = ['organization_id', 'code', 'name'];
     protected string $resourceType = 'application';
+    protected bool $atomicCreateAudit = true;
     #[Permission('SandIAM 接入应用列表', 'sand_iam:application:index')]
     public function index(Request $request): Response
     {

@@ -58,6 +58,22 @@ namespace plugin\SandIam\app\service {
     }
 }
 
+namespace think\facade {
+    final class Db
+    {
+        private static array $snapshots = [];
+        public static function startTrans(): void { self::$snapshots[] = serialize([\plugin\SandIam\app\model\AdminApplicationGrant::$rows, \plugin\SandIam\app\model\SecurityOperation::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]); }
+        public static function commit(): void { array_pop(self::$snapshots); }
+        public static function rollback(): void
+        {
+            [$grants, $operations, $audits] = unserialize(array_pop(self::$snapshots), ['allowed_classes' => true]);
+            \plugin\SandIam\app\model\AdminApplicationGrant::$rows = $grants;
+            \plugin\SandIam\app\model\SecurityOperation::$rows = $operations;
+            \plugin\SandIam\app\service\AuditWriter::$writes = $audits;
+        }
+    }
+}
+
 namespace plugin\SandIam\app\admin\support {
     use plugin\sandadmin\exception\ApiException;
 
@@ -88,6 +104,7 @@ namespace plugin\SandIam\app\model {
         /** @param array<int, object> $rows */
         public function __construct(private array $rows, string $field, mixed $value) { $this->conditions[] = [$field, $value]; }
         public function where(string $field, mixed $value): self { $this->conditions[] = [$field, $value]; return $this; }
+        public function lock(bool $lock): self { return $this; }
         public function find(): ?object
         {
             foreach ($this->rows as $row) {
@@ -132,6 +149,17 @@ namespace plugin\SandIam\app\model {
         public static function find(int $id): ?GrantRecord { return self::$rows[$id] ?? null; }
         public static function findOrEmpty(int $id): GrantRecord { return self::find($id) ?? new GrantRecord([], true); }
     }
+
+    final class SecurityOperation
+    {
+        /** @var array<int, GrantRecord> */ public static array $rows = [];
+        public static function where(string $field, mixed $value): FakeQuery { return new FakeQuery(self::$rows, $field, $value); }
+        public static function create(array $payload): GrantRecord
+        {
+            $id = count(self::$rows) + 1;
+            return self::$rows[$id] = new GrantRecord(['id' => $id, ...$payload]);
+        }
+    }
 }
 
 namespace plugin\sandadmin\app\model\system {
@@ -166,6 +194,7 @@ namespace {
     }
 
     require dirname(__DIR__) . '/app/service/RequestId.php';
+    require dirname(__DIR__) . '/app/service/IdempotencyService.php';
     require dirname(__DIR__) . '/app/admin/support/AdminResourceController.php';
     require dirname(__DIR__) . '/app/admin/support/ApplicationResourceController.php';
     require dirname(__DIR__) . '/app/admin/controller/AdminApplicationGrantController.php';

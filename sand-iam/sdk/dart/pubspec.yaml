@@ -1,7 +1,9 @@
 name: sand_iam
 description: SandIAM Dart and Flutter client with authorization, application-user authentication, self-service, and diagnostics.
 version: 0.1.0
-repository: https://github.com/sand-projects/sand-iam
+homepage: https://github.com/supdger/sand-plugins
+repository: https://github.com/supdger/sand-plugins
+issue_tracker: https://github.com/supdger/sand-plugins/issues
 environment:
   sdk: '>=3.4.0 <4.0.0'
 

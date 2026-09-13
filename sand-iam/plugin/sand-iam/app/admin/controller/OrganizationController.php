@@ -17,6 +17,7 @@ final class OrganizationController extends AdminResourceController
     protected string $modelClass = Organization::class;
     protected array $writeFields = ['code', 'name', 'status'];
     protected string $resourceType = 'organization';
+    protected bool $atomicCreateAudit = true;
     protected function applyOrganizationScope(object $query, array $organizationIds): void { $query->whereIn('id', $organizationIds); }
     #[Permission('SandIAM 客户主体列表', 'sand_iam:organization:index')] public function index(Request $request): Response { return parent::index($request); }
     #[Permission('SandIAM 客户主体读取', 'sand_iam:organization:read')] public function read(Request $request): Response { return parent::read($request); }

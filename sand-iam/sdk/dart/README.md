@@ -34,9 +34,84 @@ final decision = await iam.authorize(apiCode: 'case.document.export');
 
 网络、事实、数据分级、配额和幂等冲突均保留稳定的 `SAND_IAM_*` 错误码，例如 `SAND_IAM_SERVICE_NETWORK_FORBIDDEN`、`SAND_IAM_INVOCATION_FACTS_UNVERIFIED`、`SAND_IAM_DATA_CLASS_FORBIDDEN`、`SAND_IAM_SERVICE_QUOTA_EXCEEDED` 与 `SAND_IAM_IDEMPOTENCY_CONFLICT`；调用方必须拒绝而非降级。
 
-## 本地安装与发布前门禁
+## 包外 consumer 安装与最小程序
 
-在独立 Dart 工程的 `pubspec.yaml` 用 `path: ../sand-iam/sdk/dart` 引用本包，并以 mock transport 验证 issue/verify。发布前应运行 `dart analyze` 和 `dart test`；当前环境没有 Dart runtime，因此本轮只保留 consumer 文件与源码契约，不能称为 Dart 运行时验收。
+在独立 Dart/Flutter 项目的 `pubspec.yaml` 中引用已检出的 SDK：
+
+```yaml
+dependencies:
+  sand_iam:
+    path: ../sand-plugins/sand-iam/sdk/dart
+```
+
+然后执行 `dart pub get`，并在可信服务端完成“签发 → 验证”最小程序：
+
+```dart
+import 'dart:io';
+
+import 'package:sand_iam/sand_iam.dart';
+
+Future<void> main() async {
+  String required(String key) {
+    final value = Platform.environment[key]?.trim() ?? '';
+    if (value.isEmpty) throw StateError('$key must be injected by the runtime');
+    return value;
+  }
+
+  try {
+    final iam = SandIamClient(
+      baseUrl: required('SAND_IAM_BASE_URL'),
+      organizationCode: required('SAND_IAM_ORGANIZATION_CODE'),
+      applicationCode: required('SAND_IAM_APPLICATION_CODE'),
+      accessToken: () => '', // This service flow never accepts a user token.
+    );
+    final credential = required('SAND_IAM_WORKLOAD_CREDENTIAL');
+    final serviceCode = required('SAND_IAM_SERVICE_CODE');
+    final audience = required('SAND_IAM_AUDIENCE');
+    final action = required('SAND_IAM_SERVICE_ACTION');
+    final issued = await iam.issueContext(
+      credential: credential,
+      serviceCode: serviceCode,
+      audience: audience,
+      actions: [action],
+      requestId: 'context-issue-001',
+    );
+    final context = issued.context;
+    if (context == null || context.isEmpty) {
+      throw StateError('SandIAM did not return a workload context');
+    }
+    final claims = await iam.verifyContext(
+      context: context,
+      serviceCode: serviceCode,
+      audience: audience,
+      actions: [action],
+      requestId: 'context-verify-001',
+    );
+    if (claims.contextId != issued.contextId ||
+        claims.serviceCode != serviceCode ||
+        claims.audience != audience ||
+        claims.actions == null ||
+        !claims.actions!.contains(action)) {
+      throw StateError('SandIAM context verification failed');
+    }
+    stdout.writeln('context verified: ${claims.contextId}'); // Never print context.
+  } on SandIamException catch (error) {
+    stderr.writeln('SandIAM rejected the request: ${error.code}');
+    exitCode = 1;
+  } on StateError catch (error) {
+    stderr.writeln(error.message);
+    exitCode = 1;
+  }
+}
+```
+
+这只使用本地 path dependency，不能推断 pub.dev 已有发布包。不要把工作负载凭证或短期 context 放进 Flutter
+客户端；应由服务端签发、经可信内部通道交给目标服务并在目标服务验证。请在自己的隔离环境运行并核对审计；
+本 README 不把示例视为真实调用已通过。
+
+示例对缺失环境变量、SDK 例外、空 context 或 service/audience/action/context ID 不匹配均以失败结束；
+不得改为匿名调用、缓存旧 context 或继续产生业务副作用。使用前应在目标 consumer 的受控 Dart/Flutter
+工具链中完成 `dart pub get`、静态分析和该 consumer 自己的隔离运行验证；本 README 不把示例视为网络调用已通过。
 
 ## 管理面客户端
 
@@ -44,7 +119,7 @@ final decision = await iam.authorize(apiCode: 'case.document.export');
 
 它提供 onboarding preview/apply、作为 onboarding `route_manifest` 阶段的 route sync preview/apply、policy simulate/rollback、credential issue/rotate/revoke 与 IdP preset list/draft。apply、rotate、revoke 等写操作必须显式 `requestId`；onboarding manifest 还必须带 `operation_id`。一次性凭证通过 `SandIamCredentialResult` 表达，首次成功才 `secretAvailable=true`，调用 `revealSecretOnce()` 后失效，`toString()` 会拒绝日志输出；replay 不含秘密。
 
-常见错误：`SAND_IAM_SDK_REQUEST_ID_REQUIRED` 为漏传 request ID；`SAND_IAM_ONBOARDING_PREVIEW_STALE` 为预检已过期，须重新预检；`SAND_IAM_IDP_PRESET_MANUAL_REQUIRED` 表示身份源需要专项接入。当前没有 Dart runtime，本说明仅证明源码与 path consumer 合同，不能替代实际 Dart 运行时验收。
+常见错误：`SAND_IAM_SDK_REQUEST_ID_REQUIRED` 为漏传 request ID；`SAND_IAM_ONBOARDING_PREVIEW_STALE` 为预检已过期，须重新预检；`SAND_IAM_IDP_PRESET_MANUAL_REQUIRED` 表示身份源需要专项接入。源码或 path consumer 合同不能替代实际 Dart 运行时验收。
 
 ## 诊断 CLI
 
