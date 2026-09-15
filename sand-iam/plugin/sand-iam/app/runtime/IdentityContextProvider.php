@@ -47,7 +47,7 @@ final class IdentityContextProvider
             $this->deny('credential', (string) $credential->id, null, null, 'context.issue', $requestId, 'SAND_IAM_CREDENTIAL_REVOKED');
         }
 
-        $reference = (new EnvironmentReferenceVerifier())->verifyEnvironmentReferenceForClient((int) $client->environment_id);
+        $reference = $this->environmentReference((int) $client->environment_id, 'workload_client', (string) $client->id, 'context.issue', $requestId);
         if (!hash_equals((string) $client->audience, $audience)) {
             $this->deny('workload_client', (string) $client->id, $reference['organization_id'], $reference['application_id'], 'context.issue', $requestId, 'SAND_IAM_CONTEXT_AUDIENCE_MISMATCH');
         }
@@ -108,9 +108,16 @@ final class IdentityContextProvider
     /** @return array<string, mixed> */
     private function verifyContext(string $context, string $expectedServiceCode, string $expectedAudience, string $requiredAction, ?string $sourceIp, string $requestId): array
     {
-        $payload = $this->verifySignature($context);
         $requestId = RequestId::normalize($requestId);
-        if ((int) ($payload['exp'] ?? 0) < time()) {
+        try {
+            $payload = $this->verifySignature($context);
+        } catch (ApiException $exception) {
+            if ($exception->getCode() === 401) {
+                $this->auditWriter->write('context', 'unknown', null, null, 'context.verify', 'identity_context', null, 'denied', $requestId, ['code' => 'SAND_IAM_AUTHENTICATION_FAILED']);
+            }
+            throw $exception;
+        }
+        if ((int) ($payload['exp'] ?? 0) <= time()) {
             $this->deny('context', (string) ($payload['context_id'] ?? 'unknown'), null, null, 'context.verify', $requestId, 'SAND_IAM_CONTEXT_EXPIRED');
         }
         if (($payload['audience'] ?? '') !== $expectedAudience) {
@@ -120,7 +127,16 @@ final class IdentityContextProvider
         if (!$this->validServiceCode($payloadServiceCode) || ($expectedServiceCode !== '' && !hash_equals($expectedServiceCode, $payloadServiceCode))) {
             $this->deny('context', (string) ($payload['context_id'] ?? 'unknown'), null, null, 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
         }
-        if (!in_array($requiredAction, $payload['actions'] ?? [], true)) {
+        $actions = $payload['actions'] ?? [];
+        if (!is_array($actions) || !array_is_list($actions) || $actions === []) {
+            $this->deny('context', (string) ($payload['context_id'] ?? 'unknown'), null, null, 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
+        }
+        foreach ($actions as $action) {
+            if (!is_string($action) || $action === '') {
+                $this->deny('context', (string) ($payload['context_id'] ?? 'unknown'), null, null, 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
+            }
+        }
+        if (count($actions) !== count(array_unique($actions)) || !in_array($requiredAction, $actions, true)) {
             $this->deny('context', (string) $payload['context_id'], null, null, 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
         }
         $credential = Credential::where('id', (int) ($payload['credential_id'] ?? 0))->where('status', 1)->find();
@@ -131,17 +147,13 @@ final class IdentityContextProvider
         if ($client === null || (int) $credential->workload_client_id !== (int) $client->id || !hash_equals((string) $client->audience, $expectedAudience)) {
             $this->deny('context', (string) $payload['context_id'], null, null, 'context.verify', $requestId, 'SAND_IAM_CREDENTIAL_REVOKED');
         }
-        $reference = (new EnvironmentReferenceVerifier())->verifyEnvironmentReferenceForClient((int) $client->environment_id);
+        $reference = $this->environmentReference((int) $client->environment_id, 'context', (string) $payload['context_id'], 'context.verify', $requestId);
         if (
             (int) ($payload['organization_id'] ?? 0) !== $reference['organization_id']
             || (int) ($payload['application_id'] ?? 0) !== $reference['application_id']
             || (int) ($payload['environment_id'] ?? 0) !== $reference['environment_id']
         ) {
             $this->deny('context', (string) $payload['context_id'], $reference['organization_id'], $reference['application_id'], 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
-        }
-        $actions = $payload['actions'] ?? [];
-        if (!is_array($actions) || !array_is_list($actions) || $actions === [] || count($actions) !== count(array_unique($actions))) {
-            $this->deny('context', (string) ($payload['context_id'] ?? 'unknown'), $reference['organization_id'], $reference['application_id'], 'context.verify', $requestId, 'SAND_IAM_SERVICE_ACTION_FORBIDDEN');
         }
         try {
             [, $grants] = is_array($actions) ? $this->resolveServiceGrants((int) $client->id, $expectedAudience, $actions, $sourceIp, $payloadServiceCode) : ['', []];
@@ -159,6 +171,17 @@ final class IdentityContextProvider
         }
         $this->auditWriter->write('context', (string) $payload['context_id'], (int) $payload['organization_id'], (int) $payload['application_id'], 'context.verify', 'identity_context', null, 'allowed', $requestId, ['required_action' => $requiredAction, 'service_code' => $payloadServiceCode, 'audience' => $expectedAudience]);
         return array_replace($payload, ['action_grants' => $actionGrants]);
+    }
+
+    /** @return array{organization_id:int,application_id:int,environment_id:int,status:int} */
+    private function environmentReference(int $environmentId, string $actorType, string $actorRef, string $action, string $requestId): array
+    {
+        try {
+            return (new EnvironmentReferenceVerifier())->verifyEnvironmentReferenceForClient($environmentId);
+        } catch (ApiException $exception) {
+            $this->auditWriter->write($actorType, $actorRef, null, null, $action, 'identity_context', null, 'denied', $requestId, ['code' => 'SAND_IAM_SERVICE_ACTION_FORBIDDEN']);
+            throw $exception;
+        }
     }
 
     private function credential(string $value, string $requestId): Credential

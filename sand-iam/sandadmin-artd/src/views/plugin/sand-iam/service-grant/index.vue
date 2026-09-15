@@ -5,7 +5,8 @@
 
   const columns: SandIamResourceColumn[] = [
     { key: 'workload_client_id', label: 'workload_client_id' },
-    { key: 'service_action_id', label: 'service_action_id' },
+    { key: 'service_name', label: '服务' },
+    { key: 'service_action_name', label: '服务动作' },
     { key: 'status', label: '状态' },
     { key: 'audience', label: 'audience', minWidth: 140 },
     { key: 'data_class', label: 'data_class' },

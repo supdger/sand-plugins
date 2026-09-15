@@ -179,6 +179,20 @@ export function parseSandIamSyncRuns(value: unknown): SandIamSyncRunRow[] {
     .filter((item): item is SandIamSyncRunRow => item !== null)
 }
 
+/** 两类同步历史共用宿主分页元数据；行解析仍各自保留字段白名单。 */
+export function parseSandIamSyncPagination(value: unknown): {
+  total: number
+  currentPage: number
+  pageSize: number
+} {
+  const page = isRecord(value) && isRecord(value.data) ? value.data : value
+  return {
+    total: isRecord(page) ? readCount(page.total) ?? unwrapList(value).length : unwrapList(value).length,
+    currentPage: isRecord(page) ? readPositiveInt(page.current_page) ?? 1 : 1,
+    pageSize: isRecord(page) ? readPositiveInt(page.per_page) ?? 20 : 20
+  }
+}
+
 export function syncOutboxOperationLabel(operation: SandIamSyncOutboxOperation): string {
   if (operation === 'create') return '新增'
   if (operation === 'update') return '更新'

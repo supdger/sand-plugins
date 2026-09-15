@@ -122,6 +122,8 @@ $checks = [
         $source = file_get_contents($tool);
         return is_string($source)
             && str_contains($source, 'composer declares complete platform and locked SAML runtime dependency')
+            && str_contains($source, "'COMPOSER_ROOT_VERSION' => '0.7.2'")
+            && str_contains($source, "\"'pretty_version' => '0.7.2'\"")
             && str_contains($source, 'SAML dependency resolves through composer autoload')
             && str_contains($source, 'protocol adapter guards and references the declared SAML runtime');
     },
@@ -184,7 +186,12 @@ $checks = [
             $wrongCount['generated_payloads']['plugin/sand-iam/vendor']['file_count'] = '58';
             $wrongShape = $contract;
             $wrongShape['generated_payloads']['sdk/typescript/dist']['extra'] = true;
-            return $expectFailure($missing) && $expectFailure($unknown) && $expectFailure($wrongCount) && $expectFailure($wrongShape);
+            $wrongEnvironment = $contract;
+            $wrongEnvironment['composer']['environment']['COMPOSER_ROOT_VERSION'] = '0.7.1';
+            $wrongArguments = $contract;
+            array_pop($wrongArguments['composer']['arguments']);
+            return $expectFailure($missing) && $expectFailure($unknown) && $expectFailure($wrongCount)
+                && $expectFailure($wrongShape) && $expectFailure($wrongEnvironment) && $expectFailure($wrongArguments);
         });
     },
     'tool fails closed for missing, malformed, mismatched, or host-incompatible support metadata' => static function () use ($root, $runToolAt, $withTemporarilyReplacedFixtureFile): bool {

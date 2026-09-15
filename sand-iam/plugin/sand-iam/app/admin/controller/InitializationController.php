@@ -155,8 +155,10 @@ final class InitializationController extends BaseController
 
     private function revision(Request $request): int
     {
-        $revision = (int) $request->post('revision', 0);
-        if ($revision < 1) throw new ApiException('SAND_IAM_INITIALIZATION_DRAFT_REVISION_INVALID', 400);
+        $revision = $request->post('revision', 0);
+        if (!is_int($revision) && !(is_string($revision) && preg_match('/^[0-9]+$/D', $revision) === 1)) throw new ApiException('SAND_IAM_INITIALIZATION_DRAFT_REVISION_INVALID', 400);
+        $revision = filter_var(is_string($revision) ? ltrim($revision, '0') : $revision, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($revision === false) throw new ApiException('SAND_IAM_INITIALIZATION_DRAFT_REVISION_INVALID', 400);
         return $revision;
     }
 

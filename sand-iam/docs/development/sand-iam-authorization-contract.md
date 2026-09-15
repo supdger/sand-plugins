@@ -36,8 +36,8 @@ assertScope(scope, attributes, operation, request_id)
 - 有效角色是直接授予身份的角色与身份处于启用成员关系的用户组角色之并集，并按 role ID 去重。用户组、成员关系、用户组角色关系和 role 任一停用，或任何一端不属于当前 application 时，该来源必须 fail-closed。
 - `sand_iam_identity_group_role` 以 `(identity_group_id, role_id)` 唯一，并以 `(identity_group_id, application_id)` 与 `(role_id, application_id)` 外键保证两端同属一个接入应用；接入应用由其 `organization_id` 唯一确定客户主体边界。
 - identity、resource 和所有命中的 role 必须启用且属于同一 application；resource 与 policy 的 application 必须一致。
-- 当前角色判定每次从 PostgreSQL 读取有效关系，不使用独立授权缓存；用户组角色的授予、撤销和审计记录在一个事务中，审计失败不得留下关系变更。
-- 仅 `state=published`、`status=1` 的 policy 可参与判定。按 `priority` 升序；同一 priority 时 `deny` 优先。第一个条件匹配的策略决定 allow/deny。
+- 当前角色判定每次从 PostgreSQL 读取有效关系，不使用独立授权缓存；用户组角色的授予、撤销和审计记录在一个事务中，审计失败不得留下关系变更。授予和撤销均先锁用户组再锁关系；撤销在取得用户组锁后重查关系归属，已停用用户组仍允许撤销其关系。
+- 仅所属应用匹配、`status=1` 且指向有效 `published_version_id` 的 policy 可参与判定。资源、动作、主体、条件、优先级、效果和数据范围均取该不可变发布快照，草稿字段及草稿状态不替代运行版本。先筛选主体、目标及条件匹配的快照，再按 `priority` 升序选择最低值；同一 priority 时 `deny` 优先。停用或撤销将 `status` 置为 `2`，后续判定不再使用该策略。
 - 没有命中策略一律拒绝 `SAND_IAM_POLICY_DENIED`，绝不以空范围或后台 `created_by` 放行。
 - 每次允许和拒绝都写 `sand_iam_audit_log`，不得写入业务正文、完整身份 token 或明文凭证。角色策略命中记录其来源（直接角色或具体用户组）；策略模拟以只读方式返回同一来源说明。
 

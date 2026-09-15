@@ -20,6 +20,30 @@ final class AdminOrganizationGrantController extends AdminResourceController
     protected array $requiredFields = ['admin_user_id', 'organization_id'];
     protected string $resourceType = 'admin_organization_grant';
     protected bool $requiresSuperAdmin = true;
+    protected bool $atomicCreateAudit = true;
+    protected bool $atomicMutationAudit = true;
+    #[Permission('SandIAM 客户主体管理委派保存', 'sand_iam:admin_organization_grant:save')]
+    public function adminOptions(Request $request): Response
+    {
+        $this->access()->assertSuperAdmin();
+        $id = (int) $request->input('id', 0);
+        $keyword = trim((string) $request->input('keywords', ''));
+        if ($id <= 0 && mb_strlen($keyword) < 2) return $this->success([]);
+        $query = SystemUser::where('status', 1)->field(['id', 'username', 'realname']);
+        if ($id > 0) {
+            $query->where('id', $id);
+        } else {
+            $keyword = mb_substr($keyword, 0, 64);
+            $query->where(static function ($scope) use ($keyword): void {
+                $scope->whereLike('username', '%' . $keyword . '%')->whereOr('realname', 'like', '%' . $keyword . '%');
+            });
+        }
+        $rows = array_map(static function (SystemUser $user): array {
+            $name = trim((string) ($user->realname ?: $user->username));
+            return ['id' => (int) $user->id, 'name' => $name !== '' ? $name : '未命名后台管理员', 'username' => (string) $user->username];
+        }, $query->order('id')->limit(20)->select()->all());
+        return $this->success($rows);
+    }
     #[Permission('SandIAM 客户主体管理委派列表', 'sand_iam:admin_organization_grant:index')] public function index(Request $request): Response { return parent::index($request); }
     #[Permission('SandIAM 客户主体管理委派读取', 'sand_iam:admin_organization_grant:read')] public function read(Request $request): Response { return parent::read($request); }
     #[Permission('SandIAM 客户主体管理委派保存', 'sand_iam:admin_organization_grant:save')] public function save(Request $request): Response { return parent::save($request); }

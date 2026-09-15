@@ -20,6 +20,7 @@ export interface SandIamIdentityGroupRow {
   readonly code: string
   readonly name: string
   readonly parent_name: string
+  readonly parent_id: number | null
   readonly description: string
   readonly member_count: number
   readonly status: number
@@ -125,6 +126,17 @@ export function parseSandIamIdentities(value: unknown): SandIamIdentityRow[] {
     .filter((item): item is SandIamIdentityRow => item !== null)
 }
 
+export function parseSandIamIdentityPage(value: unknown): {
+  rows: SandIamIdentityRow[]
+  total: number
+} {
+  const rows = parseSandIamIdentities(value)
+  const page = isRecord(value) && isRecord(value.data) ? value.data : value
+  const total = isRecord(page) && typeof page.total === 'number' &&
+    Number.isInteger(page.total) && page.total >= 0 ? page.total : rows.length
+  return { rows, total }
+}
+
 export function parseSandIamIdentityGroup(value: unknown): SandIamIdentityGroupRow | null {
   if (!isRecord(value)) return null
   const id = readPositiveInt(value.id)
@@ -149,6 +161,7 @@ export function parseSandIamIdentityGroup(value: unknown): SandIamIdentityGroupR
     code,
     name,
     parent_name: typeof value.parent_name === 'string' ? value.parent_name : '',
+    parent_id: readPositiveInt(value.parent_id),
     description: typeof value.description === 'string' ? value.description : '',
     member_count: memberCount,
     status

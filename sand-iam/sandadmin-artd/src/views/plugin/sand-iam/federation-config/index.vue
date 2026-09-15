@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { describeSandIamError } from '../api/errors'
   import {
@@ -17,6 +17,22 @@
   const canConfigure = computed(() => hasAuth('sand_iam:federation:configure'))
   const canMount = computed(() => hasAuth('sand_iam:federation:mount'))
   const canSync = computed(() => hasAuth('sand_iam:federation:sync'))
+  const canReadPresets = computed(() => hasAuth('sand_iam:identity_provider:read'))
+  const presets = ref<SandIamResourceRow[]>([])
+  const presetCode = ref('')
+  const presetClientId = ref('')
+  const presetRedirectUri = ref('')
+  const presetReturnUris = ref('')
+  const presetTenantId = ref('')
+  const presetLoading = ref(false)
+  const presetBusy = ref(false)
+  const presetError = ref('')
+  const selectedPreset = computed(() => presets.value.find(row => row.code === presetCode.value) ?? null)
+  const canGeneratePreset = computed(() => canReadPresets.value && canConfigure.value &&
+    selectedProvider.value !== null && selectedPreset.value?.compatibility === 'compatible' &&
+    (selectedProvider.value.provider_type === 'local' || selectedProvider.value.provider_type === providerType.value) &&
+    selectedPreset.value.protocol === providerType.value)
+  let presetListVersion = 0
 
   const loading = ref(false)
   const saving = ref(false)
@@ -31,6 +47,7 @@
 
   const clientId = ref('')
   const clientSecret = ref('')
+  const oauthScope = ref('')
   const issuer = ref('')
   const discoveryUrl = ref('')
   const redirectUri = ref('')
@@ -60,6 +77,57 @@
   const selectedProvider = computed(
     () => providers.value.find((row) => String(row.id) === selectedProviderId.value) ?? null
   )
+  let disposed = false
+  let contextVersion = 0
+  let optionsVersion = 0
+  const providerLoading = ref(false)
+  watch([selectedProviderId, providerType], () => {
+    contextVersion++
+    clearSecrets()
+    presetCode.value = ''
+    presetClientId.value = ''
+    presetRedirectUri.value = ''
+    presetReturnUris.value = ''
+    presetTenantId.value = ''
+    presetError.value = ''
+    oauthScope.value = ''
+    for (const field of [clientId, issuer, discoveryUrl, redirectUri, authorizationEndpoint,
+      tokenEndpoint, userinfoEndpoint, entityId, ssoUrl, acsUrl, spCert, ldapUri, ldapBaseDn,
+      ldapBindDn, kerberosPrincipal, kerberosKeytabRef]) field.value = ''
+    handoffReturnUris.value = []
+    kerberosRealms.value = []
+    mappingSubject.value = 'sub'
+    mappingUsername.value = 'preferred_username'
+    mappingDisplayName.value = 'name'
+    mappingEmail.value = 'email'
+    mappingActive.value = 'active'
+    conflictPolicy.value = 'reject'
+    mountApplicationId.value = ''
+    requestError.value = null
+    lastRequestHint.value = ''
+  }, { flush: 'sync' })
+  watch(selectedProviderId, () => {
+    const type = selectedProvider.value?.provider_type
+    if (type === 'oidc' || type === 'oauth2' || type === 'saml' ||
+      type === 'ldap' || type === 'scim' || type === 'kerberos') providerType.value = type
+  }, { flush: 'sync' })
+  watch(() => JSON.stringify([buildConfig(), buildMapping(), conflictPolicy.value, mountApplicationId.value]),
+    () => { contextVersion++ }, { flush: 'sync' })
+  watch([presetCode, presetClientId, presetRedirectUri, presetReturnUris, presetTenantId],
+    () => { contextVersion++; presetError.value = '' }, { flush: 'sync' })
+  onScopeDispose(() => { disposed = true; optionsVersion++; contextVersion++; presetListVersion++; clearSecrets(); presets.value = [] })
+  function captureContext(): () => boolean {
+    const version = contextVersion
+    const provider = selectedProvider.value
+    return () => !disposed && version === contextVersion && provider !== null && selectedProvider.value === provider
+  }
+  function validMount(): boolean {
+    const provider = selectedProvider.value
+    const application = applications.value.find(row => String(row.id) === mountApplicationId.value)
+    return provider !== null && application !== undefined && provider.status === 1 && application.status === 1 &&
+      provider.organization_id === application.organization_id &&
+      (provider.scope_type !== 'application' || provider.application_id === application.id)
+  }
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -106,6 +174,7 @@
       return {
         client_id: clientId.value.trim(),
         client_secret: clientSecret.value,
+        ...(oauthScope.value.trim() === '' ? {} : { scope: oauthScope.value.trim() }),
         issuer: issuer.value.trim(),
         discovery_url: discoveryUrl.value.trim(),
         redirect_uri: redirectUri.value.trim(),
@@ -116,6 +185,7 @@
       return {
         client_id: clientId.value.trim(),
         client_secret: clientSecret.value,
+        ...(oauthScope.value.trim() === '' ? {} : { scope: oauthScope.value.trim() }),
         authorization_endpoint: authorizationEndpoint.value.trim(),
         token_endpoint: tokenEndpoint.value.trim(),
         userinfo_endpoint: userinfoEndpoint.value.trim(),
@@ -174,24 +244,156 @@
     spPrivateKey.value = ''
   }
 
+  async function loadPresets(): Promise<void> {
+    const version = ++presetListVersion
+    presets.value = []
+    presetCode.value = ''
+    if (disposed || !canReadPresets.value) return
+    presetLoading.value = true
+    presetError.value = ''
+    try {
+      const result = await getSandIamAdmin('identity-provider-preset/index')
+      if (disposed || version !== presetListVersion || !canReadPresets.value) return
+      presets.value = listRows(result).filter(row => typeof row.code === 'string' &&
+        typeof row.name === 'string' && typeof row.protocol === 'string' && typeof row.compatibility === 'string')
+    } catch (error: unknown) {
+      if (!disposed && version === presetListVersion) presetError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && version === presetListVersion) presetLoading.value = false
+    }
+  }
+
+  async function generatePresetDraft(): Promise<void> {
+    if (disposed || saving.value || presetBusy.value || !canGeneratePreset.value) return
+    const preset = selectedPreset.value
+    if (preset === null) return
+    const currentContext = captureContext()
+    const current = () => currentContext() && canGeneratePreset.value && selectedPreset.value === preset
+    const body = {
+      code: presetCode.value,
+      client_id: presetClientId.value.trim(),
+      redirect_uri: presetRedirectUri.value.trim(),
+      handoff_return_uris: presetReturnUris.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
+      ...(preset.tenant_required === true ? { tenant_id: presetTenantId.value.trim() } : {}),
+    }
+    if (body.client_id === '' || body.redirect_uri === '' || body.handoff_return_uris.length === 0 ||
+      (preset.tenant_required === true && presetTenantId.value.trim() === '')) {
+      presetError.value = '请填写客户端标识、HTTPS 回调及应用回跳地址；Entra 还需租户标识。'
+      return
+    }
+    presetBusy.value = true
+    try {
+      // Includes secret inputs in the overwrite warning, never in the request.
+      const hasDraft = Object.values(buildConfig()).some(value =>
+        typeof value === 'string' ? value !== '' : Array.isArray(value) && value.length > 0) ||
+        JSON.stringify(buildMapping()) !== JSON.stringify({ subject: 'sub', username: 'preferred_username', display_name: 'name', email: 'email', active: 'active' })
+      if (hasDraft) {
+        try {
+          await ElMessageBox.confirm('生成的草稿将替换当前协议参数和声明映射，并清空已填密钥。尚不会保存到身份源。', '替换未保存草稿',
+            { type: 'warning', confirmButtonText: '替换草稿', cancelButtonText: '取消' })
+        } catch { return }
+      }
+      if (!current()) return
+      presetError.value = ''
+      const result = await postSandIamAction('identity-provider-preset/draft', body)
+      if (!current()) return
+      const draft = isRecord(result) && isRecord(result.data) ? result.data : result
+      if (!isRecord(draft) || draft.draft_only !== true || draft.save_performed !== false ||
+        draft.provider_type !== providerType.value || draft.preset_code !== preset.code ||
+        !isRecord(draft.config) || !isRecord(draft.attribute_mapping)) throw new Error('预设草稿格式无效，请继续手工配置。')
+      const config = draft.config, mapping = draft.attribute_mapping
+      const keys = providerType.value === 'oidc'
+        ? ['client_id', 'redirect_uri', 'scope', 'issuer', 'discovery_url']
+        : ['client_id', 'redirect_uri', 'scope', 'authorization_endpoint', 'token_endpoint', 'userinfo_endpoint']
+      if (keys.some(key => typeof config[key] !== 'string') ||
+        !Array.isArray(config.handoff_return_uris) || !config.handoff_return_uris.every((value: unknown) => typeof value === 'string') ||
+        Object.values(mapping).some(value => typeof value !== 'string')) throw new Error('预设草稿字段无效。')
+      clearSecrets()
+      clientId.value = String(config.client_id)
+      redirectUri.value = String(config.redirect_uri)
+      oauthScope.value = String(config.scope)
+      handoffReturnUris.value = config.handoff_return_uris.filter((value: unknown): value is string => typeof value === 'string')
+      issuer.value = typeof config.issuer === 'string' ? config.issuer : ''
+      discoveryUrl.value = typeof config.discovery_url === 'string' ? config.discovery_url : ''
+      authorizationEndpoint.value = typeof config.authorization_endpoint === 'string' ? config.authorization_endpoint : ''
+      tokenEndpoint.value = typeof config.token_endpoint === 'string' ? config.token_endpoint : ''
+      userinfoEndpoint.value = typeof config.userinfo_endpoint === 'string' ? config.userinfo_endpoint : ''
+      mappingSubject.value = typeof mapping.subject === 'string' ? mapping.subject : ''
+      mappingUsername.value = typeof mapping.username === 'string' ? mapping.username : ''
+      mappingDisplayName.value = typeof mapping.display_name === 'string' ? mapping.display_name : ''
+      mappingEmail.value = typeof mapping.email === 'string' ? mapping.email : ''
+      mappingActive.value = typeof mapping.active === 'string' ? mapping.active : ''
+      lastRequestHint.value = '预设已填入未保存草稿。请补充客户端密钥并核对参数，再点击“保存敏感配置”。'
+    } catch (error: unknown) {
+      if (current()) presetError.value = describeSandIamError(error).detail
+    } finally { presetBusy.value = false }
+  }
+
+  const applicationLoading = ref(false)
+  const applicationError = ref('')
+  const applicationKeywords = ref('')
+  let applicationRequest = 0
+
+  async function loadApplications(keywords = ''): Promise<void> {
+    const attempt = ++applicationRequest
+    if (disposed) return
+    applicationKeywords.value = keywords
+    applicationLoading.value = true
+    applicationError.value = ''
+    try {
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      if (disposed || attempt !== applicationRequest) return
+      const selected = applications.value.find(row => String(row.id) === mountApplicationId.value)
+      const rows = listRows(result)
+      applications.value = selected && !rows.some(row => row.id === selected.id) ? [selected, ...rows] : rows
+    } catch (error: unknown) {
+      if (!disposed && attempt === applicationRequest) applicationError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && attempt === applicationRequest) applicationLoading.value = false
+    }
+  }
+
   async function loadOptions(): Promise<void> {
+    void loadApplications()
+    const version = ++optionsVersion
     loading.value = true
     requestError.value = null
     try {
-      const [providerResult, applicationResult] = await Promise.all([
-        listSandIamResource('identity-provider', { page: 1, limit: 100 }),
-        listSandIamResource('application', { page: 1, limit: 100 })
-      ])
+      const providerResult = await listSandIamResource('identity-provider', { page: 1, limit: 100 })
+      if (disposed || version !== optionsVersion) return
       providers.value = listRows(providerResult)
-      applications.value = listRows(applicationResult)
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && version === optionsVersion) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed && version === optionsVersion) loading.value = false
+    }
+  }
+
+  async function searchProviders(keywords: string): Promise<void> {
+    const version = ++optionsVersion
+    selectedProviderId.value = ''
+    providers.value = []
+    loading.value = false
+    if (disposed || !hasAuth('sand_iam:identity_provider:index')) return
+    providerLoading.value = true
+    try {
+      const result = await listSandIamResource('identity-provider', { page: 1, limit: 100, keywords: keywords.trim() })
+      if (!disposed && version === optionsVersion) providers.value = listRows(result)
+    } catch (error: unknown) {
+      if (!disposed && version === optionsVersion) requestError.value = describeSandIamError(error)
+    } finally {
+      if (!disposed && version === optionsVersion) providerLoading.value = false
     }
   }
 
   async function saveConfig(): Promise<void> {
+    if (disposed || saving.value || presetBusy.value || !canConfigure.value || selectedProvider.value === null) return
+    if (selectedProvider.value.provider_type !== 'local' &&
+      selectedProvider.value.provider_type !== providerType.value) {
+      requestError.value = describeSandIamError(new Error('已配置的身份源不能更换协议，请登记新的身份源。'))
+      return
+    }
+    const current = captureContext()
     const providerId = selectedProviderIdNumber()
     if (providerId === null) {
       requestError.value = describeSandIamError(new Error('请先选择要配置的身份源。'))
@@ -225,18 +427,21 @@
         attribute_mapping: mapping,
         conflict_policy: conflictPolicy.value
       })
+      if (!current()) return
       ElMessage.success('已保存')
       lastRequestHint.value = '协议配置已写入。密钥不会回显，重新打开本页必须再次填写。'
       clearSecrets()
       await loadOptions()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
       saving.value = false
     }
   }
 
   async function mountProvider(): Promise<void> {
+    if (disposed || saving.value || presetBusy.value || !canMount.value || !validMount()) return
+    const current = captureContext()
     const providerId = selectedProviderIdNumber()
     const applicationId = mountApplicationIdNumber()
     if (providerId === null || applicationId === null) {
@@ -250,16 +455,20 @@
         provider_id: providerId,
         application_id: applicationId
       })
+      if (!current()) return
       ElMessage.success('已保存')
       lastRequestHint.value = '身份源已挂到所选接入应用。'
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
       saving.value = false
     }
   }
 
   async function syncDirectory(): Promise<void> {
+    if (disposed || saving.value || presetBusy.value || !canSync.value || !validMount() ||
+      selectedProvider.value?.provider_type !== 'ldap') return
+    const current = captureContext()
     const providerId = selectedProviderIdNumber()
     const applicationId = mountApplicationIdNumber()
     if (providerId === null || applicationId === null) {
@@ -268,6 +477,7 @@
       )
       return
     }
+    saving.value = true
     try {
       await ElMessageBox.confirm(
         '确认立即同步该目录吗？同步失败或只完成一部分时，页面不会显示“已连接生产目录”。',
@@ -275,15 +485,20 @@
         { type: 'warning', confirmButtonText: '开始同步', cancelButtonText: '取消' }
       )
     } catch {
+      saving.value = false
       return
     }
-    saving.value = true
+    if (!current() || !canSync.value || !validMount()) {
+      saving.value = false
+      return
+    }
     requestError.value = null
     try {
       const result = await postSandIamAction('federation/sync', {
         provider_id: providerId,
         application_id: applicationId
       })
+      if (!current()) return
       const payload = isRecord(result) && isRecord(result.data) ? result.data : result
       const state = isRecord(payload) && typeof payload.state === 'string' ? payload.state : ''
       if (state === 'succeeded') {
@@ -296,7 +511,7 @@
         lastRequestHint.value = '请根据失败提示检查目录配置后重试。'
       }
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
       saving.value = false
     }
@@ -304,9 +519,7 @@
 
   onMounted(() => {
     void loadOptions()
-    void getSandIamAdmin('identity-provider-preset/index').catch(() => {
-      // 预置目录失败不阻塞手工配置。
-    })
+    void loadPresets()
   })
 </script>
 
@@ -361,6 +574,9 @@
           <ElSelect
             v-model="selectedProviderId"
             filterable
+            remote
+            :remote-method="searchProviders"
+            :loading="providerLoading"
             clearable
             placeholder="按名称选择身份源"
             style="width: 100%"
@@ -388,7 +604,7 @@
           </span>
         </ElFormItem>
         <ElFormItem label="协议">
-          <ElSelect v-model="providerType" style="width: 100%">
+          <ElSelect v-model="providerType" :disabled="selectedProvider !== null && selectedProvider.provider_type !== 'local'" style="width: 100%">
             <ElOption label="OpenID Connect" value="oidc" />
             <ElOption label="OAuth 2.0" value="oauth2" />
             <ElOption label="SAML" value="saml" />
@@ -408,10 +624,36 @@
           </ElSelect>
         </ElFormItem>
 
+        <ElFormItem label="身份源预设">
+          <ElSelect v-model="presetCode" clearable :loading="presetLoading" placeholder="可选，或继续手工配置">
+            <ElOption v-for="preset in presets" :key="String(preset.code)" :value="String(preset.code)"
+              :label="`${String(preset.name)} · ${preset.compatibility === 'compatible' ? '可生成草稿' : '需人工配置'}`" />
+          </ElSelect>
+          <ElButton :disabled="!canReadPresets || presetLoading" @click="loadPresets">刷新预设</ElButton>
+        </ElFormItem>
+        <ElAlert v-if="presetError" type="error" :closable="false" :title="presetError" class="mb-4" />
+        <template v-if="selectedPreset">
+          <ElAlert class="mb-4" :closable="false" type="info"
+            :title="selectedPreset.compatibility === 'compatible' ? '预设只生成未保存草稿，不包含密钥' : '此预设需要人工配置'"
+            :description="typeof selectedPreset.manual_reason === 'string' ? selectedPreset.manual_reason : '请核对身份源协议和实际租户参数，生成后仍需补充密钥并主动保存。'" />
+          <ElAlert v-if="selectedPreset.protocol !== providerType" class="mb-4" :closable="false" type="warning"
+            title="预设协议与当前身份源不匹配，请选择匹配预设或身份源。" />
+          <template v-if="selectedPreset.compatibility === 'compatible' && selectedPreset.protocol === providerType">
+            <ElFormItem label="预设客户端标识"><ElInput v-model="presetClientId" /></ElFormItem>
+            <ElFormItem v-if="selectedPreset.tenant_required === true" label="Entra 租户标识"><ElInput v-model="presetTenantId" /></ElFormItem>
+            <ElFormItem label="预设 HTTPS 回调"><ElInput v-model="presetRedirectUri" /></ElFormItem>
+            <ElFormItem label="预设应用回跳地址"><ElInput v-model="presetReturnUris" type="textarea" placeholder="每行一个 HTTPS 地址" /></ElFormItem>
+            <ElFormItem>
+              <ElButton :disabled="!canGeneratePreset || saving || presetBusy" :loading="presetBusy" @click="generatePresetDraft">生成未保存草稿</ElButton>
+            </ElFormItem>
+          </template>
+        </template>
+
         <template v-if="providerType === 'oidc' || providerType === 'oauth2'">
           <ElFormItem label="客户端标识">
             <ElInput v-model="clientId" placeholder="由身份源颁发，不是密钥" />
           </ElFormItem>
+          <ElFormItem label="协议 Scope"><ElInput v-model="oauthScope" placeholder="留空使用协议默认值；多个范围以空格分隔" /></ElFormItem>
           <ElFormItem label="客户端密钥">
             <ElInput
               v-model="clientSecret"
@@ -583,9 +825,14 @@
           >
         </ElFormItem>
 
+        <ElFormItem v-if="applicationError" label="应用搜索失败">
+          <span role="alert">{{ applicationError }}</span>
+          <ElButton :loading="applicationLoading" @click="loadApplications(applicationKeywords)">重试搜索</ElButton>
+        </ElFormItem>
         <ElFormItem label="挂载到接入应用">
           <ElSelect
             v-model="mountApplicationId"
+            remote :remote-method="loadApplications" :loading="applicationLoading"
             filterable
             clearable
             placeholder="按名称选择接入应用"

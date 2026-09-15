@@ -626,7 +626,12 @@ $sourceRevision = $releaseUnsigned ? resolveSourceRevision($workspace, $sourceCo
 if ($releaseUnsigned) assertExternalArtifactRoot($artifactRoot, $source);
 
 createDirectory($artifactRoot);
-$version = '0.7.1';
+$releaseInfo = parse_ini_file($source . '/info.ini', false, INI_SCANNER_RAW);
+$version = is_array($releaseInfo) ? ($releaseInfo['version'] ?? null) : null;
+if (!is_string($version) || preg_match('/^[0-9]+\.[0-9]+\.[0-9]+$/D', $version) !== 1
+    || ($releaseInfo['app'] ?? null) !== 'sand-iam') {
+    throw new RuntimeException('SandIAM release metadata is missing or invalid');
+}
 $next = 10;
 foreach (glob($artifactRoot . '/sand-iam-' . $version . '-v*-*') ?: [] as $existing) {
     if (preg_match('/-v(\d+)-/', basename($existing), $match) === 1) {

@@ -12,6 +12,7 @@ use plugin\sandadmin\exception\ApiException;
 use plugin\sandadmin\service\Permission;
 use support\Request;
 use support\Response;
+use think\facade\Db;
 
 final class SecurityAlertController extends BaseController
 {
@@ -45,18 +46,35 @@ final class SecurityAlertController extends BaseController
     #[Permission('SandIAM 安全告警处理', 'sand_iam:security_alert:resolve')]
     public function resolve(Request $request): Response
     {
-        $alert = $this->alert((int) $request->post('id', 0), $request);
-        if ((string) $alert->status === 'resolved') throw new ApiException('SAND_IAM_SECURITY_ALERT_ALREADY_RESOLVED: 该告警已经处理', 409);
         $token = $request->header('check_admin', []);
         $adminId = is_array($token) ? (int) ($token['id'] ?? 0) : 0;
-        $alert->save(['status' => 'resolved', 'resolved_by' => $adminId, 'resolved_time' => date('Y-m-d H:i:s')]);
-        (new AuditWriter())->write('admin', (string) $adminId, (int) $alert->organization_id, $alert->application_id === null ? null : (int) $alert->application_id, 'security_alert.resolve', 'security_alert', (int) $alert->id, 'succeeded', substr((string) $request->header('X-Request-Id', bin2hex(random_bytes(16))), 0, 96));
+        $authorized = $this->alert((int) $request->post('id', 0), $request);
+        $organizationId = (int) $authorized->organization_id;
+        $applicationId = $authorized->application_id === null ? null : (int) $authorized->application_id;
+        Db::startTrans();
+        try {
+            $alert = SecurityAlert::where('id', (int) $authorized->id)->lock(true)->find();
+            if ($alert === null) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 未找到安全告警', 404);
+            if ((int) $alert->organization_id !== $organizationId
+                || ($alert->application_id === null ? null : (int) $alert->application_id) !== $applicationId) {
+                throw new ApiException('SAND_IAM_SECURITY_ALERT_SCOPE_CHANGED: 告警范围已改变，请刷新后重试', 409);
+            }
+            if ((string) $alert->status === 'resolved') throw new ApiException('SAND_IAM_SECURITY_ALERT_ALREADY_RESOLVED: 该告警已经处理', 409);
+            $alert->save(['status' => 'resolved', 'resolved_by' => $adminId, 'resolved_time' => date('Y-m-d H:i:s')]);
+            (new AuditWriter())->write('admin', (string) $adminId, (int) $alert->organization_id, $alert->application_id === null ? null : (int) $alert->application_id, 'security_alert.resolve', 'security_alert', (int) $alert->id, 'succeeded', substr((string) $request->header('X-Request-Id', bin2hex(random_bytes(16))), 0, 96));
+            Db::commit();
+        } catch (\Throwable $error) {
+            Db::rollback();
+            throw $error;
+        }
         return $this->success('告警已标记为已处理');
     }
 
     private function alert(int $id, Request $request): SecurityAlert
     {
-        $alert = $id > 0 ? SecurityAlert::find($id) : null;
+        $alert = $id > 0
+            ? SecurityAlert::find($id)
+            : null;
         if ($alert === null) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 未找到安全告警', 404);
         $this->access($request)->assertOrganization((int) $alert->organization_id);
         if ($alert->application_id !== null) $this->access($request)->assertApplication((int) $alert->application_id);

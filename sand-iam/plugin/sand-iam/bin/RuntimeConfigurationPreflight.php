@@ -14,6 +14,16 @@ namespace plugin\SandIam\bin;
 final class RuntimeConfigurationPreflight
 {
     /** @var list<string> */
+    private const RELEASE_REQUIRED_VALUES = [
+        'SAND_IAM_CONTEXT_SIGNING_KEY',
+        'SAND_IAM_AUTH_PEPPER',
+        'SAND_IAM_MFA_ENCRYPTION_KEY',
+        'SAND_IAM_OIDC_ISSUER',
+        'SAND_IAM_OIDC_SUBJECT_KEY',
+        'SAND_IAM_FEDERATION_ENCRYPTION_KEY',
+    ];
+
+    /** @var list<string> */
     private const SWITCHES = [
         'SAND_IAM_DEBUG',
         'SAND_IAM_APPLICATION_EXPERIENCE_ENABLED',
@@ -37,6 +47,7 @@ final class RuntimeConfigurationPreflight
         'SAND_IAM_AUDIT_ARCHIVE_WORKER_ENABLED',
         'SAND_IAM_SECURITY_OPERATION_RETENTION_WORKER_ENABLED',
         'SAND_IAM_DIRECTORY_SYNC_WORKER_ENABLED',
+        'SAND_IAM_SYNC_RECOVER_ABANDONED_RUNS',
     ];
 
     /** @var list<string> */
@@ -81,6 +92,11 @@ final class RuntimeConfigurationPreflight
     private const DRIVER_MAPS = [
         'SAND_IAM_MESSAGE_DRIVERS',
         'SAND_IAM_SYNC_DRIVERS',
+    ];
+
+    /** @var list<string> */
+    private const ABSOLUTE_PATH_MAPS = [
+        'SAND_IAM_KERBEROS_KEYTABS',
     ];
 
     /** @var list<string> */
@@ -140,6 +156,11 @@ final class RuntimeConfigurationPreflight
                     $this->issue($errors, 'RELEASE_UNSAFE_SWITCH', $key, 'must be 0 in the release profile');
                 }
             }
+            foreach (self::RELEASE_REQUIRED_VALUES as $key) {
+                if (trim($values[$key] ?? '') === '') {
+                    $this->issue($errors, 'MISSING_RELEASE_VALUE', $key, 'must be configured for the complete release profile');
+                }
+            }
         }
 
         foreach (self::ENCRYPTION_KEYS as $key) {
@@ -160,6 +181,11 @@ final class RuntimeConfigurationPreflight
         foreach (self::DRIVER_MAPS as $key) {
             if (($values[$key] ?? '') !== '') {
                 $this->validateStringMap($errors, $key, $values[$key]);
+            }
+        }
+        foreach (self::ABSOLUTE_PATH_MAPS as $key) {
+            if (($values[$key] ?? '') !== '') {
+                $this->validateAbsolutePathMap($errors, $key, $values[$key]);
             }
         }
         foreach (self::CLASS_NAMES as $key) {
@@ -187,6 +213,7 @@ final class RuntimeConfigurationPreflight
         }
 
         $this->requireSwitch($errors, $values, 'SAND_IAM_DIRECTORY_SYNC_WORKER_ENABLED', 'SAND_IAM_IDENTITY_LIFECYCLE_ENABLED');
+        $this->requireSwitch($errors, $values, 'SAND_IAM_SYNC_RECOVER_ABANDONED_RUNS', 'SAND_IAM_IDENTITY_LIFECYCLE_ENABLED');
         $this->requireSwitch($errors, $values, 'SAND_IAM_OIDC_LOGOUT_WORKER_ENABLED', 'SAND_IAM_OIDC_BACKCHANNEL_LOGOUT_ENABLED');
         $this->requireSwitch($errors, $values, 'SAND_IAM_RADIUS_WORKER_ENABLED', 'SAND_IAM_RADIUS_SERVER_ENABLED');
         $this->requireSwitch($errors, $values, 'SAND_IAM_RADIUS_SERVER_ENABLED', 'SAND_IAM_RADIUS_WORKER_ENABLED');
@@ -196,8 +223,7 @@ final class RuntimeConfigurationPreflight
         $this->requireValue($errors, $values, 'SAND_IAM_OIDC_LOGOUT_WORKER_ENABLED', 'SAND_IAM_OIDC_LOGOUT_ENCRYPTION_KEY');
         $this->requireValue($errors, $values, 'SAND_IAM_RADIUS_SERVER_ENABLED', 'SAND_IAM_RADIUS_ENCRYPTION_KEY');
         $this->requireValue($errors, $values, 'SAND_IAM_RADIUS_SERVER_ENABLED', 'SAND_IAM_RADIUS_REPLAY_KEY');
-        $this->requireValue($errors, $values, 'SAND_IAM_KERBEROS_ENABLED', 'SAND_IAM_KERBEROS_VERIFIER');
-        $this->requireValue($errors, $values, 'SAND_IAM_KERBEROS_ENABLED', 'SAND_IAM_KERBEROS_CONTEXT_RESOLVER');
+        $this->requireValue($errors, $values, 'SAND_IAM_KERBEROS_ENABLED', 'SAND_IAM_KERBEROS_KEYTABS');
 
         if (($values['SAND_IAM_DIRECTORY_SYNC_WORKER_RETRY_BASE_SECONDS'] ?? '') !== ''
             && ($values['SAND_IAM_DIRECTORY_SYNC_WORKER_RETRY_MAX_SECONDS'] ?? '') !== ''
@@ -245,6 +271,7 @@ final class RuntimeConfigurationPreflight
             self::KEY_VERSIONS,
             self::KEYRINGS,
             self::DRIVER_MAPS,
+            self::ABSOLUTE_PATH_MAPS,
             self::CLASS_NAMES,
             array_keys(self::INTEGER_RANGES),
             [
@@ -311,6 +338,29 @@ final class RuntimeConfigurationPreflight
         foreach ($decoded as $code => $class) {
             if (!is_string($code) || preg_match('/^[A-Za-z0-9._-]{1,64}$/D', $code) !== 1 || !is_string($class) || trim($class) === '') {
                 $this->issue($errors, 'INVALID_DRIVER_MAP_ENTRY', $key, 'contains an invalid driver code or class name');
+                return;
+            }
+        }
+    }
+
+    /** @param list<array{code:string,key:string,message:string}> $errors */
+    private function validateAbsolutePathMap(array &$errors, string $key, string $raw): void
+    {
+        try {
+            $decoded = json_decode($raw, true, 32, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            $this->issue($errors, 'INVALID_PATH_MAP', $key, 'must be a JSON object of reference to absolute path');
+            return;
+        }
+        if (!is_array($decoded) || array_is_list($decoded)) {
+            $this->issue($errors, 'INVALID_PATH_MAP', $key, 'must be a JSON object');
+            return;
+        }
+        foreach ($decoded as $reference => $path) {
+            if (!is_string($reference) || preg_match('/^[A-Za-z0-9._-]{1,64}$/D', $reference) !== 1
+                || !is_string($path) || !str_starts_with($path, '/') || str_contains($path, "\0")
+                || str_contains($path, "\n") || str_contains($path, "\r")) {
+                $this->issue($errors, 'INVALID_PATH_MAP_ENTRY', $key, 'contains an invalid reference or absolute path');
                 return;
             }
         }

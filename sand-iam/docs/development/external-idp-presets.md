@@ -1,4 +1,4 @@
-# 外部身份源预设（后端）
+# 外部身份源预设
 
 预设目录只给管理员提供已核对的协议元数据和**不保存的配置草稿**。它不是一键开通：不会创建身份源、不会挂载应用、不会自动启用，也不接收、保存或回显 `client_secret`、应用密钥、token 或私钥。
 
@@ -9,6 +9,15 @@
 - `POST /app/sand-iam/admin/identity-provider-preset/draft`：仅生成并校验草稿；提交 `code`、`client_id`、`redirect_uri`、`handoff_return_uris`，Microsoft Entra ID 还需 `tenant_id`。返回值带 `draft_only=true`、`save_performed=false` 和下一步说明。
 
 草稿接口拒绝任何名称含 `secret`、`password`、`private_key` 或 `token` 的输入。最终配置必须由已有的联合身份源敏感配置接口完成，继续沿用 FederationService 的 HTTPS、公开 DNS/SSRF、防重定向及 TLS 校验。
+
+## 管理页配置步骤
+
+1. 在身份源管理中登记身份源，再进入联合身份配置页选择该身份源。
+2. 选择与身份源协议一致的预设，填写客户端 ID、SandIAM 回调地址和业务应用接收登录结果的回调地址；Microsoft Entra ID 另需租户 ID。
+3. 生成草稿并核对配置及属性映射。已有表单内容需要确认后才能替换；生成草稿不会保存身份源或挂载应用。
+4. 在敏感配置表单中补充客户端密钥，确认完整配置后保存，再按需挂载到应用。保存沿用完整配置替换语义，不能把草稿当作保留旧密钥的局部更新。
+
+预设目录或草稿请求失败可以重试，也可以继续手工填写配置。`manual_required` 预设只展示说明，不能生成通用配置；目录列出厂商不等于已完成其协议适配或真实登录互操作验证。
 
 ## 当前状态与配置来源
 

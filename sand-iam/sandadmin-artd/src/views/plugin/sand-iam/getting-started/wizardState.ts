@@ -121,6 +121,14 @@ export function phaseAfterSave(id: number | null): WizardPhase {
   return id === null ? 'save_outcome_unknown' : 'created_pending_confirmation'
 }
 
+/** These create rejections occur before writing, or after atomic rollback. */
+export function phaseAfterCreateError(http: number | null, code: string | null): WizardPhase {
+  if (http === 401 || http === 403) return 'draft'
+  if (http === 400 && code === 'SAND_IAM_VALIDATION_ERROR') return 'draft'
+  if (http === 409 && code === 'SAND_IAM_ENVIRONMENT_CONFLICT') return 'draft'
+  return 'save_outcome_unknown'
+}
+
 export function canPostForPhase(phase: WizardPhase): boolean {
   return phase === 'draft'
 }

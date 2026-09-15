@@ -1,4 +1,4 @@
-// src/experienceContracts.ts
+// sand-iam/portal/src/experienceContracts.ts
 var REGISTRATION_FIELD_LABELS = {
   username: "\u7528\u6237\u540D",
   display_name: "\u663E\u793A\u540D\u79F0",
@@ -123,7 +123,7 @@ function parsePortalAuthResult(value) {
   };
 }
 
-// src/meContracts.ts
+// sand-iam/portal/src/meContracts.ts
 function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -265,7 +265,194 @@ function portalRequestHeaders(accessToken, requestId, hasBody) {
   return headers;
 }
 
-// src/casContracts.ts
+// sand-iam/portal/src/captchaWidget.ts
+function parseCaptchaConfiguration(value) {
+  if (typeof value !== "object" || value === null) return null;
+  if (!("kind" in value) || value.kind !== "turnstile" || !("site_key" in value) || typeof value.site_key !== "string" || !/^[a-zA-Z0-9_-]{1,255}$/.test(value.site_key) || !("action" in value) || value.action !== "login" && value.action !== "register" || !("application_binding" in value) || typeof value.application_binding !== "string" || !/^[a-zA-Z0-9_-]{1,255}$/.test(value.application_binding)) return null;
+  return {
+    kind: value.kind,
+    site_key: value.site_key,
+    action: value.action,
+    application_binding: value.application_binding
+  };
+}
+function readSdk() {
+  const value = Reflect.get(globalThis, "turnstile");
+  if (typeof value !== "object" || value === null || !("ready" in value) || typeof value.ready !== "function" || !("render" in value) || typeof value.render !== "function" || !("remove" in value) || typeof value.remove !== "function") return null;
+  const { ready, render: render2, remove } = value;
+  return {
+    ready: (callback) => {
+      ready.call(value, callback);
+    },
+    render: (container, options) => render2.call(value, container, options),
+    remove: (id) => {
+      remove.call(value, id);
+    }
+  };
+}
+var SCRIPT_URL = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+var pendingSdk = null;
+function loadSdk() {
+  if (pendingSdk !== null) return pendingSdk;
+  const attempt = new Promise((resolve, reject) => {
+    let script = null;
+    let settled = false;
+    const finish = (sdk) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (script !== null) {
+        script.onload = null;
+        script.onerror = null;
+      }
+      if (sdk !== null) resolve(sdk);
+      else {
+        script?.remove();
+        reject(new Error("\u4EBA\u673A\u9A8C\u8BC1\u52A0\u8F7D\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5\u3002"));
+      }
+    };
+    const timer = setTimeout(() => finish(null), 15e3);
+    const ready = () => {
+      const sdk = readSdk();
+      if (sdk === null) {
+        finish(null);
+        return;
+      }
+      try {
+        sdk.ready(() => finish(sdk));
+      } catch {
+        finish(null);
+      }
+    };
+    if (readSdk() !== null) {
+      ready();
+      return;
+    }
+    script = document.createElement("script");
+    script.src = SCRIPT_URL;
+    script.async = true;
+    script.defer = true;
+    script.onload = ready;
+    script.onerror = () => finish(null);
+    try {
+      document.head.append(script);
+    } catch {
+      finish(null);
+    }
+  });
+  pendingSdk = attempt;
+  void attempt.catch(() => {
+    if (pendingSdk === attempt) pendingSdk = null;
+  });
+  return attempt;
+}
+var CaptchaWidget = class {
+  generation = 0;
+  token = "";
+  validUntil = 0;
+  sdk = null;
+  widgetId = null;
+  status = "destroyed";
+  container;
+  onChange;
+  constructor(container, onChange) {
+    this.container = container;
+    this.onChange = onChange;
+  }
+  release() {
+    this.generation += 1;
+    this.token = "";
+    this.validUntil = 0;
+    const id = this.widgetId;
+    const sdk = this.sdk;
+    this.widgetId = null;
+    this.sdk = null;
+    if (id !== null && sdk !== null) {
+      try {
+        sdk.remove(id);
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+  notify(status) {
+    this.status = status;
+    this.onChange(status);
+  }
+  async mount(value) {
+    if (!this.release()) {
+      this.notify("error");
+      return;
+    }
+    const configuration = parseCaptchaConfiguration(value);
+    if (configuration === null || !this.container.isConnected) {
+      this.notify("error");
+      return;
+    }
+    const generation = this.generation;
+    const current = () => generation === this.generation && this.container.isConnected;
+    const fail = (status) => {
+      if (!current()) return;
+      const removed = this.release();
+      this.notify(removed ? status : "error");
+    };
+    this.notify("loading");
+    if (!current()) return;
+    try {
+      const sdk = await loadSdk();
+      if (!current()) return;
+      this.sdk = sdk;
+      this.notify("waiting");
+      if (!current()) return;
+      const id = sdk.render(this.container, {
+        sitekey: configuration.site_key,
+        action: configuration.action,
+        cData: configuration.application_binding,
+        "response-field": false,
+        retry: "never",
+        "refresh-expired": "manual",
+        "refresh-timeout": "manual",
+        callback: (token) => {
+          if (!current()) return;
+          if (typeof token !== "string" || token === "" || token.length > 2048) {
+            fail("error");
+            return;
+          }
+          this.token = token;
+          this.validUntil = Date.now() + 3e5;
+          this.notify("verified");
+        },
+        "expired-callback": () => fail("expired"),
+        "error-callback": () => fail("error"),
+        "timeout-callback": () => fail("expired"),
+        "unsupported-callback": () => fail("error")
+      });
+      if (typeof id !== "string" || id === "") {
+        fail("error");
+        return;
+      }
+      if (!current()) {
+        sdk.remove(id);
+        return;
+      }
+      this.widgetId = id;
+    } catch {
+      fail("error");
+    }
+  }
+  /** Returns a token once. A new mount is required for any subsequent submission. */
+  takeToken() {
+    const token = this.status === "verified" && this.container.isConnected && Date.now() < this.validUntil ? this.token : "";
+    this.destroy();
+    return token;
+  }
+  destroy() {
+    this.notify(this.release() ? "destroyed" : "error");
+  }
+};
+
+// sand-iam/portal/src/casContracts.ts
 function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -307,7 +494,7 @@ function casRequestLooksValid(request) {
   return /^CRT-[A-Za-z0-9_-]{48}$/.test(request);
 }
 
-// src/oauthContracts.ts
+// sand-iam/portal/src/oauthContracts.ts
 function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -366,7 +553,7 @@ function parseOAuthDecision(value) {
   return redirectUri === "" ? null : { redirectUri };
 }
 
-// src/mfaContracts.ts
+// sand-iam/portal/src/mfaContracts.ts
 function isRecord5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -521,7 +708,7 @@ async function getPasskeyAssertion(options) {
   };
 }
 
-// src/invitationContracts.ts
+// sand-iam/portal/src/invitationContracts.ts
 function isRecord6(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -536,7 +723,7 @@ function parseInvitationAcceptResult(value) {
   return { displayName: displayName.trim() };
 }
 
-// src/runtime.ts
+// sand-iam/portal/src/runtime.ts
 var SAND_IAM_PORTAL_AUTH_PREFIX = "/api/sand-iam/v1/auth";
 var SAND_IAM_PORTAL_ME_PREFIX = "/api/sand-iam/v1/me";
 var SAND_IAM_PORTAL_EXPERIENCE = "/api/sand-iam/v1/experience";
@@ -605,6 +792,54 @@ async function portalRequest(method, url, accessToken, body) {
     );
   }
   return { requestId, data: record !== null && "data" in record ? record.data : parsed };
+}
+async function loadPortalCaptchaConfiguration(organizationCode, applicationCode, action) {
+  const requestId = createRequestId();
+  const query = new URLSearchParams({
+    organization_code: organizationCode,
+    application_code: applicationCode,
+    action
+  });
+  let response;
+  try {
+    response = await fetch(`${SAND_IAM_PORTAL_AUTH_PREFIX}/captcha/config?${query.toString()}`, {
+      method: "GET",
+      credentials: "omit",
+      cache: "no-store",
+      headers: { Accept: "application/json", "X-Request-Id": requestId }
+    });
+  } catch {
+    throw new SandIamPortalTransportError("\u4EBA\u673A\u9A8C\u8BC1\u914D\u7F6E\u52A0\u8F7D\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u8FDE\u63A5\u540E\u91CD\u8BD5\u3002", null);
+  }
+  let parsed = null;
+  try {
+    parsed = await response.json();
+  } catch {
+    parsed = null;
+  }
+  const record = isRecord7(parsed) ? parsed : null;
+  if (!response.ok) {
+    throw new SandIamPortalTransportError(
+      readMessage(record) || `\u4EBA\u673A\u9A8C\u8BC1\u914D\u7F6E\u4E0D\u53EF\u7528\uFF08HTTP ${String(response.status)}\uFF09`,
+      response.status
+    );
+  }
+  const payload = record !== null && "data" in record ? record.data : parsed;
+  if (isRecord7(payload)) {
+    if (payload.required === false && payload.available === void 0 && payload.widget === void 0) {
+      return { requestId, data: { required: false } };
+    }
+    if (payload.required === true && payload.available === false && payload.widget === void 0) {
+      return { requestId, data: { required: true, available: false } };
+    }
+    if (payload.required === true && payload.available === true) {
+      const widget = parseCaptchaConfiguration(payload.widget);
+      if (widget !== null && widget.action === action) {
+        return { requestId, data: { required: true, available: true, widget } };
+      }
+    }
+  }
+  throw new SandIamPortalTransportError("\u4EBA\u673A\u9A8C\u8BC1\u914D\u7F6E\u8FD4\u56DE\u683C\u5F0F\u4E0D\u7B26\u5408\u5DF2\u51BB\u7ED3\u7EA6\u5B9A", null);
 }
 async function loadPublicExperience(organizationCode, applicationCode) {
   const requestId = createRequestId();
@@ -921,6 +1156,10 @@ async function loadPortalProfile(accessToken) {
   }
   return { requestId: result.requestId, data: profile };
 }
+async function logoutPortalSession(accessToken) {
+  const result = await portalRequest("POST", `${SAND_IAM_PORTAL_AUTH_PREFIX}/logout`, accessToken);
+  return { requestId: result.requestId, data: null };
+}
 async function updatePortalProfile(accessToken, displayName) {
   const result = await portalRequest(
     "PATCH",
@@ -1220,8 +1459,161 @@ function describePortalError(error) {
   return { title: "\u8BF7\u6C42\u672A\u5B8C\u6210", detail, http };
 }
 
-// src/app.ts
+// sand-iam/portal/src/app.ts
 var params = new URLSearchParams(window.location.search);
+var recovery = null;
+var securityOperation = null;
+var pendingTotp = null;
+function securityCurrent(operation) {
+  return operation.token === state.accessToken && operation.submission === authSubmission;
+}
+function beginSecurityOperation() {
+  if (state.accessToken === "" || securityOperation !== null && securityCurrent(securityOperation)) return null;
+  securityOperation = { token: state.accessToken, submission: authSubmission };
+  updateDecisionButtons();
+  return securityOperation;
+}
+function updateDecisionButtons() {
+  const busy = securityOperation !== null && securityCurrent(securityOperation);
+  for (const id of ["confirm-cas", "reject-cas", "approve-oauth", "deny-oauth", "logout-btn"]) {
+    const button = document.getElementById(id);
+    if (button instanceof HTMLButtonElement) button.disabled = busy;
+  }
+}
+function finishSecurityOperation(operation) {
+  if (securityOperation === operation) securityOperation = null;
+  if (securityCurrent(operation)) render();
+}
+function recoveryDraft() {
+  if (recovery === null || recovery.organization !== state.organizationCode || recovery.application !== state.applicationCode) {
+    recovery = {
+      organization: state.organizationCode,
+      application: state.applicationCode,
+      identifier: "",
+      channel: "email",
+      busy: false
+    };
+  }
+  return recovery;
+}
+var captchas = {
+  login: { widget: null, ready: false, optional: false, attempt: 0, organization: "", application: "" },
+  register: { widget: null, ready: false, optional: false, attempt: 0, organization: "", application: "" }
+};
+var captchaGeneration = 0;
+var authBusy = false;
+var authSubmission = 0;
+function loginCurrent(attempt) {
+  return attempt.submission === authSubmission && attempt.organization === state.organizationCode && attempt.application === state.applicationCode;
+}
+function beginAlternativeLogin() {
+  if (authBusy) return null;
+  authBusy = true;
+  const attempt = {
+    organization: state.organizationCode,
+    application: state.applicationCode,
+    submission: ++authSubmission
+  };
+  updateCaptchaButton("login");
+  updateCaptchaButton("register");
+  return attempt;
+}
+function finishAlternativeLogin(attempt) {
+  if (attempt.submission !== authSubmission) return;
+  authBusy = false;
+  updateCaptchaButton("login");
+  updateCaptchaButton("register");
+  if (loginCurrent(attempt)) render();
+}
+function updateCaptchaButton(action) {
+  const button = document.getElementById(`${action}-btn`);
+  if (button instanceof HTMLButtonElement) button.disabled = authBusy || !captchas[action].ready;
+  const retry = document.getElementById(`${action}-captcha-retry`);
+  if (retry instanceof HTMLButtonElement) retry.disabled = authBusy;
+  if (action === "login") {
+    for (const id of ["passkey-login-btn", "mfa-login-btn", "mfa-passkey-btn"]) {
+      const button2 = document.getElementById(id);
+      if (button2 instanceof HTMLButtonElement) button2.disabled = authBusy;
+    }
+  }
+}
+function clearCaptchas() {
+  captchaGeneration += 1;
+  for (const action of ["login", "register"]) {
+    captchas[action].widget?.destroy();
+    captchas[action] = { widget: null, ready: false, optional: false, attempt: 0, organization: "", application: "" };
+  }
+}
+function renderCaptcha(action) {
+  return `<div id="${action}-captcha-widget"></div>
+    <p id="${action}-captcha-status" role="status" aria-live="polite">\u6B63\u5728\u8BFB\u53D6\u4EBA\u673A\u9A8C\u8BC1\u914D\u7F6E\u2026</p>
+    <button type="button" id="${action}-captcha-retry" hidden>\u91CD\u65B0\u9A8C\u8BC1</button>`;
+}
+async function mountCaptcha(action) {
+  const container = document.getElementById(`${action}-captcha-widget`);
+  const status = document.getElementById(`${action}-captcha-status`);
+  const retry = document.getElementById(`${action}-captcha-retry`);
+  if (container === null || status === null || !(retry instanceof HTMLButtonElement)) return;
+  const generation = captchaGeneration;
+  const attempt = ++captchas[action].attempt;
+  const organization = state.organizationCode;
+  const application = state.applicationCode;
+  const current = () => generation === captchaGeneration && attempt === captchas[action].attempt && organization === state.organizationCode && application === state.applicationCode;
+  const show = (text, ready, retryable) => {
+    if (!current()) return;
+    status.textContent = text;
+    captchas[action].ready = ready;
+    retry.hidden = !retryable;
+    retry.disabled = authBusy;
+    updateCaptchaButton(action);
+  };
+  const messages = {
+    loading: "\u6B63\u5728\u52A0\u8F7D\u4EBA\u673A\u9A8C\u8BC1\u2026",
+    waiting: "\u8BF7\u5B8C\u6210\u4EBA\u673A\u9A8C\u8BC1",
+    verified: "\u4EBA\u673A\u9A8C\u8BC1\u5DF2\u5B8C\u6210",
+    expired: "\u9A8C\u8BC1\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u9A8C\u8BC1\u3002",
+    error: "\u4EBA\u673A\u9A8C\u8BC1\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5\u3002",
+    destroyed: "\u8BF7\u91CD\u65B0\u5B8C\u6210\u4EBA\u673A\u9A8C\u8BC1\u3002"
+  };
+  captchas[action].widget?.destroy();
+  captchas[action] = { widget: null, ready: false, optional: false, attempt, organization, application };
+  show("\u6B63\u5728\u8BFB\u53D6\u4EBA\u673A\u9A8C\u8BC1\u914D\u7F6E\u2026", false, false);
+  retry.onclick = () => {
+    if (!authBusy) void mountCaptcha(action);
+  };
+  try {
+    const result = await loadPortalCaptchaConfiguration(organization, application, action);
+    if (!current()) return;
+    if (!result.data.required) {
+      captchas[action].optional = true;
+      show("\u5F53\u524D\u65E0\u9700\u4EBA\u673A\u9A8C\u8BC1\u3002", true, false);
+    } else if (!result.data.available) {
+      show("\u4EBA\u673A\u9A8C\u8BC1\u670D\u52A1\u6682\u4E0D\u53EF\u7528\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u6216\u8054\u7CFB\u7BA1\u7406\u5458\u3002", false, true);
+    } else {
+      const widget = new CaptchaWidget(container, (value) => {
+        show(messages[value], value === "verified", value === "expired" || value === "error" || value === "destroyed");
+      });
+      captchas[action].widget = widget;
+      await widget.mount(result.data.widget);
+    }
+  } catch (error) {
+    show(error instanceof Error ? error.message : "\u4EBA\u673A\u9A8C\u8BC1\u914D\u7F6E\u52A0\u8F7D\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5\u3002", false, true);
+  }
+}
+function takeCaptcha(action) {
+  if (authBusy || !captchas[action].ready) return null;
+  if (captchas[action].organization !== state.organizationCode || captchas[action].application !== state.applicationCode) return null;
+  authBusy = true;
+  updateCaptchaButton("login");
+  updateCaptchaButton("register");
+  if (captchas[action].optional) return "";
+  const token = captchas[action].widget?.takeToken() ?? "";
+  if (token !== "") return token;
+  authBusy = false;
+  updateCaptchaButton("login");
+  updateCaptchaButton("register");
+  return null;
+}
 function takeInvitationToken() {
   const token = params.get("token") ?? "";
   if (token === "") return "";
@@ -1249,6 +1641,12 @@ function takeSensitiveQuery(name) {
 var federationCallback = takeFederationCallback();
 var invitationToken = takeInvitationToken();
 var invitationAcceptedName = "";
+var invitationUsername = "";
+var invitationDisplayName = "";
+var acceptingInvitation = null;
+function invitationCurrent(attempt) {
+  return loginCurrent(attempt) && attempt.token === invitationToken && attempt.accessToken === state.accessToken;
+}
 var casRequest = takeSensitiveQuery("cas_request") || takeSensitiveQuery("request");
 var oauthRequest = takeSensitiveQuery("oauth_request");
 var state = {
@@ -1327,6 +1725,7 @@ function takeFederationContext(stateKey) {
     }
     return {
       providerCode: parsed.providerCode,
+      organizationCode: typeof parsed.organizationCode === "string" ? parsed.organizationCode : "",
       applicationCode: parsed.applicationCode,
       returnUri: parsed.returnUri,
       verifier: parsed.verifier,
@@ -1373,7 +1772,10 @@ function clearError() {
 function rememberRequest(requestId) {
   state.requestId = requestId;
 }
-async function loadCas() {
+async function loadCas(attempt) {
+  const submission = authSubmission;
+  const request = casRequest;
+  const current = () => submission === authSubmission && request === casRequest;
   if (!casRequestLooksValid(casRequest)) {
     state.errorTitle = "CAS \u8BF7\u6C42\u672A\u88AB\u63A5\u53D7";
     state.errorDetail = "\u7F3A\u5C11\u6709\u6548\u786E\u8BA4\u8BF7\u6C42\u3002\u8BF7\u4ECE\u5E94\u7528\u91CD\u65B0\u53D1\u8D77\uFF0C\u4E0D\u8981\u624B\u586B request\u3002";
@@ -1383,17 +1785,24 @@ async function loadCas() {
   }
   clearError();
   try {
-    const result = await loadCasInteraction(casRequest);
+    const result = await loadCasInteraction(request);
+    if (!current()) return;
+    if (attempt !== void 0 && (attempt.application !== result.data.applicationCode || attempt.organization !== "" && attempt.organization !== result.data.organizationCode)) {
+      throw new Error("\u5E94\u7528\u767B\u5F55\u8BF7\u6C42\u4E0E\u672C\u6B21\u5916\u90E8\u767B\u5F55\u4E0D\u5339\u914D\u3002");
+    }
     rememberRequest(result.requestId);
     state.cas = result.data;
     state.organizationCode = result.data.organizationCode;
     state.applicationCode = result.data.applicationCode;
+    if (attempt !== void 0) attempt.organization = result.data.organizationCode;
     try {
       const experience = await loadPublicExperience(state.organizationCode, state.applicationCode);
+      if (!current()) return;
       rememberRequest(experience.requestId);
       state.experience = experience.data;
       clearDefaultExperience();
     } catch (experienceError) {
+      if (!current()) return;
       if (isInteractionExperienceUnavailable(experienceError)) {
         useDefaultExperience();
       } else {
@@ -1403,6 +1812,7 @@ async function loadCas() {
       }
     }
   } catch (error) {
+    if (!current()) return;
     setError(error);
     state.cas = null;
   }
@@ -1421,14 +1831,23 @@ async function submitCasConfirm() {
     render();
     return;
   }
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
+  const request = casRequest;
+  const current = () => securityCurrent(operation) && request === casRequest;
+  let redirected = false;
   clearError();
   try {
-    const result = await confirmCasInteraction(state.accessToken, casRequest);
+    const result = await confirmCasInteraction(operation.token, request);
+    if (!current()) return;
     rememberRequest(result.requestId);
     window.location.assign(result.data.redirectUri);
+    redirected = true;
   } catch (error) {
+    if (!current()) return;
     setError(error);
-    render();
+  } finally {
+    if (!redirected) finishSecurityOperation(operation);
   }
 }
 async function submitCasReject() {
@@ -1438,34 +1857,53 @@ async function submitCasReject() {
     render();
     return;
   }
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
+  const request = casRequest;
+  const current = () => securityCurrent(operation) && request === casRequest;
+  let redirected = false;
   clearError();
   try {
-    const result = await rejectCasInteraction(state.accessToken, casRequest);
+    const result = await rejectCasInteraction(operation.token, request);
+    if (!current()) return;
     rememberRequest(result.requestId);
     window.location.assign(result.data.redirectUri);
+    redirected = true;
   } catch (error) {
+    if (!current()) return;
     setError(error);
-    render();
+  } finally {
+    if (!redirected) finishSecurityOperation(operation);
   }
 }
-async function loadOAuth() {
+async function loadOAuth(attempt) {
+  const submission = authSubmission;
+  const request = oauthRequest;
+  const current = () => submission === authSubmission && request === oauthRequest;
   if (!oauthRequestLooksValid(oauthRequest)) {
     state.oauth = null;
     return;
   }
   clearError();
   try {
-    const result = await loadOAuthInteraction(oauthRequest);
+    const result = await loadOAuthInteraction(request);
+    if (!current()) return;
+    if (attempt !== void 0 && (attempt.application !== result.data.applicationCode || attempt.organization !== "" && attempt.organization !== result.data.organizationCode)) {
+      throw new Error("\u5E94\u7528\u6388\u6743\u8BF7\u6C42\u4E0E\u672C\u6B21\u5916\u90E8\u767B\u5F55\u4E0D\u5339\u914D\u3002");
+    }
     rememberRequest(result.requestId);
     state.oauth = result.data;
     state.organizationCode = result.data.organizationCode;
     state.applicationCode = result.data.applicationCode;
+    if (attempt !== void 0) attempt.organization = result.data.organizationCode;
     try {
       const experience = await loadPublicExperience(state.organizationCode, state.applicationCode);
+      if (!current()) return;
       rememberRequest(experience.requestId);
       state.experience = experience.data;
       clearDefaultExperience();
     } catch (experienceError) {
+      if (!current()) return;
       if (isInteractionExperienceUnavailable(experienceError)) {
         useDefaultExperience();
       } else {
@@ -1475,18 +1913,23 @@ async function loadOAuth() {
       }
     }
   } catch (error) {
+    if (!current()) return;
     setError(error);
     state.oauth = null;
   }
   render();
 }
 async function bindOAuthAfterLogin() {
+  const submission = authSubmission;
+  const accessToken = state.accessToken;
   if (state.accessToken === "" || !oauthRequestLooksValid(oauthRequest)) return;
   try {
     const result = await bindOAuthInteraction(state.accessToken, oauthRequest);
+    if (submission !== authSubmission || accessToken !== state.accessToken) return;
     rememberRequest(result.requestId);
     state.oauthBound = result.data;
   } catch (error) {
+    if (submission !== authSubmission || accessToken !== state.accessToken) return;
     setError(error);
     state.oauthBound = null;
   }
@@ -1498,35 +1941,65 @@ async function submitOAuthDecision(decision) {
     render();
     return;
   }
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
+  const request = oauthRequest;
+  const bound = state.oauthBound;
+  const current = () => securityCurrent(operation) && request === oauthRequest && bound === state.oauthBound;
+  let redirected = false;
   clearError();
   try {
     const result = await decideOAuthInteraction(
-      state.accessToken,
-      oauthRequest,
-      state.oauthBound.csrfToken,
+      operation.token,
+      request,
+      bound.csrfToken,
       decision
     );
+    if (!current()) return;
     rememberRequest(result.requestId);
     window.location.assign(result.data.redirectUri);
+    redirected = true;
   } catch (error) {
+    if (!current()) return;
     setError(error);
-    render();
+  } finally {
+    if (!redirected) finishSecurityOperation(operation);
   }
 }
 async function loadExperience() {
+  pendingTotp = null;
+  securityOperation = null;
+  recovery = null;
+  authSubmission += 1;
+  authBusy = false;
+  clearCaptchas();
   state.verification = null;
   state.organizationCode = inputValue("organization-code") || state.organizationCode;
   state.applicationCode = inputValue("application-code") || state.applicationCode;
+  state.accessToken = "";
+  state.profile = null;
+  state.security = null;
+  state.sessions = [];
+  state.factors = [];
+  state.connections = [];
+  state.pendingMfa = null;
+  state.oauthBound = null;
+  state.recoveryCodes = [];
+  const submission = authSubmission;
+  state.experience = null;
   clearError();
+  render();
   try {
     const result = await loadPublicExperience(
       state.organizationCode,
       state.applicationCode
     );
+    if (submission !== authSubmission) return;
     rememberRequest(result.requestId);
     state.experience = result.data;
     clearDefaultExperience();
   } catch (error) {
+    if (submission !== authSubmission) return;
     setError(error);
     state.experience = null;
     clearDefaultExperience();
@@ -1534,12 +2007,16 @@ async function loadExperience() {
   render();
 }
 async function submitLogin() {
+  if (authBusy) return;
   if (state.experience === null || !experienceAllowsPassword(state.experience)) {
     state.errorTitle = "\u8BE5\u767B\u5F55\u65B9\u5F0F\u5DF2\u5173\u95ED";
     state.errorDetail = "\u5F53\u524D\u5916\u89C2\u672A\u542F\u7528\u5BC6\u7801\u767B\u5F55\uFF0C\u9875\u9762\u4E0D\u4F1A\u63D0\u4EA4\u3002";
     render();
     return;
   }
+  const captcha = takeCaptcha("login");
+  if (captcha === null) return;
+  const submission = ++authSubmission;
   clearError();
   const identifier = inputValue("login-identifier");
   const organization = state.organizationCode;
@@ -1550,8 +2027,9 @@ async function submitLogin() {
       state.applicationCode,
       identifier,
       inputValue("login-password"),
-      inputValue("login-captcha")
+      captcha
     );
+    if (submission !== authSubmission || organization !== state.organizationCode || application !== state.applicationCode) return;
     rememberRequest(result.requestId);
     if (result.data.verificationRequired) {
       openVerification(identifier, organization, application);
@@ -1567,18 +2045,32 @@ async function submitLogin() {
     }
     state.accessToken = result.data.accessToken;
     await loadAll();
+    if (submission !== authSubmission) return;
     await bindOAuthAfterLogin();
+    if (submission !== authSubmission) return;
     render();
   } catch (error) {
+    if (submission !== authSubmission || organization !== state.organizationCode || application !== state.applicationCode) return;
     if (error instanceof Error && error.message.includes("SAND_IAM_AUTH_VERIFICATION_REQUIRED")) {
       openVerification(identifier, organization, application);
     } else {
       setError(error);
     }
     render();
+  } finally {
+    if (submission === authSubmission) {
+      authBusy = false;
+      updateCaptchaButton("login");
+      updateCaptchaButton("register");
+    }
   }
 }
-async function completePrimaryLogin(outcome) {
+async function completePrimaryLogin(outcome, attempt = {
+  organization: state.organizationCode,
+  application: state.applicationCode,
+  submission: authSubmission
+}) {
+  if (!loginCurrent(attempt)) return;
   if (outcome.verificationRequired) {
     state.errorTitle = "\u8FD8\u9700\u8981\u5B8C\u6210\u9A8C\u8BC1";
     state.errorDetail = "\u8D26\u53F7\u5DF2\u8BC6\u522B\uFF0C\u4F46\u8FD8\u4E0D\u80FD\u7B7E\u53D1\u4F1A\u8BDD\u3002\u8BF7\u5148\u5B8C\u6210\u90AE\u7BB1\u6216\u624B\u673A\u9A8C\u8BC1\u3002";
@@ -1590,70 +2082,103 @@ async function completePrimaryLogin(outcome) {
     state.errorDetail = "\u8BF7\u9009\u62E9\u5DF2\u7ECF\u8BBE\u7F6E\u7684\u9A8C\u8BC1\u65B9\u5F0F\u540E\u7EE7\u7EED\u3002";
     return;
   }
+  state.pendingMfa = null;
   state.accessToken = outcome.accessToken;
   await loadAll();
+  if (!loginCurrent(attempt)) return;
   await bindOAuthAfterLogin();
+  if (!loginCurrent(attempt)) return;
 }
 async function submitPasskeyLogin() {
+  if (authBusy) return;
   if (state.experience === null || !experienceAllowsPasskey(state.experience)) {
     state.errorTitle = "\u8BE5\u767B\u5F55\u65B9\u5F0F\u5DF2\u5173\u95ED";
     state.errorDetail = "\u5F53\u524D\u5E94\u7528\u6CA1\u6709\u542F\u7528\u901A\u884C\u5BC6\u94A5\u767B\u5F55\u3002";
     render();
     return;
   }
+  const attempt = beginAlternativeLogin();
+  if (attempt === null) return;
   clearError();
   try {
-    const started = await startPortalPasskeyLogin(state.organizationCode, state.applicationCode);
+    const started = await startPortalPasskeyLogin(attempt.organization, attempt.application);
+    if (!loginCurrent(attempt)) return;
     rememberRequest(started.requestId);
     const options = parsePasskeyAssertionOptions(started.data.publicKey);
     if (options === null) throw new Error("\u901A\u884C\u5BC6\u94A5\u767B\u5F55\u4FE1\u606F\u4E0D\u5B8C\u6574\u3002");
     const assertion = await getPasskeyAssertion(options);
+    if (!loginCurrent(attempt)) return;
     const completed = await finishPortalPasskeyLogin(
-      state.organizationCode,
-      state.applicationCode,
+      attempt.organization,
+      attempt.application,
       started.data.challengeToken,
       assertion
     );
+    if (!loginCurrent(attempt)) return;
     rememberRequest(completed.requestId);
-    await completePrimaryLogin(completed.data);
+    await completePrimaryLogin(completed.data, attempt);
   } catch (error) {
+    if (!loginCurrent(attempt)) return;
     setError(error);
+  } finally {
+    finishAlternativeLogin(attempt);
   }
-  render();
 }
 async function startExternalLogin(protocol, providerCode) {
-  if (state.experience === null) return;
+  if (state.experience === null || authBusy) return;
+  const attempt = beginAlternativeLogin();
+  if (attempt === null) return;
+  const originalOAuthRequest = oauthRequest;
+  const originalCasRequest = casRequest;
+  let storedKey = null;
+  let redirected = false;
   clearError();
   try {
     const returnUri = currentPortalReturnUri();
     const stateKey = `fhr_${randomBase64Url(32)}`;
     const verifier = randomBase64Url(32);
     const challenge = await handoffChallenge(verifier);
+    if (!loginCurrent(attempt)) return;
     saveFederationContext(stateKey, {
       providerCode,
-      applicationCode: state.applicationCode,
+      organizationCode: attempt.organization,
+      applicationCode: attempt.application,
       returnUri,
       verifier,
-      oauthRequest,
-      casRequest
+      oauthRequest: originalOAuthRequest,
+      casRequest: originalCasRequest
     });
+    storedKey = stateKey;
     const started = await startPortalFederationLogin(
       protocol,
       providerCode,
-      state.applicationCode,
+      attempt.application,
       returnUri,
       stateKey,
       challenge
     );
+    if (!loginCurrent(attempt)) return;
     rememberRequest(started.requestId);
     window.location.assign(started.data.redirectUri);
+    redirected = true;
   } catch (error) {
+    if (!loginCurrent(attempt)) return;
     setError(error);
-    render();
+  } finally {
+    if (!redirected) {
+      if (storedKey !== null) {
+        try {
+          sessionStorage.removeItem(`${federationStoragePrefix}${storedKey}`);
+        } catch {
+          if (loginCurrent(attempt)) setError(new Error("\u6D4F\u89C8\u5668\u672A\u80FD\u6E05\u9664\u672C\u6B21\u5916\u90E8\u767B\u5F55\u786E\u8BA4\u4FE1\u606F\uFF0C\u8BF7\u5173\u95ED\u5F53\u524D\u6807\u7B7E\u9875\u540E\u91CD\u8BD5\u3002"));
+        }
+      }
+      finishAlternativeLogin(attempt);
+    }
   }
 }
 async function completeFederationCallback() {
-  if (federationCallback === null) return;
+  if (federationCallback === null || authBusy) return;
   const context = takeFederationContext(federationCallback.state);
   if (context === null) {
     state.errorTitle = "\u5916\u90E8\u767B\u5F55\u672A\u5B8C\u6210";
@@ -1661,6 +2186,10 @@ async function completeFederationCallback() {
     render();
     return;
   }
+  state.organizationCode = context.organizationCode;
+  state.applicationCode = context.applicationCode;
+  const attempt = beginAlternativeLogin();
+  if (attempt === null) return;
   clearError();
   try {
     const completed = await exchangePortalFederationHandoff(
@@ -1670,25 +2199,39 @@ async function completeFederationCallback() {
       context.returnUri,
       context.verifier
     );
+    if (!loginCurrent(attempt)) return;
     rememberRequest(completed.requestId);
     oauthRequest = context.oauthRequest;
     casRequest = context.casRequest;
-    state.applicationCode = context.applicationCode;
-    if (oauthRequestLooksValid(oauthRequest)) await loadOAuth();
-    if (casRequestLooksValid(casRequest)) await loadCas();
-    await completePrimaryLogin(completed.data);
+    if (oauthRequestLooksValid(oauthRequest)) {
+      await loadOAuth(attempt);
+      if (!loginCurrent(attempt)) return;
+      if (state.oauth === null) throw new Error("\u5E94\u7528\u6388\u6743\u8BF7\u6C42\u65E0\u6CD5\u6062\u590D\uFF0C\u8BF7\u4ECE\u5E94\u7528\u91CD\u65B0\u53D1\u8D77\u767B\u5F55\u3002");
+    }
+    if (casRequestLooksValid(casRequest)) {
+      await loadCas(attempt);
+      if (!loginCurrent(attempt)) return;
+      if (state.cas === null) throw new Error("\u5E94\u7528\u767B\u5F55\u8BF7\u6C42\u65E0\u6CD5\u6062\u590D\uFF0C\u8BF7\u4ECE\u5E94\u7528\u91CD\u65B0\u53D1\u8D77\u767B\u5F55\u3002");
+    }
+    await completePrimaryLogin(completed.data, attempt);
   } catch (error) {
+    if (!loginCurrent(attempt)) return;
     setError(error);
+  } finally {
+    finishAlternativeLogin(attempt);
   }
-  render();
 }
 async function submitRegister() {
+  if (authBusy) return;
   if (state.experience === null || !experienceAllowsRegister(state.experience)) {
     state.errorTitle = "\u6CE8\u518C\u5DF2\u5173\u95ED";
     state.errorDetail = "\u5F53\u524D\u5916\u89C2\u672A\u5F00\u653E\u6CE8\u518C\u3002\u9080\u8BF7\u6CE8\u518C\u8BF7\u8D70\u9080\u8BF7\u94FE\u63A5\u3002";
     render();
     return;
   }
+  const captcha = takeCaptcha("register");
+  if (captcha === null) return;
+  const submission = ++authSubmission;
   clearError();
   const fields = {
     username: inputValue("register-username"),
@@ -1697,7 +2240,6 @@ async function submitRegister() {
   for (const field of state.experience.registrationFields) {
     if (field !== "username") fields[field] = inputValue(`register-${field}`);
   }
-  const captcha = inputValue("register-captcha");
   if (captcha !== "") fields.captcha_token = captcha;
   const organization = state.organizationCode;
   const application = state.applicationCode;
@@ -1707,6 +2249,7 @@ async function submitRegister() {
       state.applicationCode,
       fields
     );
+    if (submission !== authSubmission || organization !== state.organizationCode || application !== state.applicationCode) return;
     rememberRequest(result.requestId);
     if (result.data.verificationRequired) {
       openVerification(fields.username, organization, application);
@@ -1722,11 +2265,20 @@ async function submitRegister() {
     }
     state.accessToken = result.data.accessToken;
     await loadAll();
+    if (submission !== authSubmission) return;
     await bindOAuthAfterLogin();
+    if (submission !== authSubmission) return;
     render();
   } catch (error) {
+    if (submission !== authSubmission || organization !== state.organizationCode || application !== state.applicationCode) return;
     setError(error);
     render();
+  } finally {
+    if (submission === authSubmission) {
+      authBusy = false;
+      updateCaptchaButton("login");
+      updateCaptchaButton("register");
+    }
   }
 }
 function openVerification(identifier, organization, application) {
@@ -1783,127 +2335,185 @@ async function submitVerification(channel) {
   }
 }
 async function submitMfaLogin() {
-  if (state.pendingMfa === null) return;
-  const method = inputValue("mfa-login-method") === "recovery_code" ? "recovery_code" : "totp";
-  if (!state.pendingMfa.methods.includes(method)) {
+  if (authBusy || state.pendingMfa === null) return;
+  const pending = state.pendingMfa;
+  const methodInput = document.getElementById("mfa-login-method");
+  const method = methodInput instanceof HTMLSelectElement ? methodInput.value : "";
+  if (method !== "totp" && method !== "recovery_code" || !pending.methods.includes(method)) {
     state.errorTitle = "\u8BE5\u9A8C\u8BC1\u65B9\u5F0F\u4E0D\u53EF\u7528";
     state.errorDetail = "\u8BF7\u9009\u62E9\u672C\u8D26\u53F7\u5DF2\u7ECF\u8BBE\u7F6E\u7684\u9A8C\u8BC1\u65B9\u5F0F\u3002";
     render();
     return;
   }
+  const attempt = beginAlternativeLogin();
+  if (attempt === null) return;
+  const current = () => loginCurrent(attempt) && state.pendingMfa === pending;
   clearError();
   try {
     const result = await verifyPortalMfaChallenge(
-      state.organizationCode,
-      state.applicationCode,
-      state.pendingMfa.challengeToken,
+      attempt.organization,
+      attempt.application,
+      pending.challengeToken,
       method,
       inputValue("mfa-login-code")
     );
+    if (!current()) return;
     rememberRequest(result.requestId);
     state.pendingMfa = null;
-    state.accessToken = result.data.accessToken;
-    await loadAll();
-    await bindOAuthAfterLogin();
-    render();
+    await completePrimaryLogin(result.data, attempt);
   } catch (error) {
+    if (!current()) return;
     setError(error);
-    render();
+  } finally {
+    finishAlternativeLogin(attempt);
   }
 }
 async function submitPasskeyMfaLogin() {
+  if (authBusy) return;
   if (state.pendingMfa === null || !state.pendingMfa.methods.includes("passkey") || state.pendingMfa.passkeyOptions === null) {
     state.errorTitle = "\u901A\u884C\u5BC6\u94A5\u4E0D\u53EF\u7528";
     state.errorDetail = "\u8BF7\u6539\u7528\u8EAB\u4EFD\u9A8C\u8BC1\u5668\u6216\u6062\u590D\u7801\uFF0C\u6216\u91CD\u65B0\u53D1\u8D77\u767B\u5F55\u3002";
     render();
     return;
   }
+  const pending = state.pendingMfa;
+  const attempt = beginAlternativeLogin();
+  if (attempt === null) return;
+  const current = () => loginCurrent(attempt) && state.pendingMfa === pending;
   clearError();
   try {
-    const options = parsePasskeyAssertionOptions(state.pendingMfa.passkeyOptions);
+    const options = parsePasskeyAssertionOptions(pending.passkeyOptions);
     if (options === null) throw new Error("\u901A\u884C\u5BC6\u94A5\u767B\u5F55\u4FE1\u606F\u4E0D\u5B8C\u6574\u3002");
     const assertion = await getPasskeyAssertion(options);
+    if (!current()) return;
     const result = await verifyPortalPasskeyChallenge(
-      state.organizationCode,
-      state.applicationCode,
-      state.pendingMfa.challengeToken,
-      state.pendingMfa.passkeyOptions,
+      attempt.organization,
+      attempt.application,
+      pending.challengeToken,
+      pending.passkeyOptions,
       assertion
     );
+    if (!current()) return;
     rememberRequest(result.requestId);
     state.pendingMfa = null;
-    state.accessToken = result.data.accessToken;
-    await loadAll();
-    await bindOAuthAfterLogin();
-    render();
+    await completePrimaryLogin(result.data, attempt);
   } catch (error) {
+    if (!current()) return;
     setError(error);
-    render();
+  } finally {
+    finishAlternativeLogin(attempt);
   }
 }
 async function submitAcceptInvitation() {
+  if (acceptingInvitation !== null && invitationCurrent(acceptingInvitation)) return;
   if (!invitationTokenLooksValid(invitationToken)) {
     state.errorTitle = "\u9080\u8BF7\u65E0\u6548";
     state.errorDetail = "\u7F3A\u5C11\u6709\u6548\u9080\u8BF7\u4EE4\u724C\u3002\u8BF7\u4F7F\u7528\u90AE\u4EF6\u6216\u77ED\u4FE1\u4E2D\u7684\u94FE\u63A5\uFF0C\u4E0D\u8981\u624B\u586B token\u3002";
     render();
     return;
   }
+  const attempt = {
+    token: invitationToken,
+    accessToken: state.accessToken,
+    organization: state.organizationCode,
+    application: state.applicationCode,
+    submission: authSubmission
+  };
+  acceptingInvitation = attempt;
+  invitationUsername = inputValue("invite-username");
+  invitationDisplayName = inputValue("invite-display-name");
+  const password = inputValue("invite-password");
   clearError();
+  render();
   try {
     const result = await portalAcceptInvitation(
-      invitationToken,
-      inputValue("invite-username"),
-      inputValue("invite-display-name"),
-      inputValue("invite-password")
+      attempt.token,
+      invitationUsername,
+      invitationDisplayName,
+      password
     );
+    if (!invitationCurrent(attempt)) return;
     rememberRequest(result.requestId);
     invitationToken = "";
+    acceptingInvitation = null;
+    invitationUsername = "";
+    invitationDisplayName = "";
     invitationAcceptedName = result.data.displayName;
     state.accessToken = "";
+    state.profile = null;
+    state.security = null;
+    state.sessions = [];
+    state.factors = [];
+    state.connections = [];
+    state.recoveryCodes = [];
+    state.pendingMfa = null;
+    state.oauthBound = null;
+    pendingTotp = null;
+    securityOperation = null;
+    recovery = null;
+    authSubmission += 1;
+    authBusy = false;
     state.errorTitle = "\u5DF2\u4FDD\u5B58";
     state.errorDetail = "\u9080\u8BF7\u5DF2\u63A5\u53D7\uFF0C\u8BF7\u4F7F\u7528\u65B0\u8D26\u53F7\u767B\u5F55\u3002\u672C\u9875\u4E0D\u4F1A\u81EA\u52A8\u53D6\u5F97\u540E\u53F0\u6216\u5E94\u7528\u4F1A\u8BDD\u3002";
+    render();
   } catch (error) {
+    if (!invitationCurrent(attempt)) return;
     setError(error);
+  } finally {
+    if (acceptingInvitation === attempt) {
+      acceptingInvitation = null;
+      if (invitationCurrent(attempt)) render();
+      else {
+        const button = document.getElementById("accept-invite-btn");
+        if (button instanceof HTMLButtonElement) button.disabled = false;
+      }
+    }
   }
-  render();
 }
 async function submitForgot() {
-  clearError();
-  try {
-    const result = await portalForgotPassword(
-      state.organizationCode,
-      state.applicationCode,
-      inputValue("reset-identifier"),
-      inputValue("reset-channel") === "phone" ? "phone" : "email"
-    );
-    rememberRequest(result.requestId);
-    state.errorTitle = "\u5DF2\u4FDD\u5B58";
-    state.errorDetail = "\u5982\u8D26\u53F7\u5B58\u5728\uFF0C\u91CD\u7F6E\u9A8C\u8BC1\u7801\u5DF2\u53D1\u9001\u3002";
-  } catch (error) {
-    setError(error);
-  }
-  render();
+  await submitRecovery(false);
 }
 async function submitReset() {
-  clearError();
-  try {
-    const result = await portalResetPassword(
-      state.organizationCode,
-      state.applicationCode,
-      inputValue("reset-identifier"),
-      inputValue("reset-channel") === "phone" ? "phone" : "email",
-      inputValue("reset-code"),
-      inputValue("reset-password")
-    );
-    rememberRequest(result.requestId);
-    state.errorTitle = "\u5DF2\u4FDD\u5B58";
-    state.errorDetail = "\u5BC6\u7801\u5DF2\u91CD\u7F6E\uFF0C\u8BF7\u4F7F\u7528\u65B0\u5BC6\u7801\u767B\u5F55\u3002";
-  } catch (error) {
-    setError(error);
+  await submitRecovery(true);
+}
+async function submitRecovery(resetPassword) {
+  const draft = recoveryDraft();
+  if (draft.busy) return;
+  const channelInput = document.getElementById("reset-channel");
+  const channel = channelInput instanceof HTMLSelectElement ? channelInput.value : "";
+  draft.identifier = inputValue("reset-identifier").trim();
+  if (draft.identifier === "" || channel !== "email" && channel !== "phone") {
+    state.errorTitle = "\u8BF7\u68C0\u67E5\u627E\u56DE\u4FE1\u606F";
+    state.errorDetail = "\u8BF7\u8F93\u5165\u8D26\u53F7\uFF0C\u5E76\u9009\u62E9\u90AE\u7BB1\u6216\u624B\u673A\u63A5\u6536\u9A8C\u8BC1\u7801\u3002";
+    render();
+    return;
   }
+  draft.channel = channel;
+  const code = inputValue("reset-code");
+  const password = inputValue("reset-password");
+  const current = () => recovery === draft && draft.organization === state.organizationCode && draft.application === state.applicationCode;
+  draft.busy = true;
+  clearError();
   render();
+  try {
+    const result = resetPassword ? await portalResetPassword(draft.organization, draft.application, draft.identifier, draft.channel, code, password) : await portalForgotPassword(draft.organization, draft.application, draft.identifier, draft.channel);
+    if (!current()) return;
+    rememberRequest(result.requestId);
+    state.errorTitle = resetPassword ? "\u5BC6\u7801\u5DF2\u91CD\u7F6E" : "\u8BF7\u67E5\u770B\u9A8C\u8BC1\u7801";
+    state.errorDetail = resetPassword ? "\u6240\u6709\u8BBE\u5907\u9700\u8981\u91CD\u65B0\u767B\u5F55\uFF0C\u8BF7\u4F7F\u7528\u65B0\u5BC6\u7801\u767B\u5F55\u3002" : "\u5982\u8D26\u53F7\u5B58\u5728\uFF0C\u91CD\u7F6E\u9A8C\u8BC1\u7801\u5DF2\u53D1\u9001\u3002";
+  } catch (error) {
+    if (!current()) return;
+    setError(error);
+  } finally {
+    if (current()) {
+      draft.busy = false;
+      render();
+    }
+  }
 }
 async function loadAll() {
+  const submission = authSubmission;
+  const accessToken = state.accessToken;
   if (state.accessToken === "") {
     state.errorTitle = "\u8BF7\u5148\u767B\u5F55";
     state.errorDetail = "\u767B\u5F55\u6210\u529F\u540E\u4F1A\u81EA\u52A8\u6253\u5F00\u8D26\u6237\u5B89\u5168\u8BBE\u7F6E\u3002";
@@ -1919,6 +2529,7 @@ async function loadAll() {
       loadPortalFactors(state.accessToken),
       loadPortalConnections(state.accessToken)
     ]);
+    if (submission !== authSubmission || accessToken !== state.accessToken) return;
     rememberRequest(profile.requestId);
     state.profile = profile.data;
     state.security = security.data;
@@ -1926,6 +2537,7 @@ async function loadAll() {
     state.factors = factors.data;
     state.connections = connections.data;
   } catch (error) {
+    if (submission !== authSubmission || accessToken !== state.accessToken) return;
     setError(error);
     state.profile = null;
     state.security = null;
@@ -1936,142 +2548,231 @@ async function loadAll() {
   render();
 }
 async function startTotp() {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
     const result = await startPortalTotp(
-      state.accessToken,
+      operation.token,
       inputValue("totp-name"),
       inputValue("totp-password")
     );
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
     state.errorTitle = "\u8BF7\u5B8C\u6210\u9A8C\u8BC1\u5668\u7ED1\u5B9A";
     state.errorDetail = `\u8BF7\u5728\u9A8C\u8BC1\u5668\u4E2D\u6DFB\u52A0\u5BC6\u94A5 ${result.data.secret}\uFF0C\u518D\u8F93\u5165\u516D\u4F4D\u9A8C\u8BC1\u7801\u5B8C\u6210\u786E\u8BA4\u3002`;
-    root().dataset.totpFactorId = String(result.data.factorId);
+    pendingTotp = { ...operation, factorId: result.data.factorId };
   } catch (error) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 async function confirmTotp() {
-  const factorId = Number(root().dataset.totpFactorId);
-  if (!Number.isInteger(factorId) || factorId <= 0) {
+  if (pendingTotp === null || !securityCurrent(pendingTotp)) {
     state.errorTitle = "\u8BF7\u5148\u5F00\u59CB\u7ED1\u5B9A";
     state.errorDetail = "\u8BF7\u5148\u751F\u6210\u9A8C\u8BC1\u5668\u5BC6\u94A5\uFF0C\u518D\u8F93\u5165\u9A8C\u8BC1\u7801\u3002";
     render();
     return;
   }
+  const factorId = pendingTotp.factorId;
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
-    const result = await confirmPortalTotp(state.accessToken, factorId, inputValue("totp-code"));
+    const result = await confirmPortalTotp(operation.token, factorId, inputValue("totp-code"));
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
     state.recoveryCodes = result.data;
-    delete root().dataset.totpFactorId;
-    state.factors = (await loadPortalFactors(state.accessToken)).data;
+    pendingTotp = null;
+    const factors = await loadPortalFactors(operation.token);
+    if (!securityCurrent(operation)) return;
+    state.factors = factors.data;
   } catch (error) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 async function regenerateRecoveryCodes() {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
-    const result = await regeneratePortalRecoveryCodes(state.accessToken, inputValue("recovery-password"));
+    const result = await regeneratePortalRecoveryCodes(operation.token, inputValue("recovery-password"));
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
     state.recoveryCodes = result.data;
   } catch (error) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 async function registerPasskey() {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
     const started = await startPortalPasskey(
-      state.accessToken,
+      operation.token,
       inputValue("passkey-name"),
       inputValue("passkey-password")
     );
+    if (!securityCurrent(operation)) return;
     rememberRequest(started.requestId);
     const credential = await createPasskeyCredential(started.data.options);
-    const result = await finishPortalPasskey(state.accessToken, {
+    if (!securityCurrent(operation)) return;
+    const result = await finishPortalPasskey(operation.token, {
       ...credential,
       challenge_token: started.data.challengeToken
     });
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
-    state.factors = (await loadPortalFactors(state.accessToken)).data;
+    const factors = await loadPortalFactors(operation.token);
+    if (!securityCurrent(operation)) return;
+    state.factors = factors.data;
     state.errorTitle = "\u901A\u884C\u5BC6\u94A5\u5DF2\u6DFB\u52A0";
     state.errorDetail = "\u4E0B\u6B21\u53EF\u4EE5\u5728\u652F\u6301\u7684\u8BBE\u5907\u4E0A\u4F7F\u7528\u5B83\u767B\u5F55\u3002";
   } catch (error) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 async function saveDisplayName() {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
-    const result = await updatePortalProfile(state.accessToken, inputValue("display-name"));
+    const result = await updatePortalProfile(operation.token, inputValue("display-name"));
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
     state.profile = result.data;
   } catch (error) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 async function revokeSession(sessionId) {
+  const currentSession = state.sessions.some((session) => session.id === sessionId && session.current);
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
-    const result = await revokePortalSession(state.accessToken, sessionId);
+    const result = await revokePortalSession(operation.token, sessionId);
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
-    const sessions = await loadPortalSessions(state.accessToken);
+    if (currentSession) {
+      clearLocalSession();
+      state.errorTitle = "\u5F53\u524D\u4F1A\u8BDD\u5DF2\u64A4\u9500";
+      state.errorDetail = "\u8BF7\u91CD\u65B0\u767B\u5F55\u540E\u7EE7\u7EED\u3002";
+      render();
+      return;
+    }
+    const sessions = await loadPortalSessions(operation.token);
+    if (!securityCurrent(operation)) return;
     state.sessions = sessions.data;
   } catch (error) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 async function revokeFactor(factor) {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
     const result = await revokePortalFactor(
-      state.accessToken,
+      operation.token,
       factor.id,
       factor.type,
       inputValue("factor-password")
     );
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
-    const factors = await loadPortalFactors(state.accessToken);
+    const factors = await loadPortalFactors(operation.token);
+    if (!securityCurrent(operation)) return;
     state.factors = factors.data;
   } catch (error) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 async function changePassword() {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
     const result = await changePortalPassword(
-      state.accessToken,
+      operation.token,
       inputValue("current-password"),
       inputValue("new-password")
     );
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
-    state.accessToken = "";
-    state.profile = null;
-    state.security = null;
-    state.sessions = [];
-    state.factors = [];
-    state.connections = [];
+    clearLocalSession();
     state.errorTitle = "\u5DF2\u4FDD\u5B58";
     state.errorDetail = "\u5BC6\u7801\u5DF2\u4FEE\u6539\uFF0C\u6240\u6709\u8BBE\u5907\u9700\u8981\u91CD\u65B0\u767B\u5F55\u3002\u5F53\u524D\u767B\u5F55\u72B6\u6001\u5DF2\u5931\u6548\u3002";
+    render();
   } catch (error) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
+}
+function clearLocalSession() {
+  state.accessToken = "";
+  state.profile = null;
+  state.security = null;
+  state.sessions = [];
+  state.factors = [];
+  state.connections = [];
+  state.pendingMfa = null;
+  state.oauthBound = null;
+  state.recoveryCodes = [];
+  state.verification = null;
+  pendingTotp = null;
+  securityOperation = null;
+  recovery = null;
+  authSubmission += 1;
+  authBusy = false;
+}
+async function submitLogout() {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
+  clearError();
+  try {
+    const result = await logoutPortalSession(operation.token);
+    if (!securityCurrent(operation)) return;
+    rememberRequest(result.requestId);
+    clearLocalSession();
+    state.errorTitle = "\u5DF2\u9000\u51FA\u767B\u5F55";
+    state.errorDetail = "\u5F53\u524D\u4F1A\u8BDD\u5DF2\u7ED3\u675F\u3002";
+    render();
+  } catch (error) {
+    if (!securityCurrent(operation)) return;
+    setError(error);
+  } finally {
+    finishSecurityOperation(operation);
+  }
 }
 function escapeHtml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 function render() {
+  clearCaptchas();
   const brand = state.experience?.brandName ?? state.profile?.applicationName ?? "\u5F53\u524D\u5E94\u7528";
   if (state.experience !== null) {
     document.documentElement.style.setProperty(
@@ -2091,6 +2792,7 @@ function render() {
         <h1>${escapeHtml(brand)}</h1>
       </header>
       <p class="hint">\u8FD9\u662F\u60A8\u7684\u8D26\u6237\u4E0E\u767B\u5F55\u5B89\u5168\u8BBE\u7F6E\u3002\u8BBF\u95EE\u4EE4\u724C\u53EA\u5728\u672C\u6B21\u9875\u9762\u4F7F\u7528\uFF0C\u4E0D\u4F1A\u8FDB\u5165 SandAdmin \u540E\u53F0\uFF0C\u4E5F\u4E0D\u4F1A\u4FDD\u5B58\u5728\u6D4F\u89C8\u5668\u4E2D\uFF1B\u5916\u90E8\u767B\u5F55\u4EC5\u5728\u5F53\u524D\u6807\u7B7E\u9875\u4E34\u65F6\u4FDD\u7559\u4E00\u6B21\u786E\u8BA4\u4FE1\u606F\u3002</p>
+      ${state.accessToken === "" ? "" : '<button type="button" id="logout-btn">\u9000\u51FA\u767B\u5F55</button>'}
       ${state.usingDefaultExperience ? '<p class="hint">\u8BE5\u5E94\u7528\u5C1A\u672A\u8BBE\u7F6E\u767B\u5F55\u5916\u89C2\uFF0C\u6B63\u5728\u4F7F\u7528\u57FA\u7840\u5BC6\u7801\u767B\u5F55\u3002\u6CE8\u518C\u9ED8\u8BA4\u5173\u95ED\u3002</p>' : ""}
       ${state.errorTitle === "" ? "" : `<section class="alert"><strong>${escapeHtml(state.errorTitle)}</strong><p>${escapeHtml(state.errorDetail)}</p></section>`}
       ${renderOAuth()}
@@ -2108,6 +2810,12 @@ function render() {
       ${termsUrl === "" && privacyUrl === "" ? "" : `<footer class="portal-links">${termsUrl === "" ? "" : `<a href="${escapeHtml(termsUrl)}" target="_blank" rel="noreferrer">\u670D\u52A1\u534F\u8BAE</a>`}${termsUrl !== "" && privacyUrl !== "" ? " \xB7 " : ""}${privacyUrl === "" ? "" : `<a href="${escapeHtml(privacyUrl)}" target="_blank" rel="noreferrer">\u9690\u79C1\u653F\u7B56</a>`}</footer>`}
     </main>
   `;
+  updateDecisionButtons();
+  document.getElementById("logout-btn")?.addEventListener("click", () => {
+    void submitLogout();
+  });
+  void mountCaptcha("login");
+  void mountCaptcha("register");
   document.getElementById("load-cas")?.addEventListener("click", () => {
     void loadCas();
   });
@@ -2261,19 +2969,20 @@ function renderCas() {
 }
 function renderInvitation() {
   if (invitationAcceptedName !== "") {
-    return `<section><h2>\u63A5\u53D7\u9080\u8BF7</h2><p>\u8D26\u53F7\u300C${escapeHtml(invitationAcceptedName)}\u300D\u5DF2\u6FC0\u6D3B\u3002\u8BF7\u5728\u4E0B\u65B9\u767B\u5F55\uFF0C\u4E0D\u8981\u671F\u5F85\u81EA\u52A8\u8FDB\u5165\u7BA1\u7406\u540E\u53F0\u3002</p></section>`;
+    return `<section><h2>\u63A5\u53D7\u9080\u8BF7</h2><p>\u8D26\u53F7\u300C${escapeHtml(invitationAcceptedName)}\u300D\u5DF2\u6FC0\u6D3B\u3002\u9080\u8BF7\u5DF2\u63A5\u53D7\uFF0C\u8BF7\u4F7F\u7528\u65B0\u8D26\u53F7\u767B\u5F55\u3002</p></section>`;
   }
   if (invitationToken === "") {
     return `<section><h2>\u63A5\u53D7\u9080\u8BF7</h2><p class="empty">\u6CA1\u6709\u9080\u8BF7\u4EE4\u724C\u3002\u8BF7\u4F7F\u7528\u90AE\u4EF6\u6216\u77ED\u4FE1\u4E2D\u7684\u94FE\u63A5\uFF1B\u64A4\u9500\u3001\u8FC7\u671F\u548C\u5DF2\u63A5\u53D7\u7684\u94FE\u63A5\u4E0D\u80FD\u91CD\u653E\u3002</p></section>`;
   }
+  const disabled = acceptingInvitation !== null && invitationCurrent(acceptingInvitation) ? "disabled" : "";
   return `
     <section>
       <h2>\u63A5\u53D7\u9080\u8BF7</h2>
       <p class="hint">\u5DF2\u4ECE\u9080\u8BF7\u94FE\u63A5\u8BFB\u53D6\u4EE4\u724C\uFF0C\u9875\u9762\u4E0D\u4F1A\u56DE\u663E\u6216\u7F13\u5B58 token\u3002</p>
-      <label>\u7528\u6237\u540D<input id="invite-username" autocomplete="username" /></label>
-      <label>\u663E\u793A\u540D\u79F0<input id="invite-display-name" /></label>
-      <label>\u5BC6\u7801<input id="invite-password" type="password" autocomplete="new-password" /></label>
-      <button type="button" id="accept-invite-btn">\u63A5\u53D7\u9080\u8BF7\u5E76\u53BB\u767B\u5F55</button>
+      <label>\u7528\u6237\u540D<input id="invite-username" value="${escapeHtml(invitationUsername)}" autocomplete="username" ${disabled} /></label>
+      <label>\u663E\u793A\u540D\u79F0<input id="invite-display-name" value="${escapeHtml(invitationDisplayName)}" ${disabled} /></label>
+      <label>\u5BC6\u7801<input id="invite-password" type="password" autocomplete="new-password" ${disabled} /></label>
+      <button type="button" id="accept-invite-btn" ${disabled}>\u63A5\u53D7\u9080\u8BF7\u5E76\u53BB\u767B\u5F55</button>
     </section>
   `;
 }
@@ -2310,6 +3019,8 @@ function renderLogin() {
   const passkeyEnabled = experienceAllowsPasskey(state.experience);
   const externalMethods = externalLoginMethods(state.experience);
   const registerEnabled = experienceAllowsRegister(state.experience);
+  const recoveryForm = recoveryDraft();
+  const recoveryDisabled = recoveryForm.busy ? "disabled" : "";
   const extraFields = state.experience.registrationFields.filter((field) => field !== "username").map(
     (field) => `<label>${registrationFieldLabel(field)}<input id="register-${field}" /></label>`
   ).join("");
@@ -2318,8 +3029,8 @@ function renderLogin() {
       <h2>\u767B\u5F55</h2>
       ${passwordEnabled ? `<label>\u7528\u6237\u540D/\u90AE\u7BB1/\u624B\u673A<input id="login-identifier" /></label>
              <label>\u5BC6\u7801<input id="login-password" type="password" autocomplete="current-password" /></label>
-             <label>\u4EBA\u673A\u9A8C\u8BC1\u4EE4\u724C\uFF08\u82E5\u7B56\u7565\u8981\u6C42\uFF09<input id="login-captcha" autocomplete="off" /></label>
-             <button type="button" id="login-btn">\u767B\u5F55</button>` : `<p class="empty">\u5BC6\u7801\u767B\u5F55\u5DF2\u5173\u95ED\uFF0C\u672C\u9875\u4E0D\u5C55\u793A\u767B\u5F55\u8868\u5355\u3002</p>`}
+             ${renderCaptcha("login")}
+             <button type="button" id="login-btn" disabled>\u767B\u5F55</button>` : `<p class="empty">\u5BC6\u7801\u767B\u5F55\u5DF2\u5173\u95ED\uFF0C\u672C\u9875\u4E0D\u5C55\u793A\u767B\u5F55\u8868\u5355\u3002</p>`}
       ${passkeyEnabled ? '<button type="button" id="passkey-login-btn">\u4F7F\u7528\u901A\u884C\u5BC6\u94A5\u767B\u5F55</button>' : ""}
       ${externalMethods.map((method, index) => `<button type="button" data-external-login data-external-protocol="${method.protocol}" data-external-provider="${escapeHtml(method.providerCode)}">\u4F7F\u7528\u5916\u90E8\u8EAB\u4EFD\u6E90 ${String(index + 1)} \u767B\u5F55</button>`).join("")}
     </section>
@@ -2328,17 +3039,20 @@ function renderLogin() {
       ${registerEnabled ? `<label>\u7528\u6237\u540D<input id="register-username" /></label>
              <label>\u5BC6\u7801<input id="register-password" type="password" autocomplete="new-password" /></label>
              ${extraFields}
-             <label>\u4EBA\u673A\u9A8C\u8BC1\u4EE4\u724C\uFF08\u82E5\u7B56\u7565\u8981\u6C42\uFF09<input id="register-captcha" autocomplete="off" /></label>
-             <button type="button" id="register-btn">\u6CE8\u518C</button>` : `<p class="empty">${state.experience.registrationMode === "invite" ? "\u5F53\u524D\u4EC5\u9080\u8BF7\u6CE8\u518C\uFF0C\u8BF7\u4F7F\u7528\u9080\u8BF7\u94FE\u63A5\u3002" : "\u6CE8\u518C\u5DF2\u5173\u95ED\u3002"}</p>`}
+             ${renderCaptcha("register")}
+             <button type="button" id="register-btn" disabled>\u6CE8\u518C</button>` : `<p class="empty">${state.experience.registrationMode === "invite" ? "\u5F53\u524D\u4EC5\u9080\u8BF7\u6CE8\u518C\uFF0C\u8BF7\u4F7F\u7528\u9080\u8BF7\u94FE\u63A5\u3002" : "\u6CE8\u518C\u5DF2\u5173\u95ED\u3002"}</p>`}
     </section>
     ${passwordEnabled ? `<section>
              <h2>\u627E\u56DE\u5BC6\u7801</h2>
-             <label>\u8D26\u53F7\u6807\u8BC6<input id="reset-identifier" /></label>
-             <label>\u901A\u9053<input id="reset-channel" value="email" /></label>
-             <button type="button" id="forgot-btn">\u53D1\u9001\u91CD\u7F6E\u9A8C\u8BC1\u7801</button>
-             <label>\u9A8C\u8BC1\u7801<input id="reset-code" autocomplete="off" /></label>
-             <label>\u65B0\u5BC6\u7801<input id="reset-password" type="password" autocomplete="new-password" /></label>
-             <button type="button" id="reset-btn">\u91CD\u7F6E\u5BC6\u7801</button>
+             <label>\u8D26\u53F7\u6807\u8BC6<input id="reset-identifier" value="${escapeHtml(recoveryForm.identifier)}" ${recoveryDisabled} /></label>
+             <label>\u63A5\u6536\u65B9\u5F0F<select id="reset-channel" ${recoveryDisabled}>
+               <option value="email" ${recoveryForm.channel === "email" ? "selected" : ""}>\u90AE\u7BB1</option>
+               <option value="phone" ${recoveryForm.channel === "phone" ? "selected" : ""}>\u624B\u673A</option>
+             </select></label>
+             <button type="button" id="forgot-btn" ${recoveryDisabled}>\u53D1\u9001\u91CD\u7F6E\u9A8C\u8BC1\u7801</button>
+             <label>\u9A8C\u8BC1\u7801<input id="reset-code" autocomplete="one-time-code" ${recoveryDisabled} /></label>
+             <label>\u65B0\u5BC6\u7801<input id="reset-password" type="password" autocomplete="new-password" ${recoveryDisabled} /></label>
+             <button type="button" id="reset-btn" ${recoveryDisabled}>\u91CD\u7F6E\u5BC6\u7801</button>
            </section>` : ""}
   `;
 }
@@ -2463,10 +3177,10 @@ render();
 if (federationCallback !== null) {
   void completeFederationCallback();
 }
-if (oauthRequestLooksValid(oauthRequest)) {
+if (federationCallback === null && oauthRequestLooksValid(oauthRequest)) {
   void loadOAuth();
 }
-if (casRequestLooksValid(casRequest)) {
+if (federationCallback === null && casRequestLooksValid(casRequest)) {
   void loadCas();
 }
 if (federationCallback === null && oauthRequest === "" && casRequest === "" && state.organizationCode !== "" && state.applicationCode !== "") {

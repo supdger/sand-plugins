@@ -2,8 +2,8 @@
   import { computed, reactive, ref, watch } from 'vue'
   import { ElMessage } from 'element-plus'
   import { parseConditionOrScope, parseJsonObject } from '../api/policyJson'
-  import { listSandIamResource } from '../api/resource'
-  import { readSandIamResource } from '../api/write'
+  import { listSandIamResource, listSandIamGrantCandidates } from '../api/resource'
+  import { getSandIamAdmin, readSandIamResource } from '../api/write'
   import { describeSandIamError } from '../api/errors'
   import {
     createSandIamEditorSessionTracker,
@@ -136,6 +136,8 @@
     if (field.jsonArray === true && Array.isArray(value)) {
       return value.filter((item): item is string => typeof item === 'string').join('\n')
     }
+    if (props.writeMode === 'grant' && (key === 'quota_policy' || key === 'network_policy') &&
+      Array.isArray(value) && value.length === 0) return '{}'
     if (typeof value === 'object') return JSON.stringify(value)
     return String(value)
   }
@@ -277,6 +279,13 @@
   }
 
   function referenceParams(field: SandIamFormField, keywords = ''): SandIamListParams | null {
+    if (field.grantCandidate !== undefined) {
+      const clientId = normalizeReferenceValue(form.workload_client_id)
+      const serviceId = normalizeReferenceValue(form.service_id)
+      if (clientId === null || (field.grantCandidate === 'actions' && serviceId === null)) return null
+      return { page: 1, limit: 100, keywords: keywords.trim() || undefined,
+        workload_client_id: clientId, ...(field.grantCandidate === 'actions' && serviceId !== null ? { service_id: serviceId } : {}) }
+    }
     if (field.applicationGrantContext === 'organization') return null
     if (field.applicationGrantContext === 'application') {
       return { page: 1, limit: 100, keywords: keywords.trim() || undefined }
@@ -331,6 +340,28 @@
     )
   }
 
+  function candidateContext(field: SandIamFormField): string {
+    return field.grantCandidate === undefined ? '' : `${String(form.workload_client_id)}:${String(form.service_id)}`
+  }
+
+  async function readFieldReference(field: SandIamFormField, id: number): Promise<SandIamResourceRow | null> {
+    if (field.organizationAdminCandidate) {
+      return listRows(await getSandIamAdmin('admin-organization-grant/admin-options', { id }))
+        .find(row => normalizeReferenceValue(row.id) === id) ?? null
+    }
+    if (field.grantCandidate !== undefined) {
+      const clientId = normalizeReferenceValue(form.workload_client_id)
+      if (clientId === null) return null
+      const serviceId = normalizeReferenceValue(form.service_id)
+      const result = await listSandIamGrantCandidates(field.grantCandidate, {
+        page: 1, limit: 1, workload_client_id: clientId,
+        ...(field.grantCandidate === 'actions' && serviceId !== null ? { service_id: serviceId } : {})
+      }, id)
+      return listRows(result).find((row) => normalizeReferenceValue(row.id) === id) ?? null
+    }
+    return field.referenceEndpoint === undefined ? null : readReferenceRow(await readSandIamResource(field.referenceEndpoint, id))
+  }
+
   async function hydrateSelectedReference(
     field: SandIamFormField,
     session?: number
@@ -338,17 +369,19 @@
     if (!isActiveEditorSession(session)) return
     if (field.referenceEndpoint === undefined) return
     const id = normalizeReferenceValue(form[field.key])
+    const context = candidateContext(field)
+    const requestId = referenceRequestId[field.key]
     if (id === null || referenceOptions[field.key]?.some((option) => option.value === id)) {
       return
     }
     // The granted-application list normally contains the selected parent. Only
     // restore an edit value that falls outside that page through its own scoped read.
     try {
-      const row = readReferenceRow(await readSandIamResource(field.referenceEndpoint, id))
-      if (!isActiveEditorSession(session)) return
+      const row = await readFieldReference(field, id)
+      if (!isActiveEditorSession(session) || context !== candidateContext(field) || requestId !== referenceRequestId[field.key]) return
       appendReferenceOption(field.key, row === null ? null : referenceOption(row, field))
     } catch (error: unknown) {
-      if (!isActiveEditorSession(session)) return
+      if (!isActiveEditorSession(session) || context !== candidateContext(field) || requestId !== referenceRequestId[field.key]) return
       referenceError[field.key] = referenceLoadError(field, error)
     }
   }
@@ -377,6 +410,16 @@
       referenceError[field.key] = ''
       return
     }
+    const requestId = (referenceRequestId[field.key] ?? 0) + 1
+    referenceRequestId[field.key] = requestId
+    if (field.organizationAdminCandidate && keywords.trim().length < 2) {
+      referenceOptions[field.key] = []
+      referenceLoading[field.key] = false
+      referenceError[field.key] = '请输入至少 2 个字符搜索管理员。'
+      await hydrateSelectedReference(field, session)
+      return
+    }
+    const context = candidateContext(field)
     const params = referenceParams(field, keywords)
     if (params === null) {
       referenceOptions[field.key] = []
@@ -384,13 +427,15 @@
       referenceError[field.key] = missingDependencyMessage(field) ?? ''
       return
     }
-    const requestId = (referenceRequestId[field.key] ?? 0) + 1
-    referenceRequestId[field.key] = requestId
     referenceLoading[field.key] = true
     referenceError[field.key] = ''
     try {
-      const response = await listSandIamResource(field.referenceEndpoint, params)
-      if (!isActiveEditorSession(session) || referenceRequestId[field.key] !== requestId) {
+      const response = field.organizationAdminCandidate
+        ? await getSandIamAdmin('admin-organization-grant/admin-options', { keywords: keywords.trim() })
+        : field.grantCandidate === undefined
+        ? await listSandIamResource(field.referenceEndpoint, params)
+        : await listSandIamGrantCandidates(field.grantCandidate, params)
+      if (!isActiveEditorSession(session) || referenceRequestId[field.key] !== requestId || context !== candidateContext(field)) {
         return
       }
       const options = listRows(response)
@@ -405,13 +450,13 @@
       }
       await hydrateSelectedReference(field, session)
     } catch (error: unknown) {
-      if (!isActiveEditorSession(session) || referenceRequestId[field.key] !== requestId) {
+      if (!isActiveEditorSession(session) || referenceRequestId[field.key] !== requestId || context !== candidateContext(field)) {
         return
       }
       referenceOptions[field.key] = []
       referenceError[field.key] = referenceLoadError(field, error)
     } finally {
-      if (isActiveEditorSession(session) && referenceRequestId[field.key] === requestId) {
+      if (isActiveEditorSession(session) && referenceRequestId[field.key] === requestId && context === candidateContext(field)) {
         referenceLoading[field.key] = false
       }
     }
@@ -433,9 +478,13 @@
     if (!isActiveEditorSession(session)) return null
     const id = normalizeReferenceValue(form[key])
     if (id === null) return null
+    const field = visibleFields.value.find((item) => item.key === key)
+    const context = field === undefined ? '' : candidateContext(field)
     try {
-      const row = readReferenceRow(await readSandIamResource(endpoint, id))
-      return isActiveEditorSession(session) ? row : null
+      const row = field?.grantCandidate === undefined
+        ? readReferenceRow(await readSandIamResource(endpoint, id))
+        : await readFieldReference(field, id)
+      return isActiveEditorSession(session) && (field === undefined || context === candidateContext(field)) ? row : null
     } catch {
       return null
     }
@@ -503,6 +552,10 @@
   }
 
   function searchReference(field: SandIamFormField, keywords: string): void {
+    if (field.organizationAdminCandidate) {
+      form[field.key] = ''
+      referenceOptions[field.key] = []
+    }
     if (!props.modelValue) return
     void loadReferenceField(field, keywords, editorSession)
   }
@@ -546,6 +599,12 @@
         if (field.dependency !== undefined && values[index] !== lastDependencyValues[index]) {
           if (field.applicationGrantContext === 'application') continue
           form[field.key] = ''
+          if (field.grantCandidate !== undefined) {
+            referenceRequestId[field.key] = (referenceRequestId[field.key] ?? 0) + 1
+            referenceOptions[field.key] = []
+            referenceError[field.key] = ''
+            referenceLoading[field.key] = false
+          }
         }
       }
       lastDependencyValues = values
@@ -628,6 +687,10 @@
       }
       if (field.kind === 'reference') {
         const value = normalizeReferenceValue(raw)
+        if (field.organizationAdminCandidate && (referenceLoading[field.key] === true ||
+          !referenceOptions[field.key]?.some(option => option.value === value))) {
+          throw new Error('请搜索并选择有效的后台管理员')
+        }
         if (value === null && field.required === true) {
           throw new Error(`请选择${field.label}`)
         }
@@ -638,7 +701,9 @@
         if (field.key === 'condition' || field.key === 'scope') {
           payload[field.key] = parseConditionOrScope(String(raw), field.label)
         } else if (field.jsonArray === true) {
-          payload[field.key] = lineItems(String(raw), field.label)
+          payload[field.key] = field.allowEmptyArray === true && field.required !== true && String(raw).trim() === ''
+            ? []
+            : lineItems(String(raw), field.label)
         } else {
           payload[field.key] = parseJsonObject(String(raw), field.label)
         }
@@ -671,6 +736,11 @@
         throw new Error(`请填写${field.label}`)
       }
       if (value !== '') payload[field.key] = value
+      else if (field.clearableToEmptyString === true && field.kind === 'text') {
+        payload[field.key] = ''
+      } else if (field.clearableToNull === true && (field.kind === 'text' || field.kind === 'datetime')) {
+        payload[field.key] = null
+      }
     }
 
     if (props.writeMode === 'policy') {

@@ -1,8 +1,11 @@
 # 机器调用服务示例
 
-该示例用于后端服务进程，不适用于浏览器或普通用户令牌。它不是独立服务：没有服务端业务 handler、密钥管理、
-目标服务或部署配置。请把两个脚本和 `MachineServiceHttpClient.php` 装配到已有的调用方/目标服务中，并在目标
-服务的验证成功分支之后才接入业务副作用。先在 onboarding manifest 的
+本目录提供两种后端机器接入入口，不适用于浏览器或普通用户令牌：
+
+- 已有业务服务：使用根目录两个脚本及 `MachineServiceHttpClient.php`，自行接入业务处理与审计。
+- 需要完整调用方和目标服务示例：使用下方 [Provider B 与 caller](provider/README.md)，其中包含文档处理入口、幂等和业务审计。
+
+使用根目录脚本时，将它们装配到已有调用方/目标服务，并在目标服务验证成功后才执行业务副作用。先在 onboarding manifest 的
 `service_grants` 中合入 `onboarding.service-grant.json` 的 `service_code + action_code`；
 二元组必须与目标服务已登记的服务目录完全一致。
 
@@ -56,3 +59,8 @@ caller 用 PHP SDK 签发短期 context，只在 `X-Sand-Iam-Context` 传给 pro
 
 `composer test` 只覆盖离线配置门禁、重放/冲突和 deny 无持久化，不会连接 SandIAM、HTTP 或 PostgreSQL。provider、
 caller、数据库、allow、deny、revoke、audit 与清理均**未在本仓实跑**，不能把离线门禁当成 live 验收。
+## HTTP 地址与重定向
+
+`MachineServiceHttpClient` 不跟随重定向，3xx 响应按失败处理，防止把工作负载凭证转发到其他地址。请配置最终 HTTPS 端点；本机开发允许 `localhost`、`127.0.0.1` 和 `[::1]` 的 HTTP 地址。地址不能包含账号密码、查询参数或片段。
+
+离线验证：`php http_client_test.php`。该测试只在当前进程截获传输参数，不连接网络，不代替真实 HTTPS 联调。

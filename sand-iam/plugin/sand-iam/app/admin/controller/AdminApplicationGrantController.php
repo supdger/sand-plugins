@@ -22,6 +22,7 @@ final class AdminApplicationGrantController extends ApplicationResourceControlle
     protected array $requiredFields = ['admin_user_id', 'application_id'];
     protected string $resourceType = 'admin_application_grant';
     protected bool $atomicCreateAudit = true;
+    protected bool $atomicMutationAudit = true;
     protected ?string $keywordField = null;
 
     #[Permission('SandIAM 应用管理员委派列表', 'sand_iam:admin_application_grant:index')]

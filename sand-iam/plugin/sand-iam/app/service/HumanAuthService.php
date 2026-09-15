@@ -41,6 +41,36 @@ final class HumanAuthService
     {
     }
 
+    /** @param array<string,mixed> $payload @return array<string,mixed> */
+    public function captchaConfiguration(array $payload, string $ip): array
+    {
+        foreach (['organization_code', 'application_code', 'action'] as $field) {
+            if (!is_string($payload[$field] ?? null)) {
+                throw new ApiException('SAND_IAM_AUTH_INVALID_REQUEST', 400);
+            }
+        }
+        $action = $payload['action'];
+        if (!in_array($action, ['login', 'register'], true)) {
+            throw new ApiException('SAND_IAM_AUTH_INVALID_REQUEST', 400);
+        }
+        $this->requirePepper();
+        $application = $this->application($payload);
+        $this->assertNetworkAllowed($application, $ip);
+        $policy = $this->policy((int) $application->id);
+        if ($action === 'register' && !(bool) $policy['registration_enabled']) {
+            throw new ApiException('SAND_IAM_AUTH_REGISTRATION_DISABLED', 403);
+        }
+        $this->assertExperienceAllows($application, $action);
+        if (!(bool) $policy['require_captcha']) return ['required' => false];
+        try {
+            $widget = (new MessageProviderService())->publicChallenge((int) $application->id, $action);
+        } catch (ApiException $exception) {
+            if ($exception->getCode() !== 503) throw $exception;
+            return ['required' => true, 'available' => false];
+        }
+        return ['required' => true, 'available' => true, 'widget' => $widget];
+    }
+
     /** @param array<string, mixed> $payload @return array<string, mixed> */
     public function register(array $payload, string $ip, string $requestId): array
     {
@@ -50,12 +80,16 @@ final class HumanAuthService
         $policy = $this->policy((int) $application->id);
         if (!(bool) $policy['registration_enabled']) throw new ApiException('SAND_IAM_AUTH_REGISTRATION_DISABLED', 403);
         $this->assertExperienceAllows($application, 'register');
-        $this->assertRegistrationFields($application, $payload);
+        $this->assertRegistrationFields($application, $payload, $policy);
         $username = $this->username((string) ($payload['username'] ?? ''));
         $password = (string) ($payload['password'] ?? '');
         $this->assertPasswordPolicy($password, $policy);
         $email = $this->email((string) ($payload['email'] ?? ''));
         $phone = $this->phone((string) ($payload['phone'] ?? ''));
+        if (((bool) $policy['require_email_verification'] && $email === null)
+            || ((bool) $policy['require_phone_verification'] && $phone === null)) {
+            throw new ApiException('SAND_IAM_AUTH_REGISTRATION_FIELD_REQUIRED', 400);
+        }
         if ($email === null && $phone === null) {
             throw new ApiException('SAND_IAM_AUTH_INVALID_REQUEST: email or phone is required', 400);
         }
@@ -82,6 +116,7 @@ final class HumanAuthService
                 'status' => 1,
             ]);
             (new IdentityEventPublisher())->publish($application, $identity, 'identity.created', ['code', 'display_name', 'lifecycle_state', 'status'], $requestId);
+            $this->audit((int) $application->organization_id, (int) $application->id, 'identity.register', 'identity', (int) $identity->id, 'succeeded', $requestId, [], (string) $identity->id);
             Db::commit();
         } catch (\Throwable $exception) {
             Db::rollback();
@@ -91,7 +126,6 @@ final class HumanAuthService
             throw $exception;
         }
 
-        $this->audit((int) $application->organization_id, (int) $application->id, 'identity.register', 'identity', (int) $identity->id, 'succeeded', $requestId, [], (string) $identity->id);
         if (!$this->verificationSatisfied($auth, $policy)) {
             return ['identity' => ['id' => (int) $identity->id, 'code' => (string) $identity->code, 'display_name' => (string) $identity->display_name], 'verification_required' => true];
         }
@@ -118,13 +152,13 @@ final class HumanAuthService
             $identity = Identity::create(['application_id' => (int) $application->id, 'code' => $username, 'display_name' => $this->displayName((string) ($payload['display_name'] ?? $username)), 'lifecycle_state' => 'active', 'status' => 1]);
             IdentityAuth::create(['application_id' => (int) $application->id, 'identity_id' => (int) $identity->id, 'username' => $username, 'email' => $email, 'phone' => $phone, 'password_hash' => $this->passwordHash($password), 'pepper_version' => $this->pepperVersion(), 'password_changed_time' => $this->now(), 'email_verified_time' => $email === null ? null : $this->now(), 'phone_verified_time' => $phone === null ? null : $this->now(), 'status' => 1]);
             (new IdentityEventPublisher())->publish($application, $identity, 'identity.created', ['code', 'display_name', 'lifecycle_state', 'status'], $requestId);
+            $this->audit((int) $application->organization_id, (int) $application->id, 'identity.invitation_activate', 'identity', (int) $identity->id, 'succeeded', $requestId, [], (string) $identity->id);
             if ($manageTransaction) Db::commit();
         } catch (\Throwable $exception) {
             if ($manageTransaction) Db::rollback();
             if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_AUTH_ACCOUNT_CONFLICT', 409);
             throw $exception;
         }
-        $this->audit((int) $application->organization_id, (int) $application->id, 'identity.invitation_activate', 'identity', (int) $identity->id, 'succeeded', $requestId, [], (string) $identity->id);
         return $identity;
     }
 
@@ -346,10 +380,8 @@ final class HumanAuthService
                 $fingerprint,
                 'auth_session',
                 function () use ($refreshToken, $hash, $ip, $requestId): array {
-                    $refresh = AuthRefreshToken::where('token_hash', $hash)->lock(true)->find();
-                    if ($refresh === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
-                    $session = AuthSession::where('id', (int) $refresh->session_id)->lock(true)->find();
-                    if ($session === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+                    [$refresh, $session] = $this->lockRefreshFamily($hash);
+                    if ($refresh === null || $session === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
                     if ((int) $refresh->status !== 1 || $refresh->used_time !== null) {
                         throw new ApiException('SAND_IAM_AUTH_REFRESH_REPLAY_DETECTED', 401);
                     }
@@ -424,9 +456,7 @@ final class HumanAuthService
     public function logout(string $accessToken, string $requestId): void
     {
         $session = $this->accessSession($accessToken);
-        $session->save(['status' => 2, 'revoked_time' => $this->now()]);
-        AuthRefreshToken::where('session_id', (int) $session->id)->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
-        $this->auditForSession($session, 'identity.logout', 'succeeded', $requestId);
+        $this->revokeSessionAtomically($session, 'identity.logout', $requestId);
     }
 
     /** @return list<array<string, mixed>> */
@@ -450,9 +480,25 @@ final class HumanAuthService
         if ($session === null) {
             throw new ApiException('SAND_IAM_AUTH_SESSION_NOT_FOUND', 404);
         }
-        $session->save(['status' => 2, 'revoked_time' => $this->now()]);
-        AuthRefreshToken::where('session_id', (int) $session->id)->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
-        $this->auditForSession($session, 'identity.session_revoke', 'succeeded', $requestId);
+        $this->revokeSessionAtomically($session, 'identity.session_revoke', $requestId);
+    }
+
+    private function revokeSessionAtomically(AuthSession $session, string $action, string $requestId): void
+    {
+        Db::startTrans();
+        try {
+            $session = AuthSession::where('id', (int) $session->id)
+                ->where('application_id', (int) $session->application_id)
+                ->where('identity_id', (int) $session->identity_id)->lock(true)->find();
+            if ($session === null) throw new ApiException('SAND_IAM_AUTH_SESSION_NOT_FOUND', 404);
+            $session->save(['status' => 2, 'revoked_time' => $this->now()]);
+            AuthRefreshToken::where('session_id', (int) $session->id)->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
+            $this->auditForSession($session, $action, 'succeeded', $requestId);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
     }
 
     /** @return array{0:Application,1:Identity} */
@@ -799,6 +845,7 @@ final class HumanAuthService
             $auth->save(['password_hash' => $this->passwordHash($password), 'password_changed_time' => $this->now(), 'failed_login_count' => 0, 'locked_until' => null]);
             AuthSession::where('identity_id', (int) $auth->identity_id)->where('application_id', (int) $application->id)->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
             AuthRefreshToken::whereIn('session_id', AuthSession::where('identity_id', (int) $auth->identity_id)->where('application_id', (int) $application->id)->column('id'))->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
+            $this->audit((int) $application->organization_id, (int) $application->id, 'identity.password_reset', 'identity', (int) $auth->identity_id, 'succeeded', $requestId);
             Db::commit();
         } catch (\Throwable $exception) {
             Db::rollback();
@@ -807,7 +854,6 @@ final class HumanAuthService
             }
             throw $exception;
         }
-        $this->audit((int) $application->organization_id, (int) $application->id, 'identity.password_reset', 'identity', (int) $auth->identity_id, 'succeeded', $requestId);
     }
 
     public function changePassword(
@@ -1369,12 +1415,23 @@ final class HumanAuthService
         }
     }
 
+    /** @return array{0:?AuthRefreshToken,1:?AuthSession} */
+    private function lockRefreshFamily(string $tokenHash): array
+    {
+        $located = AuthRefreshToken::where('token_hash', $tokenHash)->find();
+        if ($located === null) return [null, null];
+        $sessionId = (int) $located->session_id;
+        $session = AuthSession::where('id', $sessionId)->lock(true)->find();
+        if ($session === null) return [null, null];
+        $refresh = AuthRefreshToken::where('token_hash', $tokenHash)->where('session_id', $sessionId)->lock(true)->find();
+        return $refresh === null ? [null, null] : [$refresh, $session];
+    }
+
     private function revokeRefreshFamily(string $tokenHash, string $requestId, string $error): never
     {
         Db::startTrans();
         try {
-            $refresh = AuthRefreshToken::where('token_hash', $tokenHash)->lock(true)->find();
-            $session = $refresh === null ? null : AuthSession::where('id', (int) $refresh->session_id)->lock(true)->find();
+            [$refresh, $session] = $this->lockRefreshFamily($tokenHash);
             if ($session !== null && (int) $session->status === 1 && $session->revoked_time === null) {
                 $session->save(['status' => 2, 'revoked_time' => $this->now()]);
                 AuthRefreshToken::where('session_id', (int) $session->id)->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
@@ -1472,12 +1529,16 @@ final class HumanAuthService
     }
 
     /** Registration fields are a live contract, not merely a portal rendering hint. */
-    private function assertRegistrationFields(Application $application, array $payload): void
+    private function assertRegistrationFields(Application $application, array $payload, array $policy): void
     {
         if ((int) config('plugin.sand-iam.app.application_experience_enabled', 0) !== 1) return;
         $experience = ApplicationExperience::where('application_id', (int) $application->id)->where('status', 1)->find();
         if ($experience === null) return;
         $fields = $this->configuredStrings($experience->registration_fields ?? null);
+        if (((bool) $policy['require_email_verification'] && !in_array('email', $fields, true))
+            || ((bool) $policy['require_phone_verification'] && !in_array('phone', $fields, true))) {
+            throw new ApiException('SAND_IAM_AUTH_REGISTRATION_CONFIGURATION_INVALID', 503);
+        }
         if ($fields === [] || !in_array('username', $fields, true) || (!in_array('email', $fields, true) && !in_array('phone', $fields, true))) {
             throw new ApiException('SAND_IAM_AUTH_REGISTRATION_CONFIGURATION_INVALID', 503);
         }

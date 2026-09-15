@@ -11,13 +11,13 @@
 
 | 交付物 | 主责 | 协作方 | 完成标准 |
 | --- | --- | --- | --- |
-| P0 领域模型、PostgreSQL 迁移、安装/升级/卸载 | Codex | Cursor 只读 | 空 PG 库可安装；仅 `sand_iam_*`；无 MySQL 方言 |
-| 管理 API、运行时身份上下文、策略/数据范围、审计 | Codex | Cursor 按契约消费 | 路由、DTO、权限码、错误码已冻结并可验证 |
+| P0 领域模型、PostgreSQL 迁移、安装/升级/卸载 | Codex | 按当前编排安排独立验收 | 空 PG 库可安装；仅 `sand_iam_*`；无 MySQL 方言 |
+| 管理 API、运行时身份上下文、策略/数据范围、审计 | Codex | Codex 前端按契约消费 | 路由、DTO、权限码、错误码已冻结并可验证 |
 | SandAI Adapter 契约（token/context、audience、grant、environment 引用） | Codex | SandAI Codex 按契约实现宿主适配器 | 不跨库读 `sand_iam_*`；无上下文 / 无授权的拒绝语义稳定 |
 | `sandadmin-artd/src/views/plugin/sand-iam/` 页面 | Codex 接管；Astra 设计与实现 | 不同上下文 Astra 独立验收 | 只消费已冻结、已标「可消费」的契约字段 |
-| 契约、联调、回归与宿主验收 | Codex | Cursor 修正前端问题 | 在 `sandadmin` PostgreSQL 实例上的真实路径通过 |
+| 契约、联调、回归与宿主验收 | Codex | 不同上下文 Astra 独立验收，Codex 修正问题 | 在受控演示宿主 PostgreSQL 实例上的真实路径通过 |
 
-Codex 与 Cursor 都可以改前后端，但默认不跨越上述主责边界；跨界修复必须在看板交接记录中说明原因和影响文件。
+前后端均由 Codex 负责，不再向 Cursor 派发或等待其交付。Codex 子任务按文件范围分工，避免同时修改同一文件；共享变更在看板说明原因和影响文件。
 
 ## 2. 不可同时编辑的区域
 
@@ -28,8 +28,8 @@ Codex 与 Cursor 都可以改前后端，但默认不跨越上述主责边界；
 
 ## 3. 并行规则（对齐 SandAI）
 
-1. **目录独占。** 不跨改对方目录；必须跨界时先在看板写明文件、原因和回滚方式。
-2. **契约是交接物。** Codex 先发布增量版本并标注「可消费」；Cursor 只消费已冻结版本。向后兼容的新增字段不要求 Cursor 同步等待。
+1. **写者互斥。** Codex 主控协调前后端子任务的文件范围；共享文件串行修改，并在看板写明影响。
+2. **契约是交接物。** 后端先发布增量版本并标注「可消费」；前端只消费已冻结版本。向后兼容的新增字段不要求前端同步等待。
 3. **每个任务只依赖可验证物。** U-01 不依赖 IAM-01；U-03 依赖已冻结管理 API，而不是「Codex 做完宿主验收」。IAM-01 的 Adapter 契约一旦冻结，SandAI `SAND-113C` 即可继续，不必等管理页。
 4. **交接不靠口头提醒。** 完成者补四项：变更路径、契约版本、验证命令/真实路径、已解锁任务。
 5. **合并只在验收点发生。** 日常开发互不等待；真实联调在 `/Users/code/project/sand_plugins/sandadmin-demo-host`。`/Users/code/project/sandadmin` 保持纯净通用宿主，不用于插件演示。
@@ -41,7 +41,7 @@ Codex 与 Cursor 都可以改前后端，但默认不跨越上述主责边界；
 | 角色 | 路径 |
 | --- | --- |
 | SandIAM 插件源码（本仓库） | `/Users/code/project/sand_plugins/sand-iam` |
-| 插件集合仓（Cursor / Codex Autopilot 根） | `/Users/code/project/sand_plugins` |
+| 插件集合仓（Codex 当前任务工作区） | `/Users/code/project/sand_plugins` |
 | 安装、演示与功能验收宿主 | `/Users/code/project/sand_plugins/sandadmin-demo-host`（服务端为其 `server/` 子目录） |
 | 纯净通用 SandAdmin 宿主 | `/Users/code/project/sandadmin`（不用于插件演示） |
 | SandAI 消费方（Adapter 实现落点） | `/Users/code/project/sand_ai` |
@@ -51,10 +51,10 @@ Codex `SAND-113C` 此前在 `/Users/code/project` 与 `/Users/supdger/Documents/
 ## 5. 进度反馈规则
 
 - 只在任务状态变化时反馈：**任务 ID、完成项、证据、风险、已解锁的下一任务**。
-- Cursor 完成一个页面或遇到接口阻塞时，应给出：任务 ID、页面路径、使用的接口/字段、构建证据、阻塞所需的最小后端变更。
+- Codex 前端子任务完成一个页面或遇到接口阻塞时，应给出：任务 ID、页面路径、使用的接口/字段、构建证据、阻塞所需的最小后端变更。
 - 用户无需充当中转站：只在产品取舍、凭证/环境、或不可逆数据库操作需要授权时请求决定。
 
-## 6. 交接记录
+## 6. 历史交接记录（不作为当前指令）
 
 | 日期 | 阶段 | 交接内容 | 状态 | 证据 |
 | --- | --- | --- | --- | --- |

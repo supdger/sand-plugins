@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
@@ -21,6 +21,17 @@
   const canConfigure = computed(() => hasAuth('sand_iam:radius_nas:configure'))
 
   const loading = ref(false)
+  const saving = ref(false)
+  const applicationLoading = ref(false)
+  const page = ref(1)
+  const pageSize = ref(20)
+  const total = ref(0)
+  let disposed = false
+  let scopeVersion = 0
+  let listVersion = 0
+  let searchVersion = 0
+  let secretVersion = 0
+  let editingRow: SandIamRadiusNasRow | null = null
   const applications = ref<SandIamResourceRow[]>([])
   const devices = ref<SandIamRadiusNasRow[]>([])
   const applicationId = ref('')
@@ -33,6 +44,25 @@
   const requestError = ref<SandIamRequestError | null>(null)
   const viewState = ref<'idle' | 'empty' | 'ready'>('idle')
   const successHint = ref('')
+  watch(applicationId, () => {
+    scopeVersion++
+    listVersion++
+    devices.value = []
+    resetDraft()
+    secretTargetId.value = null
+    sharedSecret.value = ''
+    page.value = 1
+    total.value = 0
+    loading.value = false
+    requestError.value = null
+    successHint.value = ''
+  }, { flush: 'sync' })
+  watch(secretTargetId, () => { secretVersion++; sharedSecret.value = '' }, { flush: 'sync' })
+  watch([page, pageSize], () => { void loadDevices() }, { flush: 'sync' })
+  function currentRow(row: SandIamRadiusNasRow): boolean {
+    return !loading.value && devices.value.includes(row) &&
+      (applicationId.value === '' || row.application_id === selectedId(applicationId.value))
+  }
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -55,13 +85,21 @@
     return typeof row?.name === 'string' ? row.name : '关联应用名称暂不可用'
   }
 
-  async function loadApplications(): Promise<void> {
+  async function loadApplications(keywords = ''): Promise<void> {
+    if (disposed || (!canIndex.value && !canSave.value)) return
+    const version = ++searchVersion
+    applicationId.value = ''
+    applications.value = []
+    applicationLoading.value = true
     try {
-      applications.value = listRows(
-        await listSandIamResource('application', { page: 1, limit: 100 })
+      const rows = listRows(
+        await listSandIamResource('application', { page: 1, limit: 100, keywords: keywords.trim() })
       )
+      if (!disposed && version === searchVersion) applications.value = rows
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && version === searchVersion) requestError.value = describeSandIamError(error)
+    } finally {
+      if (!disposed && version === searchVersion) applicationLoading.value = false
     }
   }
 
@@ -69,27 +107,39 @@
    * 列表只解析 secret_configured，不把密文带进表格。
    */
   async function loadDevices(): Promise<void> {
-    if (!canIndex.value) return
+    if (disposed || !canIndex.value) return
+    const scope = scopeVersion, version = ++listVersion
+    const current = () => !disposed && scope === scopeVersion && version === listVersion
+    secretTargetId.value = null
+    resetDraft()
     loading.value = true
     requestError.value = null
     try {
       const application = selectedId(applicationId.value)
-      devices.value = parseRadiusNasRows(
-        await getSandIamAdmin(
+      const result = await getSandIamAdmin(
           'radius-nas/index',
-          application === null ? {} : { application_id: application }
+          { ...(application === null ? {} : { application_id: application }), page: page.value, limit: pageSize.value }
         )
-      )
+      if (!current()) return
+      devices.value = parseRadiusNasRows(result)
+      const payload = isRecord(result) && isRecord(result.data) ? result.data : result
+      total.value = isRecord(payload) && typeof payload.total === 'number' ? payload.total : devices.value.length
       viewState.value = devices.value.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (!current()) return
       requestError.value = describeSandIamError(error)
       devices.value = []
     } finally {
-      loading.value = false
+      if (current()) loading.value = false
     }
   }
 
   function beginCreate(): void {
+    if (disposed || saving.value || !canSave.value) return
+    resetDraft()
+  }
+  function resetDraft(): void {
+    editingRow = null
     editingId.value = null
     name.value = ''
     sourceCidr.value = ''
@@ -97,8 +147,9 @@
   }
 
   function beginEdit(row: SandIamRadiusNasRow): void {
+    if (disposed || saving.value || !canUpdate.value || !currentRow(row)) return
+    editingRow = row
     editingId.value = row.id
-    applicationId.value = String(row.application_id)
     name.value = row.name
     sourceCidr.value = row.source_cidr
     accountingEnabled.value = row.accounting_enabled
@@ -108,44 +159,56 @@
    * 创建设备与轮换密钥分开。保存成功不等于密钥已配置。
    */
   async function saveDevice(): Promise<void> {
-    const application = selectedId(applicationId.value)
+    if (disposed || saving.value || (editingId.value === null ? !canSave.value : !canUpdate.value)) return
+    const row = editingRow, id = editingId.value
+    if (id !== null && (row === null || row.id !== id || !currentRow(row))) return
+    const application = row?.application_id ?? selectedId(applicationId.value)
+    if (id === null && (applicationLoading.value || !applications.value.some(item => item.id === application))) return
     if (application === null || name.value.trim() === '' || sourceCidr.value.trim() === '') {
       requestError.value = describeSandIamError(
         new Error('SAND_IAM_VALIDATION_ERROR: 请选择接入应用并填写设备名称和规范来源网段')
       )
       return
     }
-    loading.value = true
+    saving.value = true
+    const scope = scopeVersion, version = listVersion
+    const current = () => !disposed && scope === scopeVersion && version === listVersion
     requestError.value = null
     successHint.value = ''
     try {
-      if (editingId.value === null) {
+      if (id === null) {
         await postSandIamAction('radius-nas/save', {
           application_id: application,
           name: name.value.trim(),
           source_cidr: sourceCidr.value.trim(),
           accounting_enabled: accountingEnabled.value
         })
+        if (!current()) return
         successHint.value = '已保存。共享密钥需单独设置，本页不会回显密钥。'
       } else {
         await postSandIamAction('radius-nas/update', {
-          id: editingId.value,
+          id,
           name: name.value.trim(),
           source_cidr: sourceCidr.value.trim(),
           accounting_enabled: accountingEnabled.value
         })
+        if (!current()) return
         successHint.value = '已保存。来源网段重叠或应用已停用会由后端拒绝。'
       }
       ElMessage.success('已保存')
       await loadDevices()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      saving.value = false
     }
   }
 
   async function disableDevice(row: SandIamRadiusNasRow): Promise<void> {
+    if (disposed || saving.value || !canDisable.value || !currentRow(row) || row.status !== 1) return
+    const scope = scopeVersion, version = listVersion
+    const current = () => !disposed && scope === scopeVersion && version === listVersion && currentRow(row)
+    saving.value = true
     try {
       await ElMessageBox.confirm(
         `确认停用「${row.name}」吗？停用后不能再设置共享密钥，已配置密钥不会回显。`,
@@ -153,19 +216,21 @@
         { type: 'warning', confirmButtonText: '确认停用', cancelButtonText: '取消' }
       )
     } catch {
+      saving.value = false
       return
     }
-    loading.value = true
+    if (!current() || !canDisable.value || row.status !== 1) { saving.value = false; return }
     requestError.value = null
     try {
       await postSandIamAction('radius-nas/disable', { id: row.id })
+      if (!current()) return
       ElMessage.success('已停用')
       successHint.value = '已停用。'
       await loadDevices()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      saving.value = false
     }
   }
 
@@ -173,22 +238,28 @@
    * 共享密钥只写不读；请求体不进入 URL。成功只看后端 secret_configured。
    */
   async function configureSecret(): Promise<void> {
+    const row = devices.value.find(item => item.id === secretTargetId.value)
+    if (disposed || saving.value || !canConfigure.value || !row || !currentRow(row) || row.status !== 1) return
     if (secretTargetId.value === null || sharedSecret.value.trim() === '') {
       requestError.value = describeSandIamError(
         new Error('SAND_IAM_VALIDATION_ERROR: 请选择设备并填写共享密钥')
       )
       return
     }
-    loading.value = true
+    saving.value = true
+    const scope = scopeVersion, version = listVersion, targetVersion = secretVersion, secret = sharedSecret.value
+    const current = () => !disposed && scope === scopeVersion && version === listVersion &&
+      targetVersion === secretVersion && secretTargetId.value === row.id && currentRow(row)
     requestError.value = null
     try {
       const configured = parseRadiusSecretConfigured(
         await postSandIamAction('radius-nas/configure', {
-          id: secretTargetId.value,
-          shared_secret: sharedSecret.value
+          id: row.id,
+          shared_secret: secret
         })
       )
-      sharedSecret.value = ''
+      if (!current()) return
+      if (sharedSecret.value === secret) sharedSecret.value = ''
       if (!configured) {
         requestError.value = describeSandIamError(
           new Error('SAND_IAM_VALIDATION_ERROR: 后端未确认密钥已配置，请重新保存，不要猜测旧值')
@@ -197,11 +268,11 @@
       }
       ElMessage.success('已保存')
       successHint.value = '共享密钥已保存，旧密钥立即失效且不会再次展示。'
-      await loadDevices()
+      devices.value = devices.value.map(item => item === row ? { ...item, secret_configured: true } : item)
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      saving.value = false
     }
   }
 
@@ -209,6 +280,7 @@
     void loadApplications()
     void loadDevices()
   })
+  onScopeDispose(() => { disposed = true; sharedSecret.value = ''; secretTargetId.value = null; resetDraft() })
 </script>
 
 <template>
@@ -264,7 +336,7 @@
 
       <ElForm label-width="170px" class="mb-4">
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="loadApplications" :loading="applicationLoading" clearable placeholder="按名称搜索">
             <ElOption
               v-for="row in applications"
               :key="String(row.id)"
@@ -292,7 +364,7 @@
           <ElButton
             type="primary"
             :disabled="editingId === null ? !canSave : !canUpdate"
-            :loading="loading"
+            :loading="saving"
             @click="saveDevice"
           >
             {{ editingId === null ? '创建设备' : '保存修改' }}
@@ -308,7 +380,7 @@
           />
         </ElFormItem>
         <ElFormItem>
-          <ElButton :disabled="!canConfigure || secretTargetId === null" @click="configureSecret">
+          <ElButton :disabled="!canConfigure || saving || secretTargetId === null" @click="configureSecret">
             设置或轮换共享密钥
           </ElButton>
         </ElFormItem>
@@ -348,6 +420,8 @@
           </template>
         </ElTableColumn>
       </ElTable>
+      <ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total"
+        :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next" @size-change="page = 1" />
     </ElCard>
   </div>
 </template>

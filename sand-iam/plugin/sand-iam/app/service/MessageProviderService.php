@@ -34,8 +34,39 @@ final class MessageProviderService
         $driver = $this->driver((string) $provider->driver_code, 'send');
         $templateCodes = is_array($mount->template_codes ?? null) ? $mount->template_codes : [];
         $templatePurpose = (string) ($context['purpose'] ?? $mountPurpose);
-        $driver::send($destination, $content, $context + ['application_id' => $applicationId, 'provider_type' => $type, 'template_code' => (string) ($templateCodes[$templatePurpose] ?? $templateCodes[$mountPurpose] ?? '')], $this->cipher->decrypt((string) $provider->encrypted_config));
+        $driver::send($destination, $content, array_replace($context, ['application_id' => $applicationId, 'provider_type' => $type, 'template_code' => (string) ($templateCodes[$templatePurpose] ?? $templateCodes[$mountPurpose] ?? '')]), $this->cipher->decrypt((string) $provider->encrypted_config));
         return true;
+    }
+
+    /** @return array{kind:string,site_key:string,action:string,application_binding:string} */
+    public function publicChallenge(int $applicationId, string $action): array
+    {
+        if ($applicationId < 1 || !in_array($action, ['login', 'register'], true)) {
+            throw new ApiException('SAND_IAM_VALIDATION_ERROR', 400);
+        }
+        if ((int) config('plugin.sand-iam.app.message_provider_enabled', 0) !== 1) {
+            throw new ApiException('SAND_IAM_CAPTCHA_UNAVAILABLE', 503);
+        }
+        $resolved = $this->provider($applicationId, 'captcha', $action);
+        if ($resolved === null) throw new ApiException('SAND_IAM_CAPTCHA_UNAVAILABLE', 503);
+        [$provider] = $resolved;
+        $driver = $this->driver((string) $provider->driver_code, 'publicChallenge');
+        $challenge = $driver::publicChallenge(
+            ['application_id' => $applicationId, 'action' => $action],
+            $this->cipher->decrypt((string) $provider->encrypted_config),
+        );
+        if (!is_array($challenge) || ($challenge['kind'] ?? null) !== 'turnstile'
+            || ($challenge['action'] ?? null) !== $action
+            || !is_string($challenge['site_key'] ?? null)
+            || !preg_match('/^[A-Za-z0-9_-]{1,255}$/D', $challenge['site_key'])
+            || !is_string($challenge['application_binding'] ?? null)
+            || !preg_match('/^[A-Za-z0-9_-]{1,255}$/D', $challenge['application_binding'])) {
+            throw new ApiException('SAND_IAM_MESSAGE_PROVIDER_CONFIG_INVALID', 400);
+        }
+        return [
+            'kind' => 'turnstile', 'site_key' => $challenge['site_key'], 'action' => $action,
+            'application_binding' => $challenge['application_binding'],
+        ];
     }
 
     /** @param array<string,mixed> $context */
@@ -47,7 +78,7 @@ final class MessageProviderService
         if ($resolved === null) throw new ApiException('SAND_IAM_CAPTCHA_UNAVAILABLE', 503);
         [$provider] = $resolved;
         $driver = $this->driver((string) $provider->driver_code, 'verify');
-        $accepted = $driver::verify($token, $context + ['application_id' => $applicationId, 'action' => $action], $this->cipher->decrypt((string) $provider->encrypted_config));
+        $accepted = $driver::verify($token, array_replace($context, ['application_id' => $applicationId, 'action' => $action]), $this->cipher->decrypt((string) $provider->encrypted_config));
         if ($accepted !== true) throw new ApiException('SAND_IAM_CAPTCHA_INVALID', 400);
     }
 
@@ -57,11 +88,11 @@ final class MessageProviderService
         $config = $this->cipher->decrypt((string) $provider->encrypted_config);
         if ((string) $provider->provider_type === 'captcha') {
             $driver = $this->driver((string) $provider->driver_code, 'verify');
-            if ($driver::verify($destinationOrToken, $context + ['test' => true], $config) !== true) throw new ApiException('SAND_IAM_CAPTCHA_INVALID', 400);
+            if ($driver::verify($destinationOrToken, array_replace($context, ['test' => true]), $config) !== true) throw new ApiException('SAND_IAM_CAPTCHA_INVALID', 400);
             return;
         }
         $driver = $this->driver((string) $provider->driver_code, 'send');
-        $driver::send($destinationOrToken, (string) random_int(10_000_000, 99_999_999), $context + ['test' => true, 'provider_type' => (string) $provider->provider_type], $config);
+        $driver::send($destinationOrToken, (string) random_int(10_000_000, 99_999_999), array_replace($context, ['test' => true, 'provider_type' => (string) $provider->provider_type]), $config);
     }
 
     /** @return null|array{0:MessageProvider,1:MessageProviderApplication} */

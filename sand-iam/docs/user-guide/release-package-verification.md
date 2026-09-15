@@ -20,7 +20,7 @@ PHP 必须提供 `zip` 和 `sodium` 扩展。四个待校验文件应放在 Sand
 ```sh
 php tools/verify-release-bundle.php \
   --artifact-manifest=/downloads/manifest.json \
-  --archive=/downloads/sand-iam-0.7.1-release-unsigned.zip \
+  --archive=/downloads/sand-iam-0.7.2-release-unsigned.zip \
   --attestation=/downloads/sand-iam.release-attestation.json \
   --public-key=/trusted-keys/sand-iam-ed25519.pub
 ```

@@ -121,6 +121,19 @@ export function parseSandIamInvitations(value: unknown): SandIamInvitationRow[] 
     .filter((item): item is SandIamInvitationRow => item !== null)
 }
 
+export function parseSandIamInvitationPage(value: unknown): {
+  data: SandIamInvitationRow[]; total: number; currentPage: number; pageSize: number
+} {
+  const page = isRecord(value) && isRecord(value.data) ? value.data : value
+  const data = parseSandIamInvitations(value)
+  return {
+    data,
+    total: isRecord(page) && typeof page.total === 'number' && Number.isInteger(page.total) && page.total >= 0 ? page.total : data.length,
+    currentPage: isRecord(page) ? readPositiveInt(page.current_page) ?? 1 : 1,
+    pageSize: isRecord(page) ? readPositiveInt(page.per_page) ?? 20 : 20
+  }
+}
+
 /**
  * 接受成功只留显示名称，不把 identity.id 当成门户会话。
  */

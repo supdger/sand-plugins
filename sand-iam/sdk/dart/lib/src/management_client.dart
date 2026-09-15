@@ -355,6 +355,7 @@ final class SandIamManagementClient {
   static Future<SandIamHttpResponse> _defaultTransport(
       SandIamHttpRequest request) async {
     final outgoing = http.Request(request.method, request.uri)
+      ..followRedirects = false
       ..headers.addAll(request.headers);
     if (request.body != null) outgoing.body = request.body!;
     final streamed = await outgoing.send();

@@ -30,10 +30,11 @@ $passed = sandIamWithIsolatedFixture($root, static function (string $fixtureRoot
         $blob = shell_exec('git -C ' . escapeshellarg($workspace) . ' show ' . escapeshellarg($commit . ':sand-iam/' . $relative));
         return is_string($blob) && file_put_contents($destination, $blob) !== false;
     };
-    $crlfRelative = 'plugin/sand-iam/vendor/onelogin/php-saml/src/Saml2/schemas/sstc-saml-metadata-ui-v1.0.xsd';
+    $crlfRelative = 'docs/user-guide/configuration-reference.md';
     $attributes = $fixtureRoot . '/.gitattributes';
     if (file_put_contents($attributes, $crlfRelative . " text eol=crlf\n") === false
         || !$git($workspace, ['init', '--quiet'])
+        || !$git($workspace, ['config', 'core.autocrlf', 'false'])
         || !$git($workspace, ['add', 'sand-iam'])
         || !$git($workspace, ['-c', 'user.name=SandIAM fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'fixture'])) {
         return false;
@@ -42,6 +43,11 @@ $passed = sandIamWithIsolatedFixture($root, static function (string $fixtureRoot
     if (file_put_contents($attributes, $crlfRelative . " text eol=crlf\n" . $controllerRelative . " export-ignore\n") === false
         || !$git($workspace, ['add', 'sand-iam/.gitattributes'])
         || !$git($workspace, ['-c', 'user.name=SandIAM fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'export-ignore-controller'])) {
+        return false;
+    }
+    if (!unlink($fixtureRoot . '/' . $crlfRelative)
+        || !$git($workspace, ['checkout-index', '--', 'sand-iam/' . $crlfRelative])
+        || !$git($workspace, ['add', 'sand-iam/' . $crlfRelative])) {
         return false;
     }
     $commit = trim((string) shell_exec('git -C ' . escapeshellarg($workspace) . ' rev-parse HEAD'));
@@ -54,16 +60,28 @@ $passed = sandIamWithIsolatedFixture($root, static function (string $fixtureRoot
     if ($baselineStatus !== 0 || !str_contains($baselineOutput, '[PASS] eligible release payload is clean, tracked, and matches HEAD Git blobs')) return false;
     $contractPath = $fixtureRoot . '/release-build-contract.json';
     $correctContract = file_get_contents($contractPath);
-    $checkoutHashContract = is_string($correctContract)
-        ? str_replace('25fb787146d8efb21bd21dfe807011cc0c02fad05f351d3e488d4bac4162c7a2', 'd4689c17160f720f82f6c93ed70567dc53cf53701eafb89d6238520e5ea9e6c5', $correctContract)
-        : false;
-    if (!is_string($checkoutHashContract) || $checkoutHashContract === $correctContract
-        || file_put_contents($contractPath, $checkoutHashContract) === false
-        || !$git($workspace, ['add', 'sand-iam/release-build-contract.json'])
-        || !$git($workspace, ['-c', 'user.name=SandIAM fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'checkout-hash-contract'])) {
+    try {
+        $mismatchedContract = is_string($correctContract)
+            ? json_decode($correctContract, true, 512, JSON_THROW_ON_ERROR)
+            : null;
+    } catch (JsonException) {
         return false;
     }
-    [$checkoutHashStatus, $checkoutHashOutput] = $run($integrity, []);
+    if (!is_array($mismatchedContract)) return false;
+    $actualVendorHash = $mismatchedContract['generated_payloads']['plugin/sand-iam/vendor']['tree_sha256'] ?? null;
+    if (!is_string($actualVendorHash) || preg_match('/^[0-9a-f]{64}$/', $actualVendorHash) !== 1) return false;
+    $mismatchedContract['generated_payloads']['plugin/sand-iam/vendor']['tree_sha256'] =
+        ($actualVendorHash[0] === '0' ? '1' : '0') . substr($actualVendorHash, 1);
+    $mismatchedContractJson = json_encode(
+        $mismatchedContract,
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR,
+    ) . "\n";
+    if (file_put_contents($contractPath, $mismatchedContractJson) === false
+        || !$git($workspace, ['add', 'sand-iam/release-build-contract.json'])
+        || !$git($workspace, ['-c', 'user.name=SandIAM fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'mismatched-vendor-contract'])) {
+        return false;
+    }
+    [$mismatchedContractStatus, $mismatchedContractOutput] = $run($integrity, []);
     if (file_put_contents($contractPath, $correctContract) === false
         || !$git($workspace, ['add', 'sand-iam/release-build-contract.json'])
         || !$git($workspace, ['-c', 'user.name=SandIAM fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'restore-git-blob-contract'])) {
@@ -71,8 +89,8 @@ $passed = sandIamWithIsolatedFixture($root, static function (string $fixtureRoot
     }
     $commit = trim((string) shell_exec('git -C ' . escapeshellarg($workspace) . ' rev-parse HEAD'));
     if (preg_match('/^[0-9a-f]{40}$/', $commit) !== 1) return false;
-    $checkoutHashContractRejected = $checkoutHashStatus !== 0
-        && str_contains($checkoutHashOutput, 'release build contract locks toolchain and reviewed runtime payloads');
+    $mismatchedContractRejected = $mismatchedContractStatus !== 0
+        && str_contains($mismatchedContractOutput, 'release build contract locks toolchain and reviewed runtime payloads');
 
     $negative = static function (string $path, string $replacement, string $expected) use ($run, $integrity): bool {
         $original = file_get_contents($path);
@@ -190,7 +208,7 @@ $passed = sandIamWithIsolatedFixture($root, static function (string $fixtureRoot
         && str_contains($unsupportedOutput, 'unsupported Git tree mode: 120000')
         && $newlineStatus !== 0
         && str_contains($newlineOutput, 'unsupported Git tree path characters');
-    return $cleanCrlfWorktree && $checkoutHashContractRejected && $vendor && $dist && $lock && $contract && $injection && $stageParity && $formalBuild
+    return $cleanCrlfWorktree && $mismatchedContractRejected && $vendor && $dist && $lock && $contract && $injection && $stageParity && $formalBuild
         && $normalBuilderZip && $committedVendorMismatch && $unsupportedTreeInputs;
 });
 

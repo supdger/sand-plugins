@@ -13,6 +13,8 @@ CLI 只提供：
 
 CLI 不接收用户密码、访问令牌、刷新令牌、客户端密钥或 Webhook/RADIUS 共享密钥。
 
+`doctor` 两项检查均成功时退出码为 `0`；网络失败、异常响应或任一检查失败时为 `2`，仍分别输出两项结果，不打印远端错误正文。该命令匿名绑定指定组织和应用，只检查公开接入配置，不证明登录、授权或业务调用已经通过。
+
 管理 API 的 OpenAPI 3.1 文档由 `GET /app/sand-iam/admin/developer/openapi` 输出，事件目录由 `GET /app/sand-iam/admin/developer/events` 输出，二者都使用 SandAdmin 登录、权限和委派范围。`ManagementApiCatalog` 与 `config/route.php` 做自动全量对账，并逐项核对路由目标控制器的 `Permission` 属性：任何新增管理路由未进入 OpenAPI，或 OpenAPI 权限码与实际鉴权属性不同，契约测试都会失败。OpenAPI 标明稳定权限码、敏感输入接口和统一成功/错误响应，但不嵌入登录态、示例密钥或环境地址。
 
 ## 2. 事务事件目录

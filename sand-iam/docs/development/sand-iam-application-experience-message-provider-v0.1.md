@@ -74,6 +74,29 @@ public static function verify(
 
 驱动不得记录接收地址、验证码、挑战令牌或完整供应商响应。异常向上抛出，认证流程关闭失败；禁止假发送、固定验证码和 Captcha 故障时放行。
 
+`sendCode()`/`sendMessage()` 返回 `false` 表示数据库消息服务未启用或没有匹配挂载；返回 `true` 表示选定驱动的 `send()` 正常返回，不代表收件人已收到。驱动应检查供应商响应并对拒绝或失败抛出异常；`MessageProviderService` 本身不进行自动重试或切换已选服务。超时可能发生在供应商已接收之后，重新发送前应核对供应商记录，避免重复通知。
+
+服务传给驱动的保留上下文字段以明确参数及挂载配置为准，覆盖调用者 context 中的同名值：发送使用 `application_id/provider_type/template_code`，验证码校验使用 `application_id/action`，测试固定 `test=true`（发送测试还固定 `provider_type`）。其他扩展字段保留。`context.purpose` 仍用于选择模板：先取该目的模板，再回退到挂载用途模板，均不存在时使用空字符串。
+
+### 独立门户 Captcha 接续契约
+
+已提供具体 `plugin\SandIam\app\integration\Captcha\TurnstileClient`，保留上述
+`verify()` 契约；配置包含 `site_key`、`secret_key` 和精确 `hostnames` 列表。
+它必须通过既有受信任驱动映射及加密配置流程显式安装配置，不会自动启用。
+本批不执行供应商配置、密钥写入或网络请求。
+
+支持门户的驱动另提供 `publicChallenge(array $context, array $providerConfig): array`。
+上下文为可信 `application_id` 与 `action=login|register`；`MessageProviderService::publicChallenge()`
+使用与验证相同的挂载选择，重新白名单投影 `kind`、`site_key`、`action`、
+`application_binding` 四字段，不透传供应商配置。Turnstile 的绑定值通过供应商 `cData`
+传回，并在服务端独立校验；同时检查 hostname、action 和验证成功结果。
+
+门户组件仅负责挑战生命周期，令牌只在内存中保存并单次消费；切换应用、销毁、
+过期或失败后旧回调不可恢复令牌。公开配置端点及前端配置读取已实现，契约见
+[开发入口](sand-iam-development-entry.md)；登录/注册页面接线尚未完成。
+不能将客户端与组件的离线通过写成真实供应商或用户登录闭环通过。
+供应商协议依据：[Turnstile 服务端验证](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)。
+
 管理 API：
 
 | 操作 | API | 说明 |

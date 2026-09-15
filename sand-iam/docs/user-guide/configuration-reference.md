@@ -13,6 +13,8 @@ php plugin/sand-iam/bin/check-runtime-configuration.php --profile=release
 验收环境临时开启受控夹具清理时改用 `--profile=acceptance`；自动化可追加 `--json`。命令只读取
 `SAND_IAM_*` 环境变量，只报告配置键和错误码，不回显值；它不加载宿主、不连接数据库、不启动
 服务，也不探测外部端点。预检通过只表示配置形状、公开安全范围和开关依赖通过，不等于运行验收。
+`release` profile 会要求机器上下文、人类认证、MFA、OIDC issuer/pairwise subject 和联合身份配置
+所需的六项基础值；没有读取到任何 SandIAM 配置时必须关闭失败，不能以 `checked_keys=0` 报告通过。
 
 ## 密钥格式
 
@@ -78,6 +80,7 @@ php -r 'echo bin2hex(random_bytes(32)), PHP_EOL;'
 | `SAND_IAM_SYNC_ENCRYPTION_KEYS` | 空 | 历史同步 JSON keyring。 |
 | `SAND_IAM_SYNC_REFERENCE_PEPPER` | 空 | 目录对象引用摘要 pepper，至少 32 随机字节。 |
 | `SAND_IAM_SYNC_DRIVERS` | 空 | 同步 driver code 到部署方 PHP 类的 JSON 映射。 |
+| `SAND_IAM_SYNC_RECOVER_ABANDONED_RUNS` | `0` | 异常退出任务接管开关；仅在旧版本 runner 已全部停止、生命周期已启用且新版本统一使用会话锁后设为 `1`。 |
 | `SAND_IAM_SYNC_OUTBOX_MAX_ATTEMPTS` | `10` | 单个出站事件在拒绝或驱动失败后进入终态前的最大尝试次数，允许 1–100；终态记录只能经同应用的显式重试操作重新排队。 |
 
 ## Webhook、事件、审计与安全运营
@@ -130,8 +133,9 @@ php -r 'echo bin2hex(random_bytes(32)), PHP_EOL;'
 | `SAND_IAM_OIDC_LOGOUT_WORKER_ENABLED` | `0` | 后通道登出 worker 进程开关；与功能开关分别控制。 |
 | `SAND_IAM_CAS_ENABLED` | `0` | CAS 协议开关；issuer、pepper、应用服务 URL 及标准客户端通过后再启用。 |
 | `SAND_IAM_KERBEROS_ENABLED` | `0` | Kerberos/SPNEGO 开关。 |
-| `SAND_IAM_KERBEROS_VERIFIER` | 空 | 部署方实现的 GSSAPI verifier 类。 |
-| `SAND_IAM_KERBEROS_CONTEXT_RESOLVER` | 空 | 部署方提供的可信 Kerberos 请求上下文解析器。 |
+| `SAND_IAM_KERBEROS_VERIFIER` | 内置 `PeclSpnegoVerifier` | GSSAPI verifier 类；可由部署方替换，默认实现要求 PECL krb5、MIT Kerberos 1.19+ 和持久 replay cache。 |
+| `SAND_IAM_KERBEROS_CONTEXT_RESOLVER` | 内置 `DirectTlsSpnegoContextResolver` | 可信请求上下文解析器；默认实现只接受直接 TLS、固定服务器证书，不信任代理转发的身份或绑定信息。 |
+| `SAND_IAM_KERBEROS_KEYTABS` | `{}` | keytab 引用到绝对部署路径的 JSON 对象；启用 Kerberos 时必须至少提供一个映射，身份源只能保存引用，不能直接指定路径。 |
 | `SAND_IAM_RADIUS_SERVER_ENABLED` | `0` | RADIUS 业务能力开关。 |
 | `SAND_IAM_RADIUS_WORKER_ENABLED` | `0` | RADIUS UDP auth/accounting 两个 worker 的共同进程开关。 |
 | `SAND_IAM_RADIUS_BIND_HOST` | `127.0.0.1` | UDP 绑定地址；对外绑定前先配置防火墙和受控 NAS 来源。 |

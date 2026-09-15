@@ -11,6 +11,7 @@ use plugin\sandadmin\basic\BaseController;
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
 use support\Response;
+use think\facade\Db;
 
 abstract class AdminResourceController extends BaseController
 {
@@ -27,6 +28,7 @@ abstract class AdminResourceController extends BaseController
      * Existing resource controllers retain their established behavior.
      */
     protected bool $atomicCreateAudit = false;
+    protected bool $atomicMutationAudit = false;
     protected ?string $keywordField = 'name';
 
     public function index(Request $request): Response
@@ -37,6 +39,7 @@ abstract class AdminResourceController extends BaseController
         $query = $modelClass::order('id', 'desc');
         $this->assertAdministrativeAccess();
         $this->scopeIndexToOrganizations($query);
+        $this->applyIndexFilters($query, $request);
         foreach (['organization_id', 'application_id', 'environment_id', 'service_id', 'workload_client_id', 'status'] as $field) {
             $value = $request->input($field, '');
             if ($value !== '' && in_array($field, $this->writeFields, true)) {
@@ -47,13 +50,18 @@ abstract class AdminResourceController extends BaseController
         if ($keyword !== '' && $this->keywordField !== null) {
             $query->whereLike($this->keywordField, '%' . $keyword . '%');
         }
-        return $this->success($query->paginate(['page' => $page, 'list_rows' => $limit])->toArray());
+        return $this->success($this->formatIndexPage($query->paginate(['page' => $page, 'list_rows' => $limit])->toArray()));
     }
+
+    protected function formatIndexPage(array $page): array { return $page; }
 
     public function read(Request $request): Response
     {
         return $this->success($this->find($request)->toArray());
     }
+
+    /** Resource-specific related filters are additional intersections with access scope. */
+    protected function applyIndexFilters(object $query, Request $request): void {}
 
     public function save(Request $request): Response
     {
@@ -97,8 +105,7 @@ abstract class AdminResourceController extends BaseController
         $payload = $this->normalizePayload($payload, $model);
         $this->assertReferences($payload, $model);
         $this->assertPayloadAccess($payload, $model);
-        $model->save($payload);
-        $this->audit('update', (int) $model->id, $request);
+        $this->persistMutation($model, $payload, 'update', $request);
         return $this->success('更新成功');
     }
 
@@ -106,9 +113,21 @@ abstract class AdminResourceController extends BaseController
     {
         $this->assertAdministrativeAccess();
         $model = $this->find($request);
-        $model->save(['status' => 2]);
-        $this->audit('disable', (int) $model->id, $request);
+        $this->persistMutation($model, ['status' => 2], 'disable', $request);
         return $this->success('已停用');
+    }
+
+    private function persistMutation(object $model, array $payload, string $verb, Request $request): void
+    {
+        if ($this->atomicMutationAudit) Db::startTrans();
+        try {
+            $model->save($payload);
+            $this->audit($verb, (int) $model->id, $request);
+            if ($this->atomicMutationAudit) Db::commit();
+        } catch (\Throwable $exception) {
+            if ($this->atomicMutationAudit) Db::rollback();
+            throw $exception;
+        }
     }
 
     /** @return array<string, mixed> */

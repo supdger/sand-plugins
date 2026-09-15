@@ -1,11 +1,12 @@
 # SandIAM 人类身份认证 API v0.1
 
-状态：IAM-T01 后端契约。所有端点都解析 `organization_code + application_code`，绝不读取或复用 SandAdmin 后台账号。
+状态：应用用户认证后端契约。匿名注册、登录、验证码和挑战接口以 `organization_code + application_code` 确定应用；已登录操作从 Bearer access token 对应会话确定应用与身份，刷新从 refresh token 确定会话。均不读取或复用 SandAdmin 后台账号。
 
 公共前缀：`/api/sand-iam/v1/auth`。
 
 | Endpoint | 用途 |
 | --- | --- |
+| `GET /captcha/config` | 查询指定应用、指定登录或注册用途的公开验证码配置，不要求登录。 |
 | `POST /register` | 创建应用内 identity、认证资料；应用策略要求验证时只返回 `verification_required`，不签发会话。 |
 | `POST /login` | 以 `identifier`（username/email/phone）及密码登录；30 秒内完全相同的成功请求可恢复原会话或 MFA challenge。 |
 | `POST /refresh` | 轮换 refresh token；30 秒内以同一旧 token 和同一 `X-Request-Id` 重试可恢复原响应，其他已使用 token 重放撤销整条会话族。 |
@@ -14,6 +15,37 @@
 | `POST /password/reset` | 校验验证码、更新密码并撤销该 identity 的全部会话。 |
 | `POST /verification/request` / `confirm` | 邮箱/手机号验证；`email_verify` 只能用 email，`phone_verify` 只能用 phone。 |
 | `GET /sessions` / `POST /sessions/revoke` | 查看或撤销当前应用身份的会话。 |
+| `POST /password/change` | 已登录用户提交 `current_password`、`new_password`，成功后所有设备重新登录。 |
+| `POST /step-up/password` | 当前会话提交 `password` 完成近期密码验证，返回 `step_up: true`、`expires_in: 300`。 |
+| `POST /step-up/mfa/start` | 当前会话申请 MFA 二次验证挑战，随后调用 `/mfa/challenge/verify` 完成。 |
+| `POST /federation/unlink` | 当前会话提交正整数 `binding_id`，解除本应用身份的联合身份绑定。 |
+
+注册创建 identity、认证资料、已启用的身份事件和注册成功审计在同一事务提交，写入失败不会留下仅完成一部分的账户。
+这不包含随后独立执行的会话签发；需要联系方式验证时返回 `verification_required`，客户端继续验证流程，不应重复注册。
+要求邮箱或手机验证的认证策略，同时要求注册提供对应联系方式；缺失时返回
+`SAND_IAM_AUTH_REGISTRATION_FIELD_REQUIRED`（400），不会创建账户。自定义注册字段若没有包含策略要求的
+email/phone，则返回 `SAND_IAM_AUTH_REGISTRATION_CONFIGURATION_INVALID`（503）；管理员应先将相应字段加入
+应用的注册字段配置。两种验证都开启时必须同时提供邮箱和手机号。
+
+密码恢复的验证码消费、密码更新、该应用身份的会话与刷新令牌撤销，以及成功审计在同一事务提交。
+其中任一步失败均回滚这些变更；请求准入的限流计数独立保留。成功后旧会话失效，已消费验证码不能再次使用。
+连接中断或响应超时不代表事务一定失败：客户端应先尝试用新密码重新登录确认结果，不能把验证码重放被拒绝解释为密码没有改变。
+
+### 登录与注册验证码
+
+`GET /captcha/config` 的查询参数为 `organization_code`、`application_code` 和 `action`（仅 `login` 或 `register`），没有请求体。下列对象位于统一成功响应的 `data` 中，响应禁止缓存：
+
+- `{"required":false}`：该用途无需验证码。
+- `{"required":true,"available":false}`：需要验证码，但当前组件不可用；不能跳过验证继续提交。
+- `{"required":true,"available":true,"widget":{...}}`：`widget` 包含 `kind: "turnstile"`、公开 `site_key`、对应的 `action` 和 `application_binding`。调用方用 `application_binding` 作为 Turnstile 的 `cData` 展示挑战，再将一次性结果作为 `captcha_token` 提交给同一应用的登录或注册接口。
+
+配置接口仍检查应用、网络、登录方式和注册开关；例如注册未开启时返回 `SAND_IAM_AUTH_REGISTRATION_DISABLED`，不能将错误响应视为“不需要验证码”。验证码密钥不会通过此接口公开，客户端不得生成或缓存挑战令牌。
+
+### 敏感操作与身份解绑
+
+密码和 MFA 二次验证均需要当前应用用户的 Bearer access token。密码方式提交 `password`；MFA 方式先取得 `mfa_required`、`challenge_token`、`methods`、`expires_in` 及适用的 `public_key`，再匿名提交绑定该应用的 `/mfa/challenge/verify`。两种方式完成后都返回 `{"step_up":true,"expires_in":300}`，只提升原会话的近期验证状态，不签发新的 access/refresh token。挑战字段、通行密钥断言及响应恢复约束见 [MFA 与通行密钥 API](sand-iam-mfa-passkey-api-v0.1.md)。
+
+`POST /federation/unlink` 要求近 300 秒内完成二次验证，且解绑后仍有可用的密码、通行密钥或其他身份源登录方式。缺少近期验证返回 `SAND_IAM_FEDERATION_STEP_UP_REQUIRED`；将失去最后一种登录方式时返回 `SAND_IAM_FEDERATION_LAST_LOGIN_METHOD`。成功响应的 `data` 为“身份源绑定已解除”；该绑定签发的会话及刷新令牌会被撤销，当前会话也可能失效，客户端随后应按认证失败处理。SDK 不自动发起二次验证或重试解绑。
 
 认证策略为 `sand_iam_auth_policy` 的应用级记录，默认关闭公开注册；应用管理员显式启用后，策略可调整密码规则、15 分钟 access token、30 天 refresh token、5 次失败锁定 15 分钟和 DB 限流。策略可要求邮箱和/或手机号验证后才可签发会话。
 

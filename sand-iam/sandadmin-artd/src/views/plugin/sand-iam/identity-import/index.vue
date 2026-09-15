@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
@@ -14,6 +14,8 @@
     parseSandIamImportJobs,
     parseSandIamImportPreview,
     parseSandIamImportRows,
+    parseSandIamImportPagination,
+    type SandIamImportRowState,
     sandIamImportTemplateCsv,
     type SandIamImportJobRow,
     type SandIamImportMode,
@@ -38,6 +40,21 @@
   const canExportSensitive = computed(() => hasAuth('sand_iam:identity_export:sensitive'))
 
   const loading = ref(false)
+  const jobLoading = ref(false)
+  const rowLoading = ref(false)
+  const jobPage = ref(1)
+  const jobPageSize = ref(20)
+  const jobTotal = ref(0)
+  const rowPage = ref(1)
+  const rowPageSize = ref(50)
+  const rowTotal = ref(0)
+  const rowState = ref<SandIamImportRowState | ''>('')
+  const rowStates: SandIamImportRowState[] = ['valid', 'invalid', 'processing', 'succeeded', 'succeeded_with_warning', 'failed']
+  let appVersion = 0
+  let jobVersion = 0
+  let rowVersion = 0
+  let selectionVersion = 0
+  let disposed = false
   const applications = ref<SandIamResourceRow[]>([])
   const jobs = ref<SandIamImportJobRow[]>([])
   const rows = ref<SandIamImportRow[]>([])
@@ -97,17 +114,33 @@
     selectedFile.value = file.raw
   }
 
-  async function loadApplications(): Promise<void> {
+  const applicationLoading = ref(false)
+  const applicationError = ref('')
+  const applicationKeywords = ref('')
+  let applicationRequest = 0
+
+  async function loadApplications(keywords = ''): Promise<void> {
+    const attempt = ++applicationRequest
+    if (disposed) return
+    applicationKeywords.value = keywords
+    applicationLoading.value = true
+    applicationError.value = ''
     try {
-      applications.value = listRows(
-        await listSandIamResource('application', { page: 1, limit: 100 })
-      )
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      if (disposed || attempt !== applicationRequest) return
+      const selected = applications.value.find(row => String(row.id) === applicationId.value)
+      const rows = listRows(result)
+      applications.value = selected && !rows.some(row => row.id === selected.id) ? [selected, ...rows] : rows
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && attempt === applicationRequest) applicationError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && attempt === applicationRequest) applicationLoading.value = false
     }
   }
 
   async function loadJobs(): Promise<void> {
+    if (disposed) return
+    const version = ++jobVersion
     const application = selectedId(applicationId.value)
     if (application === null) {
       requestError.value = describeSandIamError(
@@ -116,18 +149,24 @@
       return
     }
     if (!canIndex.value) return
-    loading.value = true
+    jobLoading.value = true
     requestError.value = null
     try {
-      jobs.value = parseSandIamImportJobs(
-        await getSandIamAdmin('identity-import/index', { application_id: application })
-      )
+      const result = await getSandIamAdmin('identity-import/index', {
+        application_id: application, page: jobPage.value, limit: jobPageSize.value
+      })
+      if (disposed || version !== jobVersion) return
+      jobs.value = parseSandIamImportJobs(result)
+      const page = parseSandIamImportPagination(result, 20)
+      jobTotal.value = page.total; jobPage.value = page.currentPage; jobPageSize.value = page.pageSize
+      if (!jobs.value.some((job) => String(job.id) === selectedJobId.value)) selectedJobId.value = ''
       viewState.value = jobs.value.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (disposed || version !== jobVersion) return
       requestError.value = describeSandIamError(error)
       jobs.value = []
     } finally {
-      loading.value = false
+      if (!disposed && version === jobVersion) jobLoading.value = false
     }
   }
 
@@ -135,6 +174,8 @@
    * CSV 只走 multipart，不把行内容放进 URL 或普通 JSON。
    */
   async function previewImport(): Promise<void> {
+    if (disposed || loading.value || !canPreview.value) return
+    const version = appVersion
     const application = selectedId(applicationId.value)
     if (application === null || selectedFile.value === null) {
       requestError.value = describeSandIamError(
@@ -152,45 +193,66 @@
       const parsed = parseSandIamImportPreview(
         await postSandIamForm('identity-import/preview', data)
       )
+      if (disposed || version !== appVersion) return
       if (parsed === null) {
         requestError.value = describeSandIamError(new Error('预检响应不符合已冻结约定'))
         return
       }
       preview.value = parsed
       ElMessage.success('已预检')
+      jobPage.value = 1
+      selectedJobId.value = ''
+      rows.value = []
+      rowPage.value = 1
+      rowTotal.value = 0
+      rowState.value = ''
       await loadJobs()
+      if (disposed || version !== appVersion) return
       const job = jobs.value.find((item) => item.id === parsed.id)
       if (job !== undefined) await loadRows(job)
     } catch (error: unknown) {
+      if (disposed || version !== appVersion) return
       requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed && version === appVersion) loading.value = false
     }
   }
 
   async function loadRows(job: SandIamImportJobRow): Promise<void> {
+    if (disposed || job.application_id !== selectedId(applicationId.value) || !jobs.value.includes(job)) return
     selectedJobId.value = String(job.id)
     if (!canRead.value) return
-    loading.value = true
+    const version = ++rowVersion
+    rowLoading.value = true
     requestError.value = null
     try {
-      rows.value = parseSandIamImportRows(
-        await getSandIamAdmin('identity-import/rows', { id: job.id })
-      )
+      const result = await getSandIamAdmin('identity-import/rows', {
+        id: job.id, page: rowPage.value, limit: rowPageSize.value,
+        ...(rowState.value === '' ? {} : { state: rowState.value })
+      })
+      if (disposed || version !== rowVersion) return
+      rows.value = parseSandIamImportRows(result)
+      const page = parseSandIamImportPagination(result, 50)
+      rowTotal.value = page.total; rowPage.value = page.currentPage; rowPageSize.value = page.pageSize
     } catch (error: unknown) {
+      if (disposed || version !== rowVersion) return
       requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed && version === rowVersion) rowLoading.value = false
     }
   }
 
   async function confirmJob(job: SandIamImportJobRow): Promise<void> {
+    if (disposed || loading.value || jobLoading.value || !canConfirm.value || !jobs.value.includes(job) || job.application_id !== selectedId(applicationId.value)) return
     if (!importJobCanConfirm(job)) {
       requestError.value = describeSandIamError(
         new Error('SAND_IAM_IMPORT_HAS_INVALID_ROWS: 有错误行时不能确认，请先修正 CSV 后重新预检')
       )
       return
     }
+    const version = appVersion
+    const selection = selectionVersion
+    loading.value = true
     try {
       await ElMessageBox.confirm(
         `将按「${importModeLabel(job.mode)}」执行 ${String(job.valid_count)} 行。预检尚未创建或修改任何应用用户。重复确认不会重复创建已完成任务。`,
@@ -198,9 +260,11 @@
         { type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消' }
       )
     } catch {
+      if (!disposed && version === appVersion) loading.value = false
       return
     }
-    loading.value = true
+    if (disposed || version !== appVersion) return
+    if (selection !== selectionVersion || !jobs.value.includes(job) || !canConfirm.value) { loading.value = false; return }
     requestError.value = null
     try {
       const result = parseSandIamImportConfirm(
@@ -209,22 +273,27 @@
           digest: job.digest
         })
       )
+      if (disposed || version !== appVersion || selection !== selectionVersion) return
       ElMessage.success(
         result === null
           ? '已保存'
           : `已保存：成功 ${String(result.success)}，警告 ${String(result.warning)}，失败 ${String(result.failure)}`
       )
       await loadJobs()
+      if (disposed || version !== appVersion || selection !== selectionVersion) return
       const latest = jobs.value.find((item) => item.id === job.id)
       if (latest !== undefined) await loadRows(latest)
     } catch (error: unknown) {
+      if (disposed || version !== appVersion || selection !== selectionVersion) return
       requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed && version === appVersion) loading.value = false
     }
   }
 
   async function exportUsers(sensitive: boolean): Promise<void> {
+    if (disposed || loading.value || (sensitive ? !canExportSensitive.value : !canExportMasked.value)) return
+    const version = appVersion
     const application = selectedId(applicationId.value)
     if (application === null) {
       requestError.value = describeSandIamError(
@@ -232,6 +301,7 @@
       )
       return
     }
+    loading.value = true
     if (sensitive) {
       try {
         await ElMessageBox.confirm(
@@ -240,9 +310,11 @@
           { type: 'warning', confirmButtonText: '确认导出', cancelButtonText: '取消' }
         )
       } catch {
+        if (!disposed && version === appVersion) loading.value = false
         return
       }
     }
+    if (disposed || version !== appVersion) return
     loading.value = true
     requestError.value = null
     try {
@@ -250,14 +322,45 @@
         sensitive ? 'identity-export/sensitive' : 'identity-export/masked',
         { application_id: application }
       )
+      if (disposed || version !== appVersion) return
       downloadBlob(blob, sensitive ? 'sand-iam-users-sensitive.csv' : 'sand-iam-users-masked.csv')
       ElMessage.success('已保存')
     } catch (error: unknown) {
+      if (disposed || version !== appVersion) return
       requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed && version === appVersion) loading.value = false
     }
   }
+
+  function reloadRows(): void {
+    const job = jobs.value.find((item) => String(item.id) === selectedJobId.value)
+    if (job !== undefined) void loadRows(job)
+  }
+  watch(selectedJobId, () => {
+    selectionVersion++
+    rowVersion++
+    rowPage.value = 1; rowTotal.value = 0
+    rowState.value = ''
+    rows.value = []; rowLoading.value = false
+  }, { flush: 'sync' })
+  watch(rowState, () => {
+    rowVersion++; rowPage.value = 1; rowTotal.value = 0
+    rows.value = []; rowLoading.value = false
+  }, { flush: 'sync' })
+  watch(applicationId, () => {
+    appVersion++; jobVersion++; rowVersion++
+    jobPage.value = 1; jobTotal.value = 0
+    selectedJobId.value = ''
+    jobs.value = []; rows.value = []
+    selectedFile.value = null; preview.value = null
+    loading.value = false; jobLoading.value = false; rowLoading.value = false
+    requestError.value = null; viewState.value = 'idle'
+  }, { flush: 'sync' })
+  onScopeDispose(() => {
+    disposed = true; appVersion++; jobVersion++; rowVersion++
+    selectedFile.value = null; preview.value = null
+  })
 
   onMounted(() => {
     void loadApplications()
@@ -308,8 +411,12 @@
       />
 
       <ElForm label-width="180px" class="mb-4">
+        <ElFormItem v-if="applicationError" label="应用搜索失败">
+          <span role="alert">{{ applicationError }}</span>
+          <ElButton :loading="applicationLoading" @click="loadApplications(applicationKeywords)">重试搜索</ElButton>
+        </ElFormItem>
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="loadApplications" :loading="applicationLoading" clearable placeholder="按名称选择">
             <ElOption
               v-for="row in applications"
               :key="String(row.id)"
@@ -326,6 +433,7 @@
         </ElFormItem>
         <ElFormItem label="CSV 文件">
           <ElUpload
+            :key="applicationId"
             :auto-upload="false"
             :limit="1"
             accept=".csv,text/csv"
@@ -339,7 +447,7 @@
           <ElButton :disabled="!canPreview" :loading="loading" @click="previewImport"
             >上传预检</ElButton
           >
-          <ElButton :disabled="!canIndex" :loading="loading" @click="loadJobs">加载任务</ElButton>
+          <ElButton :disabled="!canIndex" :loading="jobLoading" @click="loadJobs">加载任务</ElButton>
           <ElButton :disabled="!canExportMasked" :loading="loading" @click="exportUsers(false)">
             导出脱敏用户
           </ElButton>
@@ -354,7 +462,7 @@
         </ElFormItem>
       </ElForm>
 
-      <ElTable v-loading="loading" :data="jobs" border stripe empty-text="暂无导入任务">
+      <ElTable v-loading="jobLoading" :data="jobs" border stripe empty-text="暂无导入任务">
         <ElTableColumn label="文件名称" min-width="180">
           <template #default="scope">{{ scope.row.original_name }}</template>
         </ElTableColumn>
@@ -396,8 +504,15 @@
         </ElTableColumn>
       </ElTable>
 
+      <ElPagination v-if="jobTotal > 0" v-model:current-page="jobPage" v-model:page-size="jobPageSize"
+        :total="jobTotal" :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next"
+        @current-change="loadJobs" @size-change="jobPage = 1; loadJobs()" />
       <h3 class="mt-8 text-base">逐行预检</h3>
-      <ElTable :data="rows" border stripe empty-text="先选择一个任务查看逐行报告">
+      <ElSelect v-model="rowState" placeholder="全部行状态" @change="reloadRows">
+        <ElOption label="全部行状态" value="" />
+        <ElOption v-for="state in rowStates" :key="state" :value="state" :label="importRowStateLabel(state)" />
+      </ElSelect>
+      <ElTable v-loading="rowLoading" :data="rows" border stripe empty-text="先选择一个任务查看逐行报告">
         <ElTableColumn label="行号" min-width="70">
           <template #default="scope">{{ scope.row.row_number }}</template>
         </ElTableColumn>
@@ -426,6 +541,9 @@
           </template>
         </ElTableColumn>
       </ElTable>
+      <ElPagination v-if="rowTotal > 0" v-model:current-page="rowPage" v-model:page-size="rowPageSize"
+        :total="rowTotal" :page-sizes="[50, 100, 200]" layout="total, sizes, prev, pager, next"
+        @current-change="reloadRows" @size-change="rowPage = 1; reloadRows()" />
     </ElCard>
   </div>
 </template>

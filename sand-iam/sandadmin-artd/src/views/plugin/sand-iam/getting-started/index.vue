@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, reactive, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, reactive, ref, watch } from 'vue'
   import { useRouter } from 'vue-router'
   import { ElMessage } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
@@ -16,6 +16,7 @@
     isRecord,
     parseWizardContext,
     phaseAfterSave,
+    phaseAfterCreateError,
     phaseAfterVerifiedRecord,
     verificationRecoveryForHttp,
     positiveId,
@@ -171,6 +172,21 @@
   })
   const candidateId = ref<number | null>(null)
   const candidateLoading = ref(false)
+  const candidatePage = ref(1)
+  const candidateTotal = ref(0)
+  let candidateVersion = 0
+  let disposed = false
+  watch(() => `${currentScreen.value}:${ids.organization}:${ids.application}`, () => {
+    candidateVersion++
+    candidateLoading.value = false
+    candidateId.value = null
+    candidatePage.value = 1
+    candidateTotal.value = 0
+    for (const step of steps) {
+      candidates[step.id] = []
+      candidatesQueried[step.id] = false
+    }
+  }, { flush: 'sync' })
   const saving = ref(false)
   const verifying = ref<WizardStep | null>(null)
   const verificationRecovery = ref<'retain_pending' | 'lookup_required'>('lookup_required')
@@ -381,6 +397,7 @@
       return
     }
     const creating = existing === null
+    let createResponseReceived = false
     saving.value = true
     pageMessage.value = ''
     try {
@@ -389,7 +406,9 @@
       if (step.id === 'environment' && parentId !== null) body.application_id = parentId
       let id: number
       if (existing === null) {
-        const createdId = saveResponseId(await saveSandIamResource(step.endpoint, body, false))
+        const response = await saveSandIamResource(step.endpoint, body, false)
+        createResponseReceived = true
+        const createdId = saveResponseId(response)
         if (createdId === null) {
           phases[step.id] = phaseAfterSave(null)
           pendingCodes[step.id] = typeof payload.code === 'string' ? payload.code : null
@@ -421,8 +440,9 @@
       ElMessage.success(existing === null ? '已保存并确认' : '已修改并确认')
     } catch (error: unknown) {
       if (creating) {
-        phases[step.id] = phaseAfterSave(null)
-        pendingCodes[step.id] = typeof payload.code === 'string' ? payload.code : null
+        const described = describeSandIamError(error)
+        phases[step.id] = createResponseReceived ? phaseAfterSave(null) : phaseAfterCreateError(described.http, described.code)
+        pendingCodes[step.id] = phases[step.id] === 'draft' ? null : typeof payload.code === 'string' ? payload.code : null
         persistContext()
       }
       pageMessage.value = recoveryMessage(error, 'save')
@@ -448,33 +468,44 @@
     return isRecord(value) && Array.isArray(value.data) ? value.data.filter(isRecord) : []
   }
 
-  async function loadCandidates(step: WizardStep): Promise<void> {
+  async function loadCandidates(step: WizardStep, page = 1): Promise<void> {
+    if (disposed || saving.value || verifying.value !== null) return
     if (!canRead(step)) {
       pageMessage.value = '当前账号没有读取已有记录的权限。请联系管理员开通管理范围。'
       return
     }
     const parentId = parentIdFor(step)
+    const screen = currentScreen.value
+    const version = ++candidateVersion
+    const current = () => !disposed && version === candidateVersion && parentId === parentIdFor(step) && screen === currentScreen.value
     if (step !== 'organization' && parentId === null) return
     candidateLoading.value = true
+    candidatePage.value = page
+    candidates[step] = []
     candidateId.value = null
     candidatesQueried[step] = false
     try {
       const params =
         step === 'application'
-          ? { page: 1, limit: 100, organization_id: parentId ?? undefined }
+          ? { page, limit: 100, organization_id: parentId ?? undefined }
           : step === 'environment'
-            ? { page: 1, limit: 100, application_id: parentId ?? undefined }
-            : { page: 1, limit: 100 }
-      const rows = listRows(await listSandIamResource(definition(step).endpoint, params))
+            ? { page, limit: 100, application_id: parentId ?? undefined }
+            : { page, limit: 100 }
+      const response = await listSandIamResource(definition(step).endpoint, params)
+      if (!current()) return
+      const payload = isRecord(response) && isRecord(response.data) ? response.data : response
+      const rows = listRows(payload)
+      candidateTotal.value = isRecord(payload) && typeof payload.total === 'number' ? payload.total : rows.length
       const pendingCode = pendingCodes[step]
       candidates[step] =
         pendingCode === null ? rows : rows.filter((row) => row.code === pendingCode)
       candidatesQueried[step] = true
     } catch (error: unknown) {
+      if (!current()) return
       candidates[step] = []
       pageMessage.value = recoveryMessage(error, 'read')
     } finally {
-      candidateLoading.value = false
+      if (current()) candidateLoading.value = false
     }
   }
 
@@ -484,10 +515,15 @@
     return `${name}${code}`
   }
 
+  function changeCandidatePage(page: number): void {
+    if (currentStep.value !== null) void loadCandidates(currentStep.value.id, page)
+  }
+
   async function useSelectedCandidate(): Promise<void> {
     const step = currentStep.value
     const id = candidateId.value
-    if (step === null || id === null) return
+    if (disposed || saving.value || verifying.value !== null || candidateLoading.value ||
+      step === null || id === null || !candidates[step.id].some(row => positiveId(row.id) === id)) return
     const record = await verifyRecord(step.id, id)
     if (record === null) return
     if (!applyVerifiedRecord(step.id, record)) return
@@ -546,6 +582,7 @@
   onMounted(() => {
     void restoreContext()
   })
+  onScopeDispose(() => { disposed = true; candidateVersion++ })
 </script>
 
 <template>
@@ -671,6 +708,12 @@
           description="当前没有可选择的已有记录。你可以创建新的，或联系管理员确认是否有可见记录。"
           :image-size="72"
         />
+        <template v-if="candidatesQueried[currentStep.id]">
+          <p v-if="pendingCodes[currentStep.id] !== null">仅显示与本次系统代码完全一致的记录。当前页未找到时，请继续下一页核对。</p>
+          <ElPagination :current-page="candidatePage" :page-size="100" :total="candidateTotal"
+            layout="total, prev, pager, next" :disabled="saving || verifying !== null || candidateLoading"
+            @current-change="changeCandidatePage" />
+        </template>
         <WizardStepForm
           v-if="
             canWrite(currentStep.id, records[currentStep.id] !== null) &&

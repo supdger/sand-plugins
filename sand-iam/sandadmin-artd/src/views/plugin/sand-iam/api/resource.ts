@@ -33,3 +33,14 @@ export function listSandIamResource(
     params: compactParams(params)
   })
 }
+
+export function listSandIamGrantCandidates(
+  kind: 'services' | 'actions',
+  params: SandIamListParams,
+  id?: number
+): Promise<unknown> {
+  return request.get<unknown>({
+    url: `${SAND_IAM_ADMIN_PREFIX}/grant/${kind}`,
+    params: { ...compactParams(params), ...(id === undefined ? {} : { id }) }
+  })
+}

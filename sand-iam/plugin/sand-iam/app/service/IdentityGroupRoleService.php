@@ -46,13 +46,21 @@ final class IdentityGroupRoleService
     {
         Db::startTrans();
         try {
-            $binding = IdentityGroupRole::where('id', $bindingId)->where('application_id', $applicationId)->lock(true)->find();
+            $binding = IdentityGroupRole::where('id', $bindingId)->where('application_id', $applicationId)->find();
             if ($binding === null) {
                 throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 未找到这条用户组角色关系，请刷新列表后重试', 400);
             }
-            $group = IdentityGroup::where('id', (int) $binding->identity_group_id)->where('application_id', $applicationId)->lock(true)->find();
+            $groupId = (int) $binding->identity_group_id;
+            $roleId = (int) $binding->role_id;
+            // Match grant's group-first order; re-read the binding under that lock.
+            $group = IdentityGroup::where('id', $groupId)->where('application_id', $applicationId)->lock(true)->find();
             if ($group === null) {
                 throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 用户组角色关系的应用边界不一致', 400);
+            }
+            $binding = IdentityGroupRole::where('id', $bindingId)->where('application_id', $applicationId)
+                ->where('identity_group_id', $groupId)->where('role_id', $roleId)->lock(true)->find();
+            if ($binding === null) {
+                throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 用户组角色关系已改变，请刷新列表后重试', 400);
             }
             if ((int) $binding->status !== 2) {
                 $binding->save(['status' => 2]);

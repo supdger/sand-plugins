@@ -164,8 +164,9 @@ final class WebhookService
                 $types = $endpoint->event_types;
                 if (is_string($types)) $types = json_decode($types, true);
                 if (!is_array($types) || !in_array($eventType, $types, true)) continue;
-                try {
-                    WebhookDelivery::create([
+                $existing = WebhookDelivery::where('webhook_endpoint_id', (int) $endpoint->id)->where('event_id', $eventId)->find();
+                if ($existing !== null) continue;
+                WebhookDelivery::create([
                         'application_id' => (int) $application->id,
                         'webhook_endpoint_id' => (int) $endpoint->id,
                         'event_id' => $eventId,
@@ -174,10 +175,7 @@ final class WebhookService
                         'status' => 1,
                         'attempt_count' => 0,
                         'next_attempt_time' => date('Y-m-d H:i:s'),
-                    ]);
-                } catch (\Throwable $exception) {
-                    if (!str_contains(strtolower($exception->getMessage()), 'unique')) throw $exception;
-                }
+                ]);
             }
             Db::commit();
         } catch (\Throwable $exception) {
@@ -258,31 +256,26 @@ final class WebhookService
         return ['event_id' => $eventId, 'delivery_ids' => [(int) $delivery->id], 'replayed' => $replayed];
     }
 
-    /** @return array{claimed:int,delivered:int,retried:int,dead:int} */
+    /** @return array{claimed:int,delivered:int,retried:int,dead:int,lease_lost:int} */
     public function deliverBatch(int $limit = 20): array
     {
         $limit = min(max($limit, 1), 100);
         WebhookDelivery::where('status', 2)->where('locked_until', '<', date('Y-m-d H:i:s'))->update(['status' => 1, 'locked_until' => null]);
-        Db::startTrans();
-        try {
-            $deliveries = WebhookDelivery::where('status', 1)
-                ->where('next_attempt_time', '<=', date('Y-m-d H:i:s'))
-                ->order('id')
-                ->limit($limit)
-                ->lock('FOR UPDATE SKIP LOCKED')
-                ->select()
-                ->all();
-            foreach ($deliveries as $delivery) {
-                $delivery->save(['status' => 2, 'locked_until' => date('Y-m-d H:i:s', time() + 120)]);
+        $result = ['claimed' => 0, 'delivered' => 0, 'retried' => 0, 'dead' => 0, 'lease_lost' => 0];
+        for ($index = 0; $index < $limit; $index++) {
+            Db::startTrans();
+            try {
+                $delivery = WebhookDelivery::where('status', 1)
+                    ->where('next_attempt_time', '<=', date('Y-m-d H:i:s'))
+                    ->order('id')->lock('FOR UPDATE SKIP LOCKED')->find();
+                if ($delivery !== null) $delivery->save(['status' => 2, 'locked_until' => date('Y-m-d H:i:s', time() + 120)]);
+                Db::commit();
+            } catch (\Throwable $exception) {
+                Db::rollback();
+                throw $exception;
             }
-            Db::commit();
-        } catch (\Throwable $exception) {
-            Db::rollback();
-            throw $exception;
-        }
-
-        $result = ['claimed' => count($deliveries), 'delivered' => 0, 'retried' => 0, 'dead' => 0];
-        foreach ($deliveries as $delivery) {
+            if ($delivery === null) break;
+            $result['claimed']++;
             $outcome = $this->deliver($delivery);
             $result[$outcome]++;
         }
@@ -338,12 +331,14 @@ final class WebhookService
         }
     }
 
-    /** @return 'delivered'|'retried'|'dead' */
+    /** @return 'delivered'|'retried'|'dead'|'lease_lost' */
     private function deliver(WebhookDelivery $claimed): string
     {
-        $delivery = WebhookDelivery::where('id', (int) $claimed->id)->where('status', 2)->find();
+        $delivery = WebhookDelivery::where('id', (int) $claimed->id)->where('status', 2)
+            ->where('locked_until', (string) $claimed->locked_until)
+            ->where('locked_until', '>', date('Y-m-d H:i:s'))->find();
         $endpoint = $delivery === null ? null : WebhookEndpoint::where('id', (int) $delivery->webhook_endpoint_id)->where('application_id', (int) $delivery->application_id)->where('status', 1)->find();
-        if ($delivery === null) return 'dead';
+        if ($delivery === null) return 'lease_lost';
         $attempt = (int) $delivery->attempt_count + 1;
         if ($endpoint === null) return $this->failDelivery($delivery, null, $attempt, 'SAND_IAM_WEBHOOK_ENDPOINT_DISABLED');
         $payload = $delivery->payload;
@@ -371,7 +366,7 @@ final class WebhookService
             if ($response['status'] < 200 || $response['status'] >= 300) {
                 return $this->failDelivery($delivery, $endpoint, $attempt, 'SAND_IAM_WEBHOOK_HTTP_' . $response['status'], $response['status'], $response['body']);
             }
-            $delivery->save(['status' => 3, 'attempt_count' => $attempt, 'delivered_time' => date('Y-m-d H:i:s'), 'locked_until' => null, 'response_status' => $response['status'], 'response_digest' => hash('sha256', $response['body']), 'last_error_code' => null]);
+            if (!$this->saveClaimedDelivery($delivery, ['status' => 3, 'attempt_count' => $attempt, 'delivered_time' => date('Y-m-d H:i:s'), 'locked_until' => null, 'response_status' => $response['status'], 'response_digest' => hash('sha256', $response['body']), 'last_error_code' => null])) return 'lease_lost';
             $this->deliveryAudit($delivery, $endpoint, 'delivered', ['attempt' => $attempt, 'response_status' => $response['status']]);
             return 'delivered';
         } catch (\Throwable $exception) {
@@ -380,13 +375,13 @@ final class WebhookService
         }
     }
 
-    /** @return 'retried'|'dead' */
+    /** @return 'retried'|'dead'|'lease_lost' */
     private function failDelivery(WebhookDelivery $delivery, ?WebhookEndpoint $endpoint, int $attempt, string $code, ?int $status = null, string $body = ''): string
     {
         $maxAttempts = $endpoint === null ? 1 : (int) $endpoint->max_attempts;
         $dead = $attempt >= $maxAttempts;
         $delay = [60, 300, 1800, 7200, 43200][min($attempt - 1, 4)];
-        $delivery->save([
+        $saved = $this->saveClaimedDelivery($delivery, [
             'status' => $dead ? 4 : 1,
             'attempt_count' => $attempt,
             'next_attempt_time' => $dead ? null : date('Y-m-d H:i:s', time() + $delay),
@@ -395,15 +390,23 @@ final class WebhookService
             'response_digest' => $body === '' ? null : hash('sha256', $body),
             'last_error_code' => $code,
         ]);
+        if (!$saved) return 'lease_lost';
         if ($endpoint !== null) $this->deliveryAudit($delivery, $endpoint, $dead ? 'dead' : 'retry_scheduled', ['attempt' => $attempt, 'code' => $code]);
         return $dead ? 'dead' : 'retried';
+    }
+
+    /** @param array<string,mixed> $values */
+    private function saveClaimedDelivery(WebhookDelivery $delivery, array $values): bool
+    {
+        return WebhookDelivery::where('id', (int) $delivery->id)->where('status', 2)
+            ->where('locked_until', (string) $delivery->locked_until)->update($values) === 1;
     }
 
     /** @param array<string,mixed> $context */
     private function deliveryAudit(WebhookDelivery $delivery, WebhookEndpoint $endpoint, string $deliveryState, array $context): void
     {
-        $application = Application::find((int) $delivery->application_id);
         try {
+            $application = Application::find((int) $delivery->application_id);
             $attempt = (int) ($context['attempt'] ?? $delivery->attempt_count);
             $requestId = hash('sha256', "webhook.delivery\0" . (string) $delivery->event_id . "\0" . $attempt);
             $outcome = $deliveryState === 'delivered' ? 'succeeded' : 'failed';
@@ -462,7 +465,7 @@ final class WebhookService
     }
     private function eventId(string $value): string
     {
-        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.:-]{7,95}$/', $value)) throw new ApiException('SAND_IAM_WEBHOOK_EVENT_ID_INVALID', 400);
+        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_.:-]{7,95}$/D', $value)) throw new ApiException('SAND_IAM_WEBHOOK_EVENT_ID_INVALID', 400);
         return $value;
     }
     private function code(string $value): string

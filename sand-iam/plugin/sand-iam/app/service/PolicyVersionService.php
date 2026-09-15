@@ -11,8 +11,11 @@ use think\facade\Db;
 
 final class PolicyVersionService
 {
-    /** @return array{policy:Policy,version:PolicyVersion,replayed:bool} */
-    public function publish(int $policyId, string $requestId, ?int $rollbackVersionId = null): array
+    /**
+     * @param null|callable():void $audit Runs before commit for a new version only.
+     * @return array{policy:Policy,version:PolicyVersion,replayed:bool}
+     */
+    public function publish(int $policyId, string $requestId, ?int $rollbackVersionId = null, ?callable $audit = null): array
     {
         $requestId = RequestId::normalize($requestId);
         Db::startTrans();
@@ -32,6 +35,7 @@ final class PolicyVersionService
             $versionNo = (int) PolicyVersion::where('policy_id', $policyId)->max('version_no') + 1;
             $version = PolicyVersion::create(['policy_id' => $policyId, 'application_id' => (int) $policy->application_id, 'version_no' => $versionNo, 'snapshot' => $snapshot, 'snapshot_hash' => hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR)), 'rollback_of_version_id' => $source?->id, 'operation' => $operation, 'request_id' => $requestId, 'request_fingerprint' => $fingerprint, 'create_time' => date('Y-m-d H:i:s')]);
             $policy->save(['state' => 'published', 'status' => 1, 'published_version_id' => (int) $version->id, 'update_time' => date('Y-m-d H:i:s')]);
+            if ($audit !== null) $audit();
             Db::commit();
             return ['policy' => $policy, 'version' => $version, 'replayed' => false];
         } catch (\Throwable $exception) { Db::rollback(); throw $exception; }

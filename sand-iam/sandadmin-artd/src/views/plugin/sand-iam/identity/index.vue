@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
@@ -15,7 +15,7 @@
     identityGroupNamesByMember,
     identityGroupSummaryLabel,
     lifecycleStateLabel,
-    parseSandIamIdentities,
+    parseSandIamIdentityPage,
     parseSandIamIdentityGroupMembers,
     parseSandIamIdentityGroups,
     type SandIamIdentityGroupMember,
@@ -28,6 +28,7 @@
   const { hasAuth } = useAuth()
   const canIndex = computed(() => hasAuth('sand_iam:identity:index'))
   const canSave = computed(() => hasAuth('sand_iam:identity:save'))
+  const canUpdate = computed(() => hasAuth('sand_iam:identity:update'))
   const canDisable = computed(() => hasAuth('sand_iam:identity:disable'))
   const canEnable = computed(() => hasAuth('sand_iam:identity:enable'))
   const canDelete = computed(() => hasAuth('sand_iam:identity:delete'))
@@ -36,16 +37,46 @@
   const canMemberIndex = computed(() => hasAuth('sand_iam:identity_group_member:index'))
 
   const loading = ref(false)
+  const saving = ref(false)
+  const currentPage = ref(1)
+  const pageSize = ref(100)
+  const total = ref(0)
+  const keywords = ref('')
+  let disposed = false
+  let scopeVersion = 0
+  let listVersion = 0
+  let summaryVersion = 0
   const applications = ref<SandIamResourceRow[]>([])
   const identities = ref<SandIamIdentityRow[]>([])
   const groupNamesByIdentity = ref<ReadonlyMap<number, readonly string[]>>(new Map())
   const groupSummaryAvailable = ref(false)
   const applicationId = ref('')
   const displayName = ref('')
+  const editingIdentity = ref<SandIamIdentityRow | null>(null)
   const code = ref('')
   const requestError = ref<SandIamRequestError | null>(null)
   const groupSummaryError = ref<SandIamRequestError | null>(null)
   const viewState = ref<'idle' | 'empty' | 'ready'>('idle')
+  watch([applicationId, keywords], () => { currentPage.value = 1 }, { flush: 'sync' })
+  watch([applicationId, keywords, currentPage, pageSize], () => {
+    scopeVersion++
+    listVersion++
+    summaryVersion++
+    identities.value = []
+    total.value = 0
+    groupNamesByIdentity.value = new Map()
+    groupSummaryAvailable.value = false
+    requestError.value = null
+    groupSummaryError.value = null
+    loading.value = false
+    viewState.value = 'idle'
+  }, { flush: 'sync' })
+  watch(applicationId, () => {
+    displayName.value = ''
+    code.value = ''
+    editingIdentity.value = null
+  }, { flush: 'sync' })
+  onScopeDispose(() => { disposed = true; scopeVersion++; listVersion++; summaryVersion++ })
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -77,21 +108,39 @@
     )
   }
 
-  async function loadApplications(): Promise<void> {
+  const applicationLoading = ref(false)
+  const applicationError = ref('')
+  const applicationKeywords = ref('')
+  let applicationRequest = 0
+
+  async function loadApplications(keywords = ''): Promise<void> {
+    const attempt = ++applicationRequest
+    if (disposed) return
+    applicationKeywords.value = keywords
+    applicationLoading.value = true
+    applicationError.value = ''
     try {
-      applications.value = listRows(
-        await listSandIamResource('application', { page: 1, limit: 100 })
-      )
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      if (disposed || attempt !== applicationRequest) return
+      const selected = applications.value.find(row => String(row.id) === applicationId.value)
+      const rows = listRows(result)
+      applications.value = selected && !rows.some(row => row.id === selected.id) ? [selected, ...rows] : rows
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && attempt === applicationRequest) applicationError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && attempt === applicationRequest) applicationLoading.value = false
     }
   }
+
 
   /**
    * 组摘要来自 identity-group/members，不是 identity 列表字段。
    * 无权或生命周期未启用必须单独提示，不能把失败写成“未加入用户组”。
    */
   async function loadGroupSummaries(application: number): Promise<void> {
+    const version = ++summaryVersion
+    const scope = scopeVersion
+    const current = (): boolean => !disposed && version === summaryVersion && scope === scopeVersion
     groupSummaryError.value = null
     groupNamesByIdentity.value = new Map()
     groupSummaryAvailable.value = false
@@ -100,68 +149,105 @@
       const groups = parseSandIamIdentityGroups(
         await getSandIamAdmin('identity-group/index', { application_id: application })
       )
+      if (!current()) return
       const membersByGroupId: Record<number, SandIamIdentityGroupMember[]> = {}
       for (const group of groups) {
         membersByGroupId[group.id] = parseSandIamIdentityGroupMembers(
           await getSandIamAdmin('identity-group/members', { id: group.id })
         )
+        if (!current()) return
       }
       groupNamesByIdentity.value = identityGroupNamesByMember(groups, membersByGroupId)
       groupSummaryAvailable.value = true
     } catch (error: unknown) {
-      groupSummaryError.value = describeSandIamError(error)
+      if (current()) groupSummaryError.value = describeSandIamError(error)
     }
   }
 
   async function loadIdentities(): Promise<void> {
-    if (!canIndex.value) return
+    const version = ++listVersion
+    summaryVersion++
+    const current = (): boolean => !disposed && version === listVersion
+    if (disposed || !canIndex.value) return
     loading.value = true
     requestError.value = null
     try {
       const application = selectedId(applicationId.value)
       const result = await listSandIamResource('identity', {
-        page: 1,
-        limit: 100,
+        page: currentPage.value,
+        limit: pageSize.value,
+        keywords: keywords.value.trim(),
         ...(application === null ? {} : { application_id: application })
       })
-      const rows = parseSandIamIdentities(result)
+      if (!current()) return
+      const page = parseSandIamIdentityPage(result)
+      const rows = page.rows
       identities.value = rows
+      total.value = page.total
       viewState.value = rows.length === 0 ? 'empty' : 'ready'
       if (application !== null) await loadGroupSummaries(application)
       else groupSummaryAvailable.value = false
     } catch (error: unknown) {
+      if (!current()) return
       requestError.value = describeSandIamError(error)
       identities.value = []
     } finally {
-      loading.value = false
+      if (current()) loading.value = false
     }
   }
 
+  function editIdentity(row: SandIamIdentityRow): void {
+    if (disposed || saving.value || !canUpdate.value || !identities.value.includes(row) ||
+      (selectedId(applicationId.value) !== null && row.application_id !== selectedId(applicationId.value))) return
+    editingIdentity.value = row
+    displayName.value = row.display_name
+    code.value = row.code
+    requestError.value = null
+  }
+
+  function cancelEdit(): void {
+    if (saving.value) return
+    editingIdentity.value = null
+    displayName.value = ''
+    code.value = ''
+  }
+
   async function createIdentity(): Promise<void> {
-    const application = selectedId(applicationId.value)
+    const editing = editingIdentity.value
+    if (disposed || saving.value || (editing === null ? !canSave.value :
+      !canUpdate.value || !identities.value.includes(editing))) return
+    const scope = scopeVersion
+    const current = (): boolean => !disposed && scope === scopeVersion
+    const application = editing?.application_id ?? selectedId(applicationId.value)
     if (application === null || displayName.value.trim() === '' || code.value.trim() === '') {
       requestError.value = describeSandIamError(
         new Error('SAND_IAM_VALIDATION_ERROR: 请按名称选择接入应用并填写显示名称和系统代码')
       )
       return
     }
-    loading.value = true
+    saving.value = true
     requestError.value = null
     try {
-      await saveSandIamResource('identity', {
-        application_id: application,
-        display_name: displayName.value.trim(),
-        code: code.value.trim(),
-        status: 1
-      })
+      if (editing === null) {
+        await saveSandIamResource('identity', {
+          application_id: application,
+          display_name: displayName.value.trim(),
+          code: code.value.trim(),
+          status: 1
+        })
+      } else {
+        await postSandIamAction('identity/update', { id: editing.id, display_name: displayName.value.trim() })
+      }
+      if (!current()) return
       ElMessage.success('已保存')
       displayName.value = ''
       code.value = ''
+      editingIdentity.value = null
       await loadIdentities()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      saving.value = false
     }
   }
 
@@ -175,6 +261,21 @@
     impact: string,
     success: string
   ): Promise<void> {
+    const allowed = (): boolean => {
+      if (!identities.value.includes(row) ||
+        (selectedId(applicationId.value) !== null && row.application_id !== selectedId(applicationId.value))) return false
+      switch (path) {
+        case 'identity/disable': return canDisable.value && identityCanDisable(row)
+        case 'identity/enable': return canEnable.value && identityCanEnable(row)
+        case 'identity/delete': return canDelete.value && identityCanDelete(row)
+        case 'identity/restore': return canRestore.value && identityCanRestore(row)
+        default: return false
+      }
+    }
+    if (disposed || saving.value || !allowed()) return
+    const scope = scopeVersion
+    const current = (): boolean => !disposed && scope === scopeVersion
+    saving.value = true
     try {
       await ElMessageBox.confirm(impact, title, {
         type: 'warning',
@@ -182,18 +283,23 @@
         cancelButtonText: '取消'
       })
     } catch {
+      saving.value = false
       return
     }
-    loading.value = true
+    if (!current() || !allowed()) {
+      saving.value = false
+      return
+    }
     requestError.value = null
     try {
       await postSandIamAction(path, { id: row.id })
+      if (!current()) return
       ElMessage.success(success)
       await loadIdentities()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      saving.value = false
     }
   }
 
@@ -248,8 +354,12 @@
       />
 
       <ElForm label-width="160px" class="mb-4">
+        <ElFormItem v-if="applicationError" label="应用搜索失败">
+          <span role="alert">{{ applicationError }}</span>
+          <ElButton :loading="applicationLoading" @click="loadApplications(applicationKeywords)">重试搜索</ElButton>
+        </ElFormItem>
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="loadApplications" :loading="applicationLoading" clearable placeholder="按名称选择">
             <ElOption
               v-for="row in applications"
               :key="String(row.id)"
@@ -257,6 +367,9 @@
               :value="String(row.id)"
             />
           </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="搜索显示名称">
+          <ElInput v-model="keywords" clearable placeholder="输入名称后加载用户" @keyup.enter="loadIdentities" />
         </ElFormItem>
         <ElFormItem>
           <ElButton :disabled="!canIndex" :loading="loading" @click="loadIdentities"
@@ -267,12 +380,16 @@
           <ElInput v-model="displayName" />
         </ElFormItem>
         <ElFormItem label="系统代码">
-          <ElInput v-model="code" />
+          <ElInput v-model="code" :disabled="editingIdentity !== null" />
+        </ElFormItem>
+        <ElFormItem v-if="editingIdentity !== null" label="编辑记录所属应用">
+          <span>{{ applicationName(editingIdentity.application_id) }}</span>
         </ElFormItem>
         <ElFormItem>
-          <ElButton type="primary" :disabled="!canSave" :loading="loading" @click="createIdentity">
-            新建用户
+          <ElButton type="primary" :disabled="editingIdentity === null ? !canSave : !canUpdate" :loading="saving" @click="createIdentity">
+            {{ editingIdentity === null ? '新建用户' : '保存显示名称' }}
           </ElButton>
+          <ElButton v-if="editingIdentity !== null" :disabled="saving" @click="cancelEdit">取消编辑</ElButton>
         </ElFormItem>
       </ElForm>
 
@@ -294,11 +411,12 @@
         </ElTableColumn>
         <ElTableColumn label="操作" min-width="260" fixed="right">
           <template #default="scope">
+            <ElButton size="small" :disabled="!canUpdate || saving" @click="editIdentity(scope.row)">编辑名称</ElButton>
             <ElButton
               v-if="identityCanDisable(scope.row)"
               size="small"
               type="warning"
-              :disabled="!canDisable"
+              :disabled="!canDisable || saving"
               @click="
                 act(
                   scope.row,
@@ -314,7 +432,7 @@
             <ElButton
               v-if="identityCanEnable(scope.row)"
               size="small"
-              :disabled="!canEnable"
+              :disabled="!canEnable || saving"
               @click="
                 act(
                   scope.row,
@@ -331,7 +449,7 @@
               v-if="identityCanDelete(scope.row)"
               size="small"
               type="danger"
-              :disabled="!canDelete"
+              :disabled="!canDelete || saving"
               @click="
                 act(scope.row, 'identity/delete', '删除应用用户', identityDeleteImpact(), '已保存')
               "
@@ -341,7 +459,7 @@
             <ElButton
               v-if="identityCanRestore(scope.row)"
               size="small"
-              :disabled="!canRestore"
+              :disabled="!canRestore || saving"
               @click="
                 act(
                   scope.row,
@@ -357,6 +475,15 @@
           </template>
         </ElTableColumn>
       </ElTable>
+      <ElPagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[20, 50, 100]"
+        :total="total"
+        layout="total, sizes, prev, pager, next"
+        @current-change="loadIdentities"
+        @size-change="currentPage = 1; loadIdentities()"
+      />
     </ElCard>
   </div>
 </template>

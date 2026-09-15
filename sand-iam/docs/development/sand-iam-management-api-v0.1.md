@@ -6,6 +6,8 @@
 
 所有管理路由前缀为 `/app/sand-iam/admin`，均需要宿主登录、权限与操作日志中间件。除非另有注明：
 
+机器凭证签发与轮换的名称去除首尾空白后须为 1–128 个字符。`expire_time` 可为 `null` 或空字符串，表示不设到期时间；提供时间时须为有效的 `YYYY-MM-DD HH:MM:SS`，与管理端日期控件及数据库无时区时间字段一致。布尔值、数字、数组、相对时间、非法日期及带时区字符串返回 `SAND_IAM_VALIDATION_ERROR`（400），不会创建凭证。允许保留已过期的合法时间值，格式校验不表示凭证仍可使用。
+
 - `GET /{resource}/index`：分页参数 `page,limit`；可按关联 ID、`status` 与 `keywords` 筛选。
 - `GET /{resource}/read?id=`：读取单条。
 - `POST /{resource}/save`：创建。
@@ -100,6 +102,7 @@ SCIM provider 必须已经配置为 `provider_type=scim`，且挂载到目标 ap
 
 - `condition`、`scope` 是 P0 受限 JSON：只允许 `equals` 与 `in`；字段与标量限制见 [授权与数据范围契约](sand-iam-authorization-contract.md#4-条件与范围-json-语法)。前端提交前校验，后端仍会拒绝无效值。
 - 策略主记录仅以所属应用、`status=1` 与 `published_version_id` 定位运行版本；匹配的资源、动作、主体、条件、优先级、效果和数据范围全部取该不可变快照。草稿编辑不会改变运行版本。`POST /policy/rollback` 将指定历史快照复制为新版本，不修改历史。
+- `GET /policy/versions` 使用 `sand_iam:policy:read`，必传策略 `id`，先校验该策略的应用管理范围；`page` 默认 1，`limit` 默认 20、最大 100。返回标准分页 `data/total/current_page/per_page`，版本按 `version_no` 倒序，每行仅含 `id/version_no/operation/rollback_of_version_id/create_time`。分页对象的 `published_version_id` 可为 null，表示主记录指向的快照，不表示策略当前启用；不返回 snapshot 或请求指纹。回滚仍提交策略 `id` 和所选版本 `version_id`，沿用独立发布权限。
 - `POST /policy/simulate` 只读且响应 `Cache-Control: no-store`；请求需 `application_id,identity_id,resource_code,action,operation,attributes`，返回 request_id、命中 allow/deny 规则、优先级、条件、数据范围来源、缺失上下文和最终结论。它不产生业务放行、策略状态变更或审计事件；条件/范围中的秘密类字段默认脱敏。
 - 显示统一错误语义：`SAND_IAM_VALIDATION_ERROR`（表单校验）、`SAND_IAM_RESOURCE_NOT_FOUND`（关联对象不存在）、`SAND_IAM_ORGANIZATION_ACCESS_DENIED`（越组织）、`SAND_IAM_POLICY_DENIED`（业务调用拒绝）、`SAND_IAM_RESOURCE_SCOPE_DENIED`（范围拒绝）、`SAND_IAM_FEDERATION_PROVIDER_CONFLICT`（身份源唯一边界冲突）、`SAND_IAM_SCIM_TOKEN_NOT_FOUND`（令牌已不存在/不可撤销）。
 - 空列表、加载中、403 和后端 5xx 必须有诚实 UI 状态；不得模拟成功或将空范围显示为全量数据。

@@ -6,9 +6,9 @@
     "metadata": {
         "component": {
             "type": "application",
-            "bom-ref": "pkg:generic/sandiam@0.7.1",
+            "bom-ref": "pkg:generic/sandiam@0.7.2",
             "name": "SandIAM",
-            "version": "0.7.1",
+            "version": "0.7.2",
             "licenses": [
                 {
                     "license": {
@@ -2546,7 +2546,7 @@
     ],
     "dependencies": [
         {
-            "ref": "pkg:generic/sandiam@0.7.1",
+            "ref": "pkg:generic/sandiam@0.7.2",
             "dependsOn": [
                 "pkg:composer/onelogin/php-saml@4.3.2",
                 "pkg:composer/robrichards/xmlseclibs@3.1.5",

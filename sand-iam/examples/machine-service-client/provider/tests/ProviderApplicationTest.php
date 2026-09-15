@@ -23,5 +23,16 @@ $test('pdo store rejects live write-only stream before process or audit writes',
 $test('failed request codes produce one independent redacted audit without process writes',static function():void{$config=ProviderConfig::fromArray(['SAND_IAM_BASE_URL'=>'https://iam.example','SAND_IAM_ORGANIZATION_CODE'=>'org-a','SAND_IAM_APPLICATION_CODE'=>'app-a','PROVIDER_B_DATABASE_DSN'=>'pgsql:host=example']);foreach(['PROVIDER_B_CONTEXT_DENIED','PROVIDER_B_CONTEXT_CLAIMS_INVALID','PROVIDER_B_CONTEXT_UNAVAILABLE','PROVIDER_B_INVALID_REQUEST']as$code){$db=new FakePdo('body');(new \Sand\Iam\Example\ProviderB\FailureAuditWriter($config,static fn()=>$db))->write('doc-1','context','idem-key-1006','request-1006',$code,403);if($db->audits!==1||$db->processWrites!==0)throw new RuntimeException('failed audit contract');}});
 $test('route input early failures retain audit eligibility and never reach store',static function()use($expect):void{$config=ProviderConfig::fromArray(['SAND_IAM_BASE_URL'=>'https://iam.example','SAND_IAM_ORGANIZATION_CODE'=>'org-a','SAND_IAM_APPLICATION_CODE'=>'app-a','PROVIDER_B_DATABASE_DSN'=>'pgsql:host=example']);$cases=[['{','ctx','idem-key-1007',400],['{"unexpected":true}','ctx','idem-key-1007',400],['{}','','idem-key-1007',401],['{}','ctx','',401]];foreach($cases as[$raw,$context,$key,$status]){$db=new FakePdo('body');try{\Sand\Iam\Example\ProviderB\RouteInput::validate($raw,$context,$key);}catch(ProviderException $e){(new \Sand\Iam\Example\ProviderB\FailureAuditWriter($config,static fn()=>$db))->write('doc-1',$context,$key,'request-1007',$e->errorCode,$e->httpStatus);if($e->httpStatus!==$status||$db->audits!==1||$db->processWrites!==0)throw new RuntimeException('early failure audit');continue;}throw new RuntimeException('early input accepted');}});
 $test('failure audit exception preserves original rejection and writes no process',static function():void{$config=ProviderConfig::fromArray(['SAND_IAM_BASE_URL'=>'https://iam.example','SAND_IAM_ORGANIZATION_CODE'=>'org-a','SAND_IAM_APPLICATION_CODE'=>'app-a','PROVIDER_B_DATABASE_DSN'=>'pgsql:host=example']);$db=new FakePdo('body');$db->auditFails=true;$status=401;(new \Sand\Iam\Example\ProviderB\FailureAuditWriter($config,static fn()=>$db))->write('doc-1','ctx','idem-key-1008','request-1008','PROVIDER_B_AUTHORIZATION_HEADERS_REQUIRED',$status);if($status!==401||$db->processWrites!==0)throw new RuntimeException('audit altered rejection');});
+$test('trailing newline identifiers reject before verification or persistence', static function () use ($expect): void {
+    foreach ([0 => 'PROVIDER_B_INVALID_DOCUMENT_ID', 2 => 'PROVIDER_B_INVALID_IDEMPOTENCY_KEY', 3 => 'PROVIDER_B_INVALID_REQUEST_ID'] as $index => $code) {
+        $store = new MemoryStore();
+        $verifier = new RevocableVerifier();
+        $app = new ProviderApplication($verifier, $store);
+        $args = ['doc-1', 'context', 'idem-key-0001', 'request-0001'];
+        $args[$index] .= "\n";
+        $expect($code, static fn () => $app->process(...$args));
+        if ($store->calls !== 0 || $store->effects !== 0 || $verifier->calls !== 0) throw new RuntimeException('invalid identifier reached authorization or persistence');
+    }
+});
 echo"Provider B offline tests: passed=$passed/$total; failed=".($total-$passed).PHP_EOL;
 exit($passed===$total?0:1);

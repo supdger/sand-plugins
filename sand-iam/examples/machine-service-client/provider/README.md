@@ -1,61 +1,41 @@
-# Provider B controlled workload example
+# 机器服务 Provider B 与调用方示例
 
-This is an isolated lightweight PHP provider and caller, not a SandIAM plugin.
-It exposes `GET /health` and `POST /provider/v1/documents/{id}/process`.
-The caller uses the public local-path PHP SDK to issue a short-lived context and
-passes it only in `X-Sand-Iam-Context`; the provider uses the same SDK's real
-`verifyContext()` on every request, including an idempotency replay.
+这是独立的轻量 PHP 业务服务及调用方示例。服务提供 `GET /health` 和
+`POST /provider/v1/documents/{id}/process`。调用方使用本仓 PHP SDK 签发短期上下文，
+仅通过 `X-Sand-Iam-Context` 请求头交接；服务端每次请求都调用 SDK 的
+`verifyContext()`，包括幂等重放。
 
-The service, audience, and action are fixed to `provider-b-document`,
-`provider-b`, and `document.process`. The request cannot override them. After
-verification, PostgreSQL loads the existing `provider_b_document` under lock
-and requires its `organization_id` to match the verified claims before it
-persists the document SHA-256 and byte count.
+服务、受众和动作固定为 `provider-b-document`、`provider-b`、`document.process`，
+调用请求不能覆盖。验证成功后，服务锁定 PostgreSQL 中已有的 `provider_b_document`，
+确认其 `organization_id` 与验证结果一致，再保存文档的 SHA-256 和字节数。
+业务处理记录与成功审计在同一事务中提交；失败则回滚。
 
-## Controlled setup
+## 配置与运行
 
-1. With explicit database-owner authorization, apply `schema.pgsql` in an
-   isolated PostgreSQL consumer database and insert an existing document. It
-   creates no database, accounts, `sand_iam_*`, or `sa_*` tables. The example
-   does not include schema execution or database-connectivity acceptance;
-   complete that acceptance in an isolated real environment before release.
-2. Run `composer install` in this directory. `composer.json` resolves
-   `sand/iam-sdk` only from `../../../sdk/php`.
-3. Inject the empty keys shown in `.env.example` through deployment secret
-   management. The provider refuses missing configuration or every non-`pgsql:`
-   DSN. Do not commit an actual `.env`.
-4. Deploy `public/index.php` with an internal PHP process manager. Complete
-   service-start acceptance in an isolated real environment before release. The caller runs as
-   `php caller/invoke.php <document-id>` with a stable
-   `PROVIDER_B_IDEMPOTENCY_KEY`.
+1. 经数据库负责人明确授权后，将 `schema.pgsql` 应用到已存在的隔离 PostgreSQL
+   业务数据库，并准备业务文档。示例不创建数据库、账号、`sand_iam_*` 或 `sa_*` 表。
+2. 在本目录执行 `composer install`；依赖 `sand/iam-sdk` 来自本仓 `../../../sdk/php`。
+3. 按 `.env.example` 的配置项，通过部署环境和密钥管理系统注入配置，不提交真实 `.env`。
+   缺少必填配置或 DSN 不是 `pgsql:` 时，服务拒绝运行。
+4. 使用内部 PHP 进程管理器部署 `public/index.php`。调用方执行
+   `php caller/invoke.php <document-id>`，并提供稳定的 `PROVIDER_B_IDEMPOTENCY_KEY`。
 
-## Required real acceptance (not run)
+以上是接入步骤，不表示本仓已经执行数据库初始化、服务启动或真实联调。
 
-- **Allow:** grant the fixed service/audience/action, process a document in the
-  caller's organization, and retain a redacted request/context audit record.
-- **Deny and wrong audience:** an ungranted action, wrong `provider-b`
-  audience, invalid context, network/protocol error, missing document, or
-  cross-organization document must fail closed and create no processing effect.
-- **Revocation:** revoke the credential or grant, then retry a previously
-  issued context and idempotency key. Verification happens before the replay
-  lookup, so an old context cannot bypass revocation.
-- **Idempotency:** `(workload_client_id,idempotency_key)` is unique. The same
-  document hash and bytes return the original result; a changed document or
-  document ID with that key returns 409 and creates no new process row.
-- **Audit and cleanup:** `provider_b_audit_log` stores request ID, context ID,
-  IDs, result, replay marker, and only a SHA-256 of the idempotency key. It
-  never stores a context, credential, body, or password. Remove isolated
-  fixtures and test rows after acceptance.
-  Route-matched 400/401/403/409/503 failures write one independent, redacted
-  provider audit (context and idempotency hashes only); its own write failure
-  never permits processing or changes the original denial. Correlate this
-  provider record with SandIAM's issue/verify audit by request and context
-  evidence; runner logs are not audit evidence.
+## 需要在真实环境验证的行为
 
-## Offline checks only
+- **允许处理：** 授予固定服务、受众和动作，处理调用方所属客户主体的文档，保留脱敏的请求与上下文编号用于关联审计。
+- **拒绝处理：** 未授权动作、错误受众、无效上下文、网络或协议错误、文档不存在、跨客户主体文档均应拒绝，且不产生处理记录。
+- **撤销生效：** 撤销凭证或服务授权后，使用此前签发的上下文及幂等键重试。服务先验权再查询重放记录，旧上下文不能绕过撤销。
+- **幂等与冲突：** `(workload_client_id,idempotency_key)` 唯一。同一文档及内容重复请求返回原处理结果；同一键改用其他文档或内容时返回 409，不新增处理记录。
+- **审计与清理：** `provider_b_audit_log` 保存请求编号、上下文编号、业务对象编号、结果及重放标记；幂等键仅保存 SHA-256，不保存上下文令牌、凭证、文档正文或密码。验收后清理隔离夹具与测试数据。
 
-`composer test` is a pure offline unit test for the PostgreSQL configuration
-gate, replay/conflict behavior, and denied requests producing no persistence
-call. It does not contact SandIAM, HTTP, PostgreSQL, revocation, or real audit,
-and therefore is not real acceptance. A real service, database, and caller
-integration remains required before release.
+命中业务路由的 400/401/403/409/503 失败会尝试独立写入脱敏失败审计，
+上下文令牌及幂等键仅保存摘要。审计写入失败不会允许业务处理，也不会改变原始拒绝结果。
+通过请求编号、上下文编号及摘要证据关联 SandIAM 签发/验证审计与业务服务审计；运行器日志不能代替审计记录。
+
+## 离线检查
+
+在本目录执行 `composer test`，检查 PostgreSQL 配置限制、幂等重放与冲突，以及拒绝请求不调用持久化。
+这些测试不连接 SandIAM、HTTP 或 PostgreSQL，不能证明真实撤销、并发或双侧审计已通过。
+发布前仍需完成真实服务、数据库与调用方联调。

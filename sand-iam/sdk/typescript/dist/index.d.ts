@@ -48,6 +48,7 @@ export interface SandIamWorkloadContext {
 }
 export type SandIamWorkloadErrorCode = 'SAND_IAM_SERVICE_NETWORK_FORBIDDEN' | 'SAND_IAM_INVOCATION_FACTS_UNVERIFIED' | 'SAND_IAM_DATA_CLASS_FORBIDDEN' | 'SAND_IAM_SERVICE_QUOTA_EXCEEDED' | 'SAND_IAM_IDEMPOTENCY_CONFLICT';
 export interface RegisterInput {
+    captchaToken?: string;
     username: string;
     password: string;
     displayName?: string;
@@ -57,6 +58,7 @@ export interface RegisterInput {
     requestId?: string;
 }
 export interface LoginInput {
+    captchaToken?: string;
     identifier: string;
     password: string;
     userAgent?: string;
@@ -68,6 +70,10 @@ export interface SandIamIdentitySummary {
     display_name: string;
 }
 export interface SandIamAuthResult {
+    step_up?: boolean | undefined;
+    methods?: string[] | undefined;
+    expires_in?: number | undefined;
+    public_key?: Record<string, unknown> | undefined;
     identity?: SandIamIdentitySummary | undefined;
     access_token?: string | undefined;
     refresh_token?: string | undefined;
@@ -77,6 +83,91 @@ export interface SandIamAuthResult {
     verification_required?: boolean | undefined;
     mfa_required?: boolean | undefined;
     challenge_token?: string | undefined;
+}
+export interface SandIamPasskeyOptions {
+    challenge_token: string;
+    public_key: Record<string, unknown>;
+}
+export interface SandIamCaptchaWidget {
+    kind: 'turnstile';
+    site_key: string;
+    action: 'login' | 'register';
+    application_binding: string;
+}
+export type SandIamCaptchaConfiguration = {
+    required: false;
+} | {
+    required: true;
+    available: false;
+} | {
+    required: true;
+    available: true;
+    widget: SandIamCaptchaWidget;
+};
+export interface PasskeyRegistrationResponse {
+    clientDataJSON: string;
+    attestationObject: string;
+}
+export interface PasskeyAuthenticationResponse {
+    clientDataJSON: string;
+    authenticatorData: string;
+    signature: string;
+    userHandle: string;
+}
+export interface SandIamMfaFactor {
+    id: number;
+    type: 'totp' | 'passkey';
+    name: string;
+    status: number;
+    create_time: string | null;
+    last_used_time: string | null;
+}
+export interface SandIamTotpSetup {
+    factor_id: number;
+    secret?: string;
+    otpauth_uri?: string;
+    secret_available?: boolean;
+}
+export interface SandIamRecoveryCodes {
+    recovery_codes?: string[];
+    secret_available?: boolean;
+}
+export interface SandIamTotpConfirmation extends SandIamRecoveryCodes {
+    enabled: true;
+}
+export type VerifyMfaChallengeInput = {
+    challengeToken: string;
+    requestId?: string;
+    userAgent?: string;
+} & ({
+    method: 'totp' | 'recovery_code';
+    code: string;
+} | {
+    method: 'passkey';
+    rawId: string;
+    response: {
+        clientDataJSON: string;
+        authenticatorData: string;
+        signature: string;
+        userHandle?: string | null;
+    };
+});
+export interface ForgotPasswordInput {
+    identifier: string;
+    channel: 'email' | 'phone';
+    requestId?: string;
+}
+export interface ResetPasswordInput extends ForgotPasswordInput {
+    code: string;
+    password: string;
+}
+export interface VerificationInput {
+    identifier: string;
+    channel: 'email' | 'phone';
+    requestId?: string;
+}
+export interface ConfirmVerificationInput extends VerificationInput {
+    code: string;
 }
 export interface SandIamProfile {
     identity_id: number;
@@ -140,7 +231,74 @@ export declare class SandIamClient {
     issueContext(input: IssueContextInput): Promise<SandIamWorkloadContext>;
     verifyContext(input: VerifyContextInput): Promise<SandIamWorkloadContext>;
     register(input: RegisterInput): Promise<SandIamAuthResult>;
+    /** Accepting an invitation does not start a session. */
+    acceptInvitation(input: {
+        token: string;
+        username: string;
+        password: string;
+        displayName?: string;
+        requestId?: string;
+    }): Promise<{
+        id: number;
+        display_name: string;
+    }>;
     login(input: LoginInput): Promise<SandIamAuthResult>;
+    verifyMfaChallenge(input: VerifyMfaChallengeInput): Promise<SandIamAuthResult>;
+    /** Platform code performs the WebAuthn ceremony and serializes binary fields. */
+    passkeyRegistrationOptions(input: {
+        name?: string;
+        currentPassword: string;
+        requestId?: string;
+    }): Promise<SandIamPasskeyOptions>;
+    passkeyRegistrationFinish(input: {
+        challengeToken: string;
+        rawId: string;
+        response: PasskeyRegistrationResponse;
+        requestId?: string;
+    }): Promise<void>;
+    passkeyAuthenticationOptions(requestId?: string): Promise<SandIamPasskeyOptions>;
+    passkeyAuthenticationFinish(input: {
+        challengeToken: string;
+        rawId: string;
+        response: PasskeyAuthenticationResponse;
+        userAgent?: string;
+        requestId?: string;
+    }): Promise<SandIamAuthResult>;
+    captchaConfiguration(action: 'login' | 'register', requestId?: string): Promise<SandIamCaptchaConfiguration>;
+    stepUpPassword(password: string, requestId?: string): Promise<SandIamAuthResult>;
+    startMfaStepUp(requestId?: string): Promise<SandIamAuthResult>;
+    unlinkFederation(bindingId: number, requestId?: string): Promise<void>;
+    mfaFactors(requestId?: string): Promise<SandIamMfaFactor[]>;
+    startTotp(input: {
+        name?: string;
+        currentPassword: string;
+        requestId?: string;
+    }): Promise<SandIamTotpSetup>;
+    confirmTotp(input: {
+        factorId: number;
+        code: string;
+        requestId?: string;
+    }): Promise<SandIamTotpConfirmation>;
+    renameMfaFactor(input: {
+        factorId: number;
+        type: 'totp' | 'passkey';
+        name: string;
+        requestId?: string;
+    }): Promise<void>;
+    revokeMfaFactor(input: {
+        factorId: number;
+        type: 'totp' | 'passkey';
+        password: string;
+        requestId?: string;
+    }): Promise<void>;
+    regenerateRecoveryCodes(input: {
+        password: string;
+        requestId?: string;
+    }): Promise<SandIamRecoveryCodes>;
+    requestVerification(input: VerificationInput): Promise<void>;
+    confirmVerification(input: ConfirmVerificationInput): Promise<void>;
+    forgotPassword(input: ForgotPasswordInput): Promise<void>;
+    resetPassword(input: ResetPasswordInput): Promise<void>;
     refresh(refreshToken: string, requestId?: string): Promise<SandIamAuthResult>;
     profile(requestId?: string): Promise<SandIamProfile>;
     updateProfile(displayName: string, requestId?: string): Promise<SandIamProfile>;

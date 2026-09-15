@@ -134,13 +134,13 @@ final class FederationService
             if ($application === null) throw new ApiException('SAND_IAM_FEDERATION_PROVIDER_UNAVAILABLE', 404);
             $transaction->save(['status' => 2, 'consumed_time' => $this->now(), 'encrypted_pkce_verifier' => null]);
             $result = $this->createHandoff($transaction, $provider, $identity, $binding);
+            $this->auditProvider($provider, (int) $transaction->application_id, 'identity_provider.oidc_callback', 'succeeded', $requestId, ['identity_id' => (int) $identity->id]);
             Db::commit();
         } catch (\Throwable $exception) {
             Db::rollback();
             $this->auditCallbackFailure($provider, (int) $transaction->application_id, 'oidc', $requestId);
             throw $exception;
         }
-        $this->auditProvider($provider, (int) $transaction->application_id, 'identity_provider.oidc_callback', 'succeeded', $requestId, ['identity_id' => (int) $identity->id]);
         return $result;
     }
 
@@ -196,9 +196,9 @@ final class FederationService
             if ($application === null) throw new ApiException('SAND_IAM_FEDERATION_PROVIDER_UNAVAILABLE', 404);
             $transaction->save(['status' => 2, 'consumed_time' => $this->now(), 'encrypted_pkce_verifier' => null]);
             $result = $this->createHandoff($transaction, $provider, $identity, $binding);
+            $this->auditProvider($provider, (int) $transaction->application_id, 'identity_provider.oauth2_callback', 'succeeded', $requestId, ['identity_id' => (int) $identity->id]);
             Db::commit();
         } catch (\Throwable $exception) { Db::rollback(); $this->auditCallbackFailure($provider, (int) $transaction->application_id, 'oauth2', $requestId); throw $exception; }
-        $this->auditProvider($provider, (int) $transaction->application_id, 'identity_provider.oauth2_callback', 'succeeded', $requestId, ['identity_id' => (int) $identity->id]);
         return $result;
     }
 
@@ -256,9 +256,9 @@ final class FederationService
             if ($application === null) throw new ApiException('SAND_IAM_FEDERATION_PROVIDER_UNAVAILABLE', 404);
             $transaction->save(['status' => 2, 'consumed_time' => $this->now(), 'assertion_hash' => $this->hash('saml-assertion:' . $assertionId)]);
             $result = $this->createHandoff($transaction, $provider, $identity, $binding);
+            $this->auditProvider($provider, (int) $transaction->application_id, 'identity_provider.saml_callback', 'succeeded', $requestTraceId, ['identity_id' => (int) $identity->id]);
             Db::commit();
         } catch (\Throwable $exception) { Db::rollback(); $this->auditCallbackFailure($provider, (int) $transaction->application_id, 'saml', $requestTraceId); throw $exception; }
-        $this->auditProvider($provider, (int) $transaction->application_id, 'identity_provider.saml_callback', 'succeeded', $requestTraceId, ['identity_id' => (int) $identity->id]);
         return $result;
     }
 
@@ -309,6 +309,7 @@ final class FederationService
         if ($bindingId <= 0 || $session->step_up_time === null || strtotime((string) $session->step_up_time) < time() - 300) throw new ApiException('SAND_IAM_FEDERATION_STEP_UP_REQUIRED', 401);
         $provider = null;
         $applicationId = (int) $session->application_id;
+        $failureReason = 'validation_failed';
         Db::startTrans();
         try {
             $session = AuthSession::where('id', (int) $session->id)->where('status', 1)->lock(true)->find();
@@ -335,13 +336,15 @@ final class FederationService
                 AuthSession::whereIn('id', $sessionIds)->update(['status' => 2, 'revoked_time' => $this->now()]);
                 AuthRefreshToken::whereIn('session_id', $sessionIds)->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
             }
+            $failureReason = 'audit_failed';
+            $this->auditProvider($provider, $applicationId, 'identity_provider.account_unlink', 'succeeded', $requestId, ['identity_id' => (int) $identity->id, 'identity_binding_id' => $bindingId]);
+            $failureReason = 'commit_failed';
             Db::commit();
         } catch (\Throwable $exception) {
             Db::rollback();
-            if ($provider instanceof IdentityProvider) $this->auditProvider($provider, $applicationId, 'identity_provider.account_unlink', 'failed', $requestId, ['reason' => 'validation_failed']);
+            if ($provider instanceof IdentityProvider) $this->auditProvider($provider, $applicationId, 'identity_provider.account_unlink', 'failed', $requestId, ['reason' => $failureReason]);
             throw $exception;
         }
-        $this->auditProvider($provider, $applicationId, 'identity_provider.account_unlink', 'succeeded', $requestId, ['identity_id' => (int) $identity->id, 'identity_binding_id' => $bindingId]);
     }
 
     /** @return array<string,mixed> */

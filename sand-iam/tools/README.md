@@ -32,7 +32,7 @@ php sand-iam/tools/build-review-candidate.php --release-unsigned
 ```bash
 php sand-iam/tools/sign-release-bundle.php \
   --artifact-manifest=/controlled/candidate/manifest.json \
-  --archive=/controlled/candidate/sand-iam-0.7.1-release-unsigned.zip \
+  --archive=/controlled/candidate/sand-iam-0.7.2-release-unsigned.zip \
   --private-key=/controlled/keys/sand-iam-ed25519.key \
   --output=/controlled/candidate/sand-iam.release-attestation.json \
   --source=git \
@@ -79,7 +79,7 @@ arguments, lock digests and generated-tree digests are frozen in
 two-directory rebuild before changing that contract or the reviewed runtime files.
 
 The builder excludes the historical root/plugin failed-upgrade descriptors from
-the normal 0.7.1 payload, verifies ZIP contents and source-snapshot parity,
+the normal 0.7.2 payload, verifies ZIP contents and source-snapshot parity,
 then rebuilds from the same snapshot. ZIP entry ordering, mtimes and permissions
 are normalized; a byte-identical second ZIP is required.
 
@@ -96,7 +96,7 @@ php sand-iam/tools/build-review-candidate.php \
 
 The retained recovery descriptors are historical 0.7.0 evidence for the
 `0.6.0 -> 0.7.0` `ledger_absent` recovery profile. They are not generated or
-included in normal 0.7.1 candidates, and do not authorize a 0.6.0 direct upgrade.
+included in normal 0.7.2 candidates, and do not authorize a 0.6.0 direct upgrade.
 
 ## External release acceptance
 

@@ -63,6 +63,18 @@ function controller(FakeRepository $repository, callable $authorizer, ?FakeAudit
 }
 
 $headers = ['authorization' => 'Bearer not-logged', 'x-request-id' => 'offline-test-close-001'];
+foreach (['GET' => '', 'POST' => '/close'] as $method => $suffix) {
+    $overflowRepository = new FakeRepository(new WorkItem(PHP_INT_MAX, 101, 202, 'open', 1));
+    $overflow = controller($overflowRepository, static fn (): string => '42', $overflowAudit)
+        ->handle($method, '/items/' . PHP_INT_MAX . '0' . $suffix, $headers, '{}');
+    expect($overflow['status'] === 400 && ($overflow['body']['error'] ?? '') === 'invalid_item_id', 'overflow item ID must be rejected');
+    expect($overflowRepository->findCalls === 0 && $overflowRepository->closeCalls === 0, 'overflow item ID must not access a different item');
+    expect(($overflowAudit->events[0]['reason'] ?? '') === 'invalid_item_id', 'invalid item ID denial audit missing');
+}
+$maxRepository = new FakeRepository(new WorkItem(PHP_INT_MAX, 101, 202, 'open', 1));
+$maxRead = controller($maxRepository, static fn (): string => '42')
+    ->handle('GET', '/items/' . PHP_INT_MAX, $headers, '');
+expect($maxRead['status'] === 200 && $maxRead['body']['id'] === PHP_INT_MAX, 'maximum valid item ID must remain exact');
 $deniedRepository = new FakeRepository(new WorkItem(1, 101, 202, 'open', 1));
 $denied = controller($deniedRepository, static fn (): string => throw new HttpProblem(403, 'access_denied'), $deniedAudit)
     ->handle('POST', '/items/1/close', $headers, '{}');
@@ -105,6 +117,18 @@ $body = controller($bodyRepository, static fn (): string => '42', $bodyAudit)
     ->handle('POST', '/items/1/close', $headers, '{"organization_id":999}');
 expect($body['status'] === 400 && $bodyRepository->findCalls === 0 && $bodyRepository->closeCalls === 0, 'request body must not load or override object scope');
 expect($bodyAudit->events === [['action' => 'standalone_work_item.close', 'outcome' => 'denied', 'reason' => 'body_scope_forbidden']], 'scope tampering must have one deny audit');
+
+foreach (['[]', '[1]', '{"unexpected":true}', 'null', '42'] as $invalidBody) {
+    $repository = new FakeRepository(new WorkItem(1, 101, 202, 'open', 1));
+    $authorizationCalls = 0;
+    $result = controller($repository, static function () use (&$authorizationCalls): string {
+        $authorizationCalls++;
+        return '42';
+    }, $invalidBodyAudit)->handle('POST', '/items/1/close', $headers, $invalidBody);
+    expect($result['status'] === 400 && ($result['body']['error'] ?? '') === 'invalid_body', 'non-empty object or non-object close body must be rejected: ' . $invalidBody);
+    expect($repository->findCalls === 0 && $repository->closeCalls === 0 && $authorizationCalls === 0, 'invalid close body must not access business state or authorization');
+    expect($invalidBodyAudit->events === [['action' => 'standalone_work_item.close', 'outcome' => 'denied', 'reason' => 'invalid_body']], 'invalid close body must have one deny audit');
+}
 
 $readRepository = new FakeRepository(new WorkItem(1, 101, 202, 'open', 1));
 $readDenied = controller($readRepository, static fn (): string => throw new HttpProblem(403, 'access_denied'), $readDeniedAudit)

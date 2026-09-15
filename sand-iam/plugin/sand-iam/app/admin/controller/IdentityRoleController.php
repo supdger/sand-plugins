@@ -15,6 +15,7 @@ use plugin\sandadmin\exception\ApiException;
 use plugin\sandadmin\service\Permission;
 use support\Request;
 use support\Response;
+use think\facade\Db;
 
 final class IdentityRoleController extends BaseController
 {
@@ -31,9 +32,16 @@ final class IdentityRoleController extends BaseController
         $identity = $this->identity((int) $request->post('identity_id', 0));
         $role = Role::where('id', (int) $request->post('role_id', 0))->where('application_id', $identity->application_id)->where('status', 1)->find();
         if (!$role) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所选角色不存在、已停用，或不属于该身份所在的接入应用', 400); }
-        $binding = IdentityRole::where('identity_id', $identity->id)->where('role_id', $role->id)->find();
-        if ($binding) { $binding->save(['status' => 1]); } else { $binding = IdentityRole::create(['identity_id' => $identity->id, 'role_id' => $role->id, 'status' => 1]); }
-        $this->audit('identity_role.grant', (int) $binding->id, $identity, $request);
+        Db::startTrans();
+        try {
+            $binding = IdentityRole::where('identity_id', $identity->id)->where('role_id', $role->id)->find();
+            if ($binding) { $binding->save(['status' => 1]); } else { $binding = IdentityRole::create(['identity_id' => $identity->id, 'role_id' => $role->id, 'status' => 1]); }
+            $this->audit('identity_role.grant', (int) $binding->id, $identity, $request);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
         return $this->success(['id' => (int) $binding->id], '已授予');
     }
 
@@ -43,8 +51,15 @@ final class IdentityRoleController extends BaseController
         $binding = IdentityRole::findOrEmpty((int) $request->post('id', 0));
         if ($binding->isEmpty()) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 未找到这条身份角色关系，请刷新列表后重试', 400); }
         $identity = $this->identity((int) $binding->identity_id);
-        $binding->save(['status' => 2]);
-        $this->audit('identity_role.revoke', (int) $binding->id, $identity, $request);
+        Db::startTrans();
+        try {
+            $binding->save(['status' => 2]);
+            $this->audit('identity_role.revoke', (int) $binding->id, $identity, $request);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
         return $this->success('已撤销');
     }
 
@@ -53,7 +68,7 @@ final class IdentityRoleController extends BaseController
         $identity = Identity::where('id', $identityId)->where('status', 1)->find();
         $application = $identity ? Application::find($identity->application_id) : null;
         if (!$identity || !$application) { throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所选应用用户身份不存在、已停用，或所属接入应用不可用', 400); }
-        (new AdminOrganizationAccess($this->adminId ?? 0, is_array($this->adminInfo ?? null) ? $this->adminInfo : null))->assertOrganization((int) $application->organization_id);
+        (new AdminOrganizationAccess($this->adminId ?? 0, is_array($this->adminInfo ?? null) ? $this->adminInfo : null))->assertApplication((int) $identity->application_id);
         return $identity;
     }
 

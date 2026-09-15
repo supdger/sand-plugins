@@ -19,6 +19,7 @@ final class IdentityController extends ApplicationResourceController
     protected array $writeFields = ['application_id', 'code', 'display_name', 'status'];
     protected array $requiredFields = ['application_id', 'code', 'display_name'];
     protected string $resourceType = 'identity';
+    protected ?string $keywordField = 'display_name';
     #[Permission('SandIAM 应用用户身份列表', 'sand_iam:identity:index')] public function index(Request $request): Response { return parent::index($request); }
     #[Permission('SandIAM 应用用户身份读取', 'sand_iam:identity:read')] public function read(Request $request): Response { return parent::read($request); }
     #[Permission('SandIAM 应用用户身份保存', 'sand_iam:identity:save')] public function save(Request $request): Response { return parent::save($request); }

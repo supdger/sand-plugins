@@ -208,6 +208,17 @@ export function parseSandIamImportJobs(value: unknown): SandIamImportJobRow[] {
     .filter((item): item is SandIamImportJobRow => item !== null)
 }
 
+export function parseSandIamImportPagination(value: unknown, defaultSize: number): {
+  total: number; currentPage: number; pageSize: number
+} {
+  const page = isRecord(value) && isRecord(value.data) ? value.data : value
+  return {
+    total: isRecord(page) ? readCount(page.total) ?? unwrapList(value).length : unwrapList(value).length,
+    currentPage: isRecord(page) ? readPositiveInt(page.current_page) ?? 1 : 1,
+    pageSize: isRecord(page) ? readPositiveInt(page.per_page) ?? defaultSize : defaultSize
+  }
+}
+
 function parseSummary(value: unknown): SandIamImportRowSummary | null {
   if (!isRecord(value)) return null
   const rowNumber = readPositiveInt(value.row_number)

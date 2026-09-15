@@ -8,9 +8,11 @@ use plugin\SandIam\app\admin\support\AdminResourceController;
 use plugin\SandIam\app\model\Organization;
 use plugin\SandIam\app\service\OrganizationHumanSessionRevoker;
 use plugin\SandIam\app\service\RequestId;
+use plugin\sandadmin\exception\ApiException;
 use plugin\sandadmin\service\Permission;
 use support\Request;
 use support\Response;
+use think\facade\Db;
 
 final class OrganizationController extends AdminResourceController
 {
@@ -35,8 +37,15 @@ final class OrganizationController extends AdminResourceController
             (new OrganizationHumanSessionRevoker())->disable((int) $model->id, $payload, $this->adminId($request), RequestId::fromRequestCached($request));
             return $this->success('客户主体已停用，全部用户会话已撤销');
         }
-        $model->save($payload);
-        $this->audit('update', (int) $model->id, $request);
+        Db::startTrans();
+        try {
+            $model->save($payload);
+            $this->audit('update', (int) $model->id, $request);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
         return $this->success('更新成功');
     }
 
@@ -50,6 +59,17 @@ final class OrganizationController extends AdminResourceController
         }
         $this->audit('disable', (int) $model->id, $request);
         return $this->success('已停用');
+    }
+
+    protected function normalizePayload(array $payload, ?object $existing = null): array
+    {
+        if (array_key_exists('name', $payload)) {
+            if (!is_string($payload['name']) || trim($payload['name']) === '') {
+                throw new ApiException('SAND_IAM_VALIDATION_ERROR: 客户主体名称必须是非空文本', 400);
+            }
+            $payload['name'] = trim($payload['name']);
+        }
+        return $payload;
     }
 
     private function adminId(Request $request): int

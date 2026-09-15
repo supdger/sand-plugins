@@ -75,6 +75,7 @@ export interface SandIamWebhookDeliveryRow {
 }
 
 export interface SandIamAuditRow {
+  readonly original_audit_id?: number
   readonly id: number
   readonly create_time: string
   readonly application_id: number | null
@@ -351,6 +352,22 @@ export function parseSandIamWebhookDeliveries(value: unknown): SandIamWebhookDel
     .filter((item): item is SandIamWebhookDeliveryRow => item !== null)
 }
 
+export function parseSandIamWebhookDeliveryPage(value: unknown): {
+  data: SandIamWebhookDeliveryRow[]
+  total: number
+  currentPage: number
+  pageSize: number
+} {
+  const page = isRecord(value) && isRecord(value.data) ? value.data : value
+  const data = parseSandIamWebhookDeliveries(value)
+  return {
+    data,
+    total: isRecord(page) ? readNonNegativeInt(page.total) ?? data.length : data.length,
+    currentPage: isRecord(page) ? readPositiveInt(page.current_page) ?? 1 : 1,
+    pageSize: isRecord(page) ? readPositiveInt(page.per_page) ?? 20 : 20
+  }
+}
+
 export function parseSandIamAudit(value: unknown): SandIamAuditRow | null {
   if (!isRecord(value)) return null
   const id = readPositiveInt(value.id)
@@ -390,6 +407,43 @@ export function parseSandIamAudits(value: unknown): SandIamAuditRow[] {
   return unwrapSandIamList(value)
     .map((item) => parseSandIamAudit(item))
     .filter((item): item is SandIamAuditRow => item !== null)
+}
+
+export function parseSandIamArchivedAudit(value: unknown): SandIamAuditRow | null {
+  if (!isRecord(value)) return null
+  const originalId = readPositiveInt(value.original_audit_id)
+  const originalTime = readString(value.original_create_time)
+  if (originalId === null || originalTime === null) return null
+  const row = parseSandIamAudit({ ...value, create_time: originalTime })
+  return row === null ? null : { ...row, original_audit_id: originalId }
+}
+
+export function parseSandIamArchivedAuditPage(value: unknown): ReturnType<typeof parseSandIamAuditPage> {
+  const page = parseSandIamAuditPage(value)
+  const payload = isRecord(value) && isRecord(value.data) ? value.data : value
+  const data = unwrapSandIamList(value).map(parseSandIamArchivedAudit)
+    .filter((row): row is SandIamAuditRow => row !== null)
+  return {
+    ...page,
+    total: isRecord(payload) ? readNonNegativeInt(payload.total) ?? data.length : data.length,
+    data
+  }
+}
+
+export function parseSandIamAuditPage(value: unknown): {
+  data: SandIamAuditRow[]
+  total: number
+  currentPage: number
+  pageSize: number
+} {
+  const page = isRecord(value) && isRecord(value.data) ? value.data : value
+  const data = parseSandIamAudits(value)
+  return {
+    data,
+    total: isRecord(page) ? readNonNegativeInt(page.total) ?? data.length : data.length,
+    currentPage: isRecord(page) ? readPositiveInt(page.current_page) ?? 1 : 1,
+    pageSize: isRecord(page) ? readPositiveInt(page.per_page) ?? 50 : 50
+  }
 }
 
 const AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {

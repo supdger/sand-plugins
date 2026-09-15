@@ -40,9 +40,11 @@ namespace plugin\SandIam\app\service {
     {
         /** @var list<array{organization_id:?int,application_id:?int,action:string,outcome:string,request_id:string}> */
         public static array $writes = [];
+        public static bool $fail = false;
         public function write(string $actorType, string $actorRef, ?int $organizationId, ?int $applicationId, string $action, string $resourceType, ?int $resourceId, string $outcome, string $requestId): void
         {
             self::$writes[] = ['organization_id' => $organizationId, 'application_id' => $applicationId, 'action' => $action, 'outcome' => $outcome, 'request_id' => $requestId];
+            if (self::$fail) throw new \RuntimeException('audit storage unavailable');
         }
     }
 }
@@ -76,6 +78,7 @@ namespace plugin\SandIam\app\admin\support {
         public function assertApplication(int $applicationId): void
         {
             if (in_array($applicationId, self::$allowedApplicationIds, true)) return;
+            (new \plugin\SandIam\app\service\AuditWriter())->write('admin', '2', null, $applicationId, 'application.access', 'application', $applicationId, 'denied', 'environment-lifecycle-acceptance-001');
             throw new ApiException('SAND_IAM_APPLICATION_ACCESS_DENIED: 当前账号未获授该接入应用的管理范围', 403);
         }
         public function assertOrganization(int $organizationId): void { throw new ApiException('SAND_IAM_ORGANIZATION_ACCESS_DENIED', 403); }
@@ -200,9 +203,74 @@ namespace {
         }
     }
 
+    foreach (['', '  ', "\t\r\n", null, 123, []] as $invalidName) {
+        $auditCount = count(AuditWriter::$writes);
+        try {
+            $controller->update(new Request(['id' => 1, 'name' => $invalidName]));
+            throw new \RuntimeException('invalid environment name was accepted');
+        } catch (ApiException $exception) {
+            if ($exception->getCode() !== 400 || !str_contains($exception->getMessage(), 'SAND_IAM_VALIDATION_ERROR')) {
+                throw new \RuntimeException('invalid environment name did not return the stable validation error');
+            }
+        }
+        if (Environment::find(1)?->name !== '生产环境' || count(AuditWriter::$writes) !== $auditCount) {
+            throw new \RuntimeException('rejected environment edit changed the record or successful audit');
+        }
+    }
+
+    $controller->update(new Request(['id' => 1, 'name' => '  正式环境  ', 'code' => 'replacement']));
+    if (Environment::find(1)?->name !== '正式环境' || Environment::find(1)?->code !== 'production') {
+        throw new \RuntimeException('valid rename must trim the name and preserve the immutable code');
+    }
+    $auditCount = count(AuditWriter::$writes);
+    try {
+        $controller->update(new Request(['id' => 1, 'application_id' => 11, 'name' => '越权修改']));
+        throw new \RuntimeException('environment move to an unauthorized application was accepted');
+    } catch (ApiException $exception) {
+        if ($exception->getCode() !== 403) throw $exception;
+    }
+    if (Environment::find(1)?->application_id !== 10 || Environment::find(1)?->name !== '正式环境'
+        || count(AuditWriter::$writes) !== $auditCount + 1
+        || end(AuditWriter::$writes)['outcome'] !== 'denied') {
+        throw new \RuntimeException('rejected cross-application edit changed the environment or audit');
+    }
+
+    foreach (['update', 'disable'] as $operation) {
+        AdminOrganizationAccess::$allowedApplicationIds = [];
+        $beforeRow = serialize(Environment::$rows);
+        $auditCount = count(AuditWriter::$writes);
+        try {
+            $controller->{$operation}(new Request(['id' => 1, 'name' => '越权修改']));
+            throw new \RuntimeException('unauthorized mutation accepted');
+        } catch (ApiException $exception) {
+            if ($exception->getCode() !== 403) throw $exception;
+        } finally {
+            AdminOrganizationAccess::$allowedApplicationIds = [10];
+        }
+        if (serialize(Environment::$rows) !== $beforeRow || count(AuditWriter::$writes) !== $auditCount + 1
+            || end(AuditWriter::$writes)['outcome'] !== 'denied') {
+            throw new \RuntimeException('denied mutation must preserve its denial audit and original record');
+        }
+        $before = serialize([Environment::$rows, AuditWriter::$writes]);
+        AuditWriter::$fail = true;
+        try {
+            $controller->{$operation}(new Request(['id' => 1, 'name' => '不应保存']));
+            throw new \RuntimeException('audit failure was hidden');
+        } catch (\RuntimeException $exception) {
+            if ($exception->getMessage() !== 'audit storage unavailable') throw $exception;
+        } finally {
+            AuditWriter::$fail = false;
+        }
+        if (serialize([Environment::$rows, AuditWriter::$writes]) !== $before) {
+            throw new \RuntimeException("{$operation} left environment or audit changes after failure");
+        }
+    }
+
     $controller->disable(new Request(['id' => 1]));
     $controller->update(new Request(['id' => 1, 'status' => 1]));
-    if ((int) (Environment::find(1)?->status ?? 0) !== 1) throw new \RuntimeException('environment restore via the frozen update API failed');
+    if ((int) (Environment::find(1)?->status ?? 0) !== 1 || Environment::find(1)?->name !== '正式环境') {
+        throw new \RuntimeException('status-only environment restore must preserve the existing name');
+    }
     foreach (['environment.disable', 'environment.update'] as $action) {
         $audit = array_values(array_filter(AuditWriter::$writes, static fn (array $write): bool => $write['action'] === $action))[0] ?? null;
         if ($audit === null || $audit['organization_id'] !== 7 || $audit['application_id'] !== 10) {

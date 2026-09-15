@@ -84,8 +84,11 @@ final class IdentityGroupService
         $application = $this->application($applicationId);
         Db::startTrans();
         try {
-            $member = IdentityGroupMember::where('identity_group_id', $groupId)->where('identity_id', $identityId)->where('application_id', $applicationId)->where('status', 1)->lock(true)->find();
+            // Match addMember's group -> identity -> membership lock order.
+            $group = IdentityGroup::where('id', $groupId)->where('application_id', $applicationId)->lock(true)->find();
+            if ($group === null) throw new ApiException('SAND_IAM_IDENTITY_GROUP_MEMBER_NOT_FOUND', 404);
             $identity = Identity::where('id', $identityId)->where('application_id', $applicationId)->lock(true)->find();
+            $member = IdentityGroupMember::where('identity_group_id', $groupId)->where('identity_id', $identityId)->where('application_id', $applicationId)->where('status', 1)->lock(true)->find();
             if ($member === null || $identity === null) throw new ApiException('SAND_IAM_IDENTITY_GROUP_MEMBER_NOT_FOUND', 404);
             $member->save(['status' => 2]);
             (new IdentityEventPublisher())->publish($application, $identity, 'identity.updated', ['groups'], $requestId);

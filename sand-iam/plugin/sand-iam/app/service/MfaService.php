@@ -206,9 +206,13 @@ final class MfaService
     public function rename(string $accessToken, int $factorId, string $name, string $requestId, string $type = 'totp'): void
     {
         [$application, $identity] = $this->current($accessToken);
-        $factor = $this->factorRecord($application, $identity, $factorId, $type);
-        $factor->save(['name' => $this->factorName($name, (string) $factor->name)]);
-        $this->audit($application, $identity, 'identity.mfa_rename', 'mfa_factor', $factorId, 'succeeded', $requestId);
+        Db::startTrans();
+        try {
+            $factor = $this->factorRecord($application, $identity, $factorId, $type);
+            $factor->save(['name' => $this->factorName($name, (string) $factor->name)]);
+            $this->audit($application, $identity, 'identity.mfa_rename', 'mfa_factor', $factorId, 'succeeded', $requestId);
+            Db::commit();
+        } catch (\Throwable $e) { Db::rollback(); throw $e; }
     }
 
     public function revoke(string $accessToken, int $factorId, string $password, string $requestId, string $type = 'totp', string $ip = ''): void
@@ -220,9 +224,9 @@ final class MfaService
             $factor = $this->factorRecord($application, $identity, $factorId, $type);
             $factor->save(['status' => 2, 'revoked_time' => $this->now()]);
             if ($type === 'totp') MfaRecoveryCode::where('application_id', (int) $application->id)->where('identity_id', (int) $identity->id)->where('factor_id', $factorId)->where('status', 1)->update(['status' => 2]);
+            $this->audit($application, $identity, 'identity.mfa_revoke', 'mfa_factor', $factorId, 'succeeded', $requestId);
             Db::commit();
         } catch (\Throwable $e) { Db::rollback(); throw $e; }
-        $this->audit($application, $identity, 'identity.mfa_revoke', 'mfa_factor', $factorId, 'succeeded', $requestId);
     }
 
     /** @return array{recovery_codes:list<string>} */

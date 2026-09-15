@@ -95,13 +95,28 @@ final class _SnippetCommand extends Command<int> {
     final url = argResults!['url']! as String;
     final organization = argResults!['organization']! as String;
     final application = argResults!['application']! as String;
+    final client = SandIamCliRunner._client(url, organization, application);
+    final urlLiteral = _literal(client.baseUri.toString(), language);
+    final organizationLiteral = _literal(organization, language);
+    final applicationLiteral = _literal(application, language);
     output(switch (language) {
-      'php' => "new SandIamClient('$url', '$organization', '$application');",
+      'php' => 'new SandIamClient($urlLiteral, $organizationLiteral, $applicationLiteral);',
       'typescript' =>
-        "new SandIamClient({ baseUrl: '$url', organizationCode: '$organization', applicationCode: '$application', accessToken: () => tokenStore.read() });",
+        'new SandIamClient({ baseUrl: $urlLiteral, organizationCode: $organizationLiteral, applicationCode: $applicationLiteral, accessToken: () => tokenStore.read() });',
       _ =>
-        "SandIamClient(baseUrl: '$url', organizationCode: '$organization', applicationCode: '$application', accessToken: tokenStore.read);",
+        'SandIamClient(baseUrl: $urlLiteral, organizationCode: $organizationLiteral, applicationCode: $applicationLiteral, accessToken: tokenStore.read);',
     });
     return 0;
+  }
+
+  String _literal(String value, String language) {
+    var escaped = value.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+    if (language != 'php') {
+      escaped = escaped.replaceAll('\n', r'\n').replaceAll('\r', r'\r')
+          .replaceAll('\t', r'\t').replaceAll('\b', r'\b').replaceAll('\f', r'\f')
+          .replaceAll('\u2028', r'\u2028').replaceAll('\u2029', r'\u2029');
+    }
+    if (language == 'flutter') escaped = escaped.replaceAll(r'$', r'\$');
+    return "'$escaped'";
   }
 }

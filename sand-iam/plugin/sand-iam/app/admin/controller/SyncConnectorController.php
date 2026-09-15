@@ -17,6 +17,7 @@ use plugin\sandadmin\exception\ApiException;
 use plugin\sandadmin\service\Permission;
 use support\Request;
 use support\Response;
+use think\facade\Db;
 
 final class SyncConnectorController extends BaseController
 {
@@ -34,19 +35,63 @@ final class SyncConnectorController extends BaseController
         $applicationId = (int) $request->post('application_id', 0); $this->access($request)->assertApplication($applicationId); $application = Application::where('id', $applicationId)->where('status', 1)->find(); if ($application === null) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所属接入应用不存在或已停用', 404);
         $code = trim((string) $request->post('code', '')); $name = trim((string) $request->post('name', '')); $driver = trim((string) $request->post('driver_code', '')); $direction = $this->direction((string) $request->post('direction', 'inbound'));
         if (!preg_match('/^[a-z0-9][a-z0-9_-]{1,63}$/', $code) || $name === '' || mb_strlen($name) > 128 || !preg_match('/^[a-z][a-z0-9_.-]{1,63}$/', $driver)) throw new ApiException('SAND_IAM_VALIDATION_ERROR: 同步连接名称、系统代码或驱动代码无效', 400);
-        try { $connector = SyncConnector::create(['organization_id' => (int) $application->organization_id, 'application_id' => $applicationId, 'code' => $code, 'name' => $name, 'direction' => $direction, 'driver_code' => $driver, 'authority_map' => [], 'conflict_policy' => 'manual', 'missing_protection_hours' => 24, 'disable_threshold_percent' => 20, 'config_version' => 0, 'status' => 1]); }
-        catch (\Throwable $exception) { if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_CONFLICT', 409); throw $exception; }
-        $this->audit($connector, 'sync_connector.create', $request); return $this->success(['id' => (int) $connector->id], '同步连接已创建，请继续填写连接配置并测试');
+        Db::startTrans();
+        try {
+            try { $connector = SyncConnector::create(['organization_id' => (int) $application->organization_id, 'application_id' => $applicationId, 'code' => $code, 'name' => $name, 'direction' => $direction, 'driver_code' => $driver, 'authority_map' => [], 'conflict_policy' => 'manual', 'missing_protection_hours' => 24, 'disable_threshold_percent' => 20, 'config_version' => 0, 'status' => 1]); }
+            catch (\Throwable $exception) { if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_CONFLICT', 409); throw $exception; }
+            $this->audit($connector, 'sync_connector.create', $request);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
+        return $this->success(['id' => (int) $connector->id], '同步连接已创建，请继续填写连接配置并测试');
     }
     #[Permission('SandIAM 同步连接更新', 'sand_iam:sync_connector:update')]
     public function update(Request $request): Response
     {
-        $connector = $this->connector($request); $name = trim((string) $request->post('name', (string) $connector->name)); $hours = (int) $request->post('missing_protection_hours', (int) $connector->missing_protection_hours); $threshold = (int) $request->post('disable_threshold_percent', (int) $connector->disable_threshold_percent); $policy = (string) $request->post('conflict_policy', (string) $connector->conflict_policy);
-        if ($name === '' || mb_strlen($name) > 128 || $hours < 1 || $hours > 720 || $threshold < 1 || $threshold > 100 || !in_array($policy, ['manual', 'reject', 'source_wins', 'local_wins'], true)) throw new ApiException('SAND_IAM_VALIDATION_ERROR: 同步保护或冲突参数无效', 400);
-        $connector->save(['name' => $name, 'missing_protection_hours' => $hours, 'disable_threshold_percent' => $threshold, 'conflict_policy' => $policy]); $this->audit($connector, 'sync_connector.update', $request); return $this->success('同步连接已更新');
+        $authorized = $this->connector($request);
+        $applicationId = (int) $authorized->application_id;
+        $organizationId = (int) $authorized->organization_id;
+        Db::startTrans();
+        try {
+            $connector = SyncConnector::where('id', (int) $authorized->id)->lock(true)->find();
+            if ($connector === null) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404);
+            if ((int) $connector->application_id !== $applicationId || (int) $connector->organization_id !== $organizationId) {
+                throw new ApiException('SAND_IAM_SYNC_CONNECTOR_SCOPE_CHANGED: 同步连接范围已改变，请刷新后重试', 409);
+            }
+            $name = trim((string) $request->post('name', (string) $connector->name));
+            $hours = $this->protectionInteger($request->post('missing_protection_hours', (int) $connector->missing_protection_hours), 720);
+            $threshold = $this->protectionInteger($request->post('disable_threshold_percent', (int) $connector->disable_threshold_percent), 100);
+            $policy = (string) $request->post('conflict_policy', (string) $connector->conflict_policy);
+            if ($name === '' || mb_strlen($name) > 128 || $hours < 1 || $hours > 720 || $threshold < 1 || $threshold > 100 || !in_array($policy, ['manual', 'reject', 'source_wins', 'local_wins'], true)) throw new ApiException('SAND_IAM_VALIDATION_ERROR: 同步保护或冲突参数无效', 400);
+            $connector->save(['name' => $name, 'missing_protection_hours' => $hours, 'disable_threshold_percent' => $threshold, 'conflict_policy' => $policy]);
+            $this->audit($connector, 'sync_connector.update', $request);
+            Db::commit();
+        } catch (\Throwable $error) {
+            Db::rollback();
+            throw $error;
+        }
+        return $this->success('同步连接已更新');
     }
     #[Permission('SandIAM 同步连接停用', 'sand_iam:sync_connector:disable')]
-    public function disable(Request $request): Response { $connector = $this->connector($request); if (SyncRun::where('sync_connector_id', (int) $connector->id)->where('state', 'running')->find()) throw new ApiException('SAND_IAM_SYNC_ALREADY_RUNNING', 409); $connector->save(['status' => 2]); $this->audit($connector, 'sync_connector.disable', $request); return $this->success('同步连接已停用'); }
+    public function disable(Request $request): Response
+    {
+        $connector = $this->connector($request);
+        if (SyncRun::where('sync_connector_id', (int) $connector->id)->where('state', 'running')->find()) {
+            throw new ApiException('SAND_IAM_SYNC_ALREADY_RUNNING', 409);
+        }
+        Db::startTrans();
+        try {
+            $connector->save(['status' => 2]);
+            $this->audit($connector, 'sync_connector.disable', $request);
+            Db::commit();
+        } catch (\Throwable $error) {
+            Db::rollback();
+            throw $error;
+        }
+        return $this->success('同步连接已停用');
+    }
     #[Permission('SandIAM 同步连接配置', 'sand_iam:sync_connector:configure')]
     public function configure(Request $request): Response { $connector = $this->connector($request); $config = $request->post('config', []); $map = $request->post('authority_map', []); if (!is_array($config) || !is_array($map)) throw new ApiException('SAND_IAM_SYNC_CONFIGURATION_INVALID', 400); (new SyncConnectorService())->configure($connector, $config, $map, $this->actor($request), $this->requestId($request)); return $this->success(['config_version' => (int) $connector->config_version], '连接配置已加密保存，之后不回显原值')->withHeader('Cache-Control', 'no-store'); }
     #[Permission('SandIAM 同步连接测试', 'sand_iam:sync_connector:test')]
@@ -70,7 +115,22 @@ final class SyncConnectorController extends BaseController
         $connector = $this->connector($request); $outboxId = (int) $request->post('outbox_id', 0); if ($outboxId <= 0) throw new ApiException('SAND_IAM_VALIDATION_ERROR: 同步出站事件编号无效', 400);
         (new SyncConnectorService())->retryOutbound((int) $connector->id, (int) $connector->application_id, $outboxId, $this->actor($request), $this->requestId($request)); return $this->success('同步出站事件已重新排队');
     }
-    private function connector(Request $request): SyncConnector { $connector = SyncConnector::find((int) $request->input('id', $request->post('id', 0))); if ($connector === null) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404); $this->access($request)->assertApplication((int) $connector->application_id); return $connector; }
+    private function connector(Request $request): SyncConnector
+    {
+        $id = (int) $request->input('id', $request->post('id', 0));
+        $connector = SyncConnector::find($id);
+        if ($connector === null) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404);
+        $this->access($request)->assertApplication((int) $connector->application_id);
+        return $connector;
+    }
+    private function protectionInteger(mixed $value, int $maximum): int
+    {
+        if ((!is_int($value) && !(is_string($value) && preg_match('/^[0-9]+$/D', $value) === 1))
+            || (int) $value < 1 || (int) $value > $maximum) {
+            throw new ApiException('SAND_IAM_VALIDATION_ERROR: 同步保护参数必须是范围内的整数', 400);
+        }
+        return (int) $value;
+    }
     /** @param array<string,mixed> $item @return array<string,mixed> */ private function safe(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'application_id' => (int) ($item['application_id'] ?? 0), 'code' => (string) ($item['code'] ?? ''), 'name' => (string) ($item['name'] ?? ''), 'direction' => (string) ($item['direction'] ?? ''), 'driver_code' => (string) ($item['driver_code'] ?? ''), 'conflict_policy' => (string) ($item['conflict_policy'] ?? ''), 'missing_protection_hours' => (int) ($item['missing_protection_hours'] ?? 0), 'disable_threshold_percent' => (int) ($item['disable_threshold_percent'] ?? 0), 'config_version' => (int) ($item['config_version'] ?? 0), 'config_configured' => !empty($item['encrypted_config']), 'cursor_configured' => !empty($item['encrypted_cursor']), 'last_sync_time' => $item['last_sync_time'] ?? null, 'status' => (int) ($item['status'] ?? 0)]; }
     /** @param array<string,mixed> $item @return array<string,mixed> */ private function outboxPayload(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'sync_connector_id' => (int) ($item['sync_connector_id'] ?? 0), 'application_id' => (int) ($item['application_id'] ?? 0), 'identity_id' => (int) ($item['identity_id'] ?? 0), 'event_id' => (string) ($item['event_id'] ?? ''), 'operation' => (string) ($item['operation'] ?? ''), 'state' => (string) ($item['state'] ?? ''), 'attempt_count' => (int) ($item['attempt_count'] ?? 0), 'error_code' => $item['error_code'] ?? null, 'delivered_time' => $item['delivered_time'] ?? null, 'create_time' => $item['create_time'] ?? null, 'update_time' => $item['update_time'] ?? null]; }
     private function direction(string $value): string { if (!in_array($value, ['inbound', 'outbound', 'bidirectional'], true)) throw new ApiException('SAND_IAM_VALIDATION_ERROR: 同步方向无效', 400); return $value; }

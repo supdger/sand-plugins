@@ -136,8 +136,9 @@ final class CasProtocolService
             $service = CasService::where('id', (int) $record->cas_service_id)->where('application_id', (int) $record->application_id)->where('status', 1)->find();
             $identity = Identity::where('id', (int) $record->identity_id)->where('application_id', (int) $record->application_id)->where('status', 1)->find();
             $application = Application::where('id', (int) $record->application_id)->where('status', 1)->find();
+            $organization = $application === null ? null : Organization::where('id', (int) $application->organization_id)->where('status', 1)->find();
             $record->save(['consumed_time' => date('Y-m-d H:i:s'), 'status' => 2]);
-            if ($service === null || $identity === null || $application === null || !hash_equals((string) $service->service_url, $serviceUrl)) {
+            if ($service === null || $identity === null || $application === null || $organization === null || !hash_equals((string) $service->service_url, $serviceUrl)) {
                 Db::commit();
                 return null;
             }

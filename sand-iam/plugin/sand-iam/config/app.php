@@ -5,7 +5,7 @@ return [
     'debug' => (int) env('SAND_IAM_DEBUG', 0) === 1,
     'controller_suffix' => 'Controller',
     'controller_reuse' => false,
-    'version' => '0.7.1',
+    'version' => '0.7.2',
     // Deployment-managed secret. Empty means runtime context issuance fails closed.
     'context_signing_key' => env('SAND_IAM_CONTEXT_SIGNING_KEY', ''),
     // Required for all human-authentication secrets. Empty means auth fails closed.
@@ -44,6 +44,8 @@ return [
     'sync_encryption_key_version' => env('SAND_IAM_SYNC_ENCRYPTION_KEY_VERSION', 'v1'),
     'sync_encryption_keys' => env('SAND_IAM_SYNC_ENCRYPTION_KEYS', ''),
     'sync_drivers' => env('SAND_IAM_SYNC_DRIVERS', ''),
+    // Enable only after all runners predating the session-lock protocol are drained.
+    'sync_recover_abandoned_runs' => (int) env('SAND_IAM_SYNC_RECOVER_ABANDONED_RUNS', 0) === 1,
     'sync_reference_pepper' => env('SAND_IAM_SYNC_REFERENCE_PEPPER', ''),
     // Rejected or failed outbound events become operator-retryable terminal
     // records instead of remaining pending forever.
@@ -84,8 +86,9 @@ return [
     // A deployment-controlled GSSAPI implementation must satisfy the
     // SpnegoVerifier contract. Missing verifier/keytab/replay support fails closed.
     'kerberos_enabled' => (int) env('SAND_IAM_KERBEROS_ENABLED', 0),
-    'kerberos_verifier' => env('SAND_IAM_KERBEROS_VERIFIER', ''),
-    'kerberos_context_resolver' => env('SAND_IAM_KERBEROS_CONTEXT_RESOLVER', ''),
+    'kerberos_verifier' => env('SAND_IAM_KERBEROS_VERIFIER', \plugin\SandIam\app\kerberos\PeclSpnegoVerifier::class),
+    'kerberos_context_resolver' => env('SAND_IAM_KERBEROS_CONTEXT_RESOLVER', \plugin\SandIam\app\kerberos\DirectTlsSpnegoContextResolver::class),
+    'kerberos_keytabs' => env('SAND_IAM_KERBEROS_KEYTABS', '{}'),
     // RADIUS Server is a dedicated UDP worker. Secrets are per NAS and
     // encrypted independently from every other SandIAM key family.
     'radius_server_enabled' => (int) env('SAND_IAM_RADIUS_SERVER_ENABLED', 0),

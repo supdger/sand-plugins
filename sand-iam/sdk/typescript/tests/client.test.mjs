@@ -1,8 +1,185 @@
 import { SandIamClient, SandIamDeniedError, SandIamError, SandIamCredentialResult, SandIamManagementClient, SandIamManagementError } from '../dist/index.js'
+import './mfa.test.mjs'
+import './passkey.test.mjs'
+import './security-flow.test.mjs'
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
+
+for (const status of [301, 302, 303, 307, 308]) {
+  for (const management of [false, true]) {
+    let requests = 0
+    const fetch = async (url, init) => {
+      requests++
+      assert(init.redirect === 'error', 'SDK transport may follow credential redirects')
+      assert(init.headers.Authorization === 'Bearer fixture-token', 'original credential header changed')
+      assert(!url.includes('fixture-token'), 'credential leaked into URL')
+      return new Response(JSON.stringify({ msg: 'SAND_IAM_REDIRECT_REJECTED', data: {} }), {
+        status, headers: { Location: 'https://external.example.test/collect' },
+      })
+    }
+    let rejected = false
+    try {
+      if (management) {
+        await new SandIamManagementClient({
+          baseUrl: 'https://iam.example.test', administratorToken: () => 'fixture-token', fetch,
+        }).onboardingPreview({ operation_id: 'redirect-test' }, 'redirect-request-01')
+      } else {
+        await new SandIamClient({
+          baseUrl: 'https://iam.example.test', organizationCode: 'sand', applicationCode: 'app',
+          accessToken: () => 'fixture-token', fetch,
+        }).profile()
+      }
+    } catch (error) {
+      rejected = error instanceof SandIamError || error instanceof SandIamManagementError
+    }
+    assert(rejected && requests === 1, `redirect ${status} accepted or retried`)
+  }
+}
+
+for (const method of ['requestVerification', 'confirmVerification']) {
+  for (const channel of ['email', 'phone']) {
+    let calls = 0
+    const client = new SandIamClient({
+      baseUrl: 'https://iam.example.test', organizationCode: 'sand', applicationCode: 'app',
+      accessToken: () => { throw new Error('verification must not read session') },
+      fetch: async (url, init) => {
+        calls++
+        assert(url.endsWith(`/auth/verification/${method === 'requestVerification' ? 'request' : 'confirm'}`), 'verification path')
+        assert(init.method === 'POST' && init.headers.Authorization === undefined, 'anonymous verification')
+        assert(init.headers['X-Request-Id'] === 'verify-request', 'verification request ID')
+        const body = JSON.parse(init.body)
+        assert(body.organization_code === 'sand' && body.application_code === 'app', 'verification scope fixed')
+        assert(body.identifier === 'alice' && body.channel === channel, 'verification account')
+        assert(body.purpose === (channel === 'email' ? 'email_verify' : 'phone_verify'), 'purpose derived, not overridable')
+        assert(!('_password_reset_endpoint' in body), 'private flags not forwarded')
+        assert(method === 'requestVerification' ? !('code' in body) : body.code === '123456', 'confirmation code')
+        return new Response(JSON.stringify({ code: 200, data: '通用成功消息' }), { status: 200 })
+      },
+    })
+    const result = await client[method]({ identifier: 'alice', channel, code: '123456',
+      requestId: 'verify-request', purpose: 'password_reset', application_code: 'forged',
+      organization_code: 'forged', _password_reset_endpoint: true })
+    assert(result === undefined && calls === 1, 'verification void and no login')
+  }
+  let calls = 0
+  const client = new SandIamClient({
+    baseUrl: 'https://iam.example.test', organizationCode: 'sand', applicationCode: 'app', accessToken: () => '',
+    fetch: async () => { calls++; return new Response(JSON.stringify({ code: 400, msg: 'SAND_IAM_AUTH_VERIFICATION_INVALID' }), { status: 400 }) },
+  })
+  for (const channel of ['sms', 'email']) {
+    let rejected = false
+    try { await client[method]({ identifier: 'alice', channel, code: '123456' }) }
+    catch (error) { rejected = error instanceof SandIamError && error.status === (channel === 'sms' ? 0 : 400) }
+    assert(rejected, 'verification validation/error propagation')
+  }
+  assert(calls === 1, 'invalid verification input must not send')
+}
+
+for (const channel of ['email', 'phone']) {
+  for (const method of ['forgotPassword', 'resetPassword']) {
+    let calls = 0
+    const client = new SandIamClient({
+      baseUrl: 'https://iam.example.test', organizationCode: 'sand', applicationCode: 'app',
+      accessToken: () => { throw new Error('Recovery must not read session') },
+      fetch: async (url, init) => {
+        calls++
+        assert(url.endsWith(`/auth/password/${method === 'forgotPassword' ? 'forgot' : 'reset'}`), 'recovery endpoint')
+        assert(init.method === 'POST' && init.headers.Authorization === undefined, 'anonymous recovery')
+        assert(init.headers['X-Request-Id'] === 'recovery-request', 'recovery request id')
+        const body = JSON.parse(init.body)
+        assert(body.identifier === 'alice' && body.channel === channel, 'recovery identity/channel')
+        assert(body.organization_code === 'sand' && body.application_code === 'app', 'fixed recovery scope')
+        assert(!('new_password' in body), 'reset does not use change-password field')
+        assert(method === 'forgotPassword' ? !('password' in body) && !('code' in body)
+          : body.password === 'new-password' && body.code === '123456', 'recovery proof fields')
+        return new Response(JSON.stringify({ code: 200, data: '通用成功消息' }), { status: 200 })
+      },
+    })
+    const result = await client[method]({ identifier: 'alice', channel, code: '123456',
+      password: 'new-password', requestId: 'recovery-request',
+      organization_code: 'forged', application_code: 'forged' })
+    assert(result === undefined && calls === 1, 'recovery returns void with no auto-login')
+  }
+}
+for (const method of ['forgotPassword', 'resetPassword']) {
+  let calls = 0
+  const client = new SandIamClient({
+    baseUrl: 'https://iam.example.test', organizationCode: 'sand', applicationCode: 'app', accessToken: () => '',
+    fetch: async () => { calls++; return new Response(JSON.stringify({ code: 400, msg: 'SAND_IAM_AUTH_VERIFICATION_INVALID' }), { status: 400 }) },
+  })
+  for (const channel of ['sms', 'email']) {
+    let rejected = false
+    try { await client[method]({ identifier: 'alice', channel, code: '123456', password: 'new-password' }) }
+    catch (error) { rejected = error instanceof SandIamError && error.status === (channel === 'sms' ? 0 : 400) }
+    assert(rejected, 'recovery validation/backend errors propagate')
+  }
+  assert(calls === 1, 'invalid channel must not send')
+}
+
+for (const method of ['totp', 'recovery_code', 'passkey']) {
+  const response = { clientDataJSON: 'client', authenticatorData: 'auth', signature: 'signature', userHandle: 'handle' }
+  const client = new SandIamClient({
+    baseUrl: 'https://iam.example.test', organizationCode: 'sand', applicationCode: 'app',
+    accessToken: () => { throw new Error('MFA must not read session token') },
+    fetch: async (url, init) => {
+      assert(url === 'https://iam.example.test/api/sand-iam/v1/auth/mfa/challenge/verify', 'MFA route')
+      assert(init.method === 'POST' && init.headers.Authorization === undefined, 'MFA anonymous POST')
+      assert(init.headers['X-Request-Id'] === 'mfa-request', 'MFA request id')
+      const body = JSON.parse(init.body)
+      assert(body.organization_code === 'sand' && body.application_code === 'app', 'MFA scope cannot be overridden')
+      assert(body.challenge_token === 'challenge' && body.method === method, 'MFA challenge')
+      if (method === 'passkey') {
+        assert(body.rawId === 'credential' && JSON.stringify(body.response) === JSON.stringify(response) && !('code' in body), 'MFA passkey fields')
+      } else assert(body.code === '123456' && !('response' in body), 'MFA code fields')
+      return new Response(JSON.stringify({ code: 200, data: method === 'passkey'
+        ? { step_up: true, expires_in: 300 } : { access_token: 'session', session_id: 9 } }), { status: 200 })
+    },
+  })
+  const result = await client.verifyMfaChallenge({
+    challengeToken: 'challenge', method, code: '123456', rawId: 'credential', response,
+    requestId: 'mfa-request', organization_code: 'forged', application_code: 'forged',
+  })
+  assert(method === 'passkey' ? result.step_up === true && result.expires_in === 300 && result.access_token === undefined
+    : result.access_token === 'session' && result.step_up === undefined, 'MFA result kind retained')
+}
+{
+  const client = new SandIamClient({
+    baseUrl: 'https://iam.example.test', organizationCode: 'sand', applicationCode: 'app', accessToken: () => '',
+    fetch: async () => new Response(JSON.stringify({ code: 401, msg: 'SAND_IAM_MFA_CHALLENGE_INVALID' }), { status: 401 }),
+  })
+  let rejected = false
+  try { await client.verifyMfaChallenge({ challengeToken: 'bad', method: 'totp', code: '123456' }) }
+  catch (error) { rejected = error instanceof SandIamError && error.status === 401 }
+  assert(rejected, 'MFA errors must propagate')
+}
+
+function clients(baseUrl) {
+  return [
+    () => new SandIamClient({ baseUrl, organizationCode: 'sand', applicationCode: 'app', accessToken: () => 'token' }),
+    () => new SandIamManagementClient({ baseUrl, administratorToken: () => 'token' }),
+  ]
+}
+for (const baseUrl of [
+  'http://localhost.example.com', 'http://127.0.0.1.example.com',
+  'http://localhost@remote.example.com', 'http://127.0.0.12',
+  'https://user:password@iam.example.com', 'https://iam.example.com?target=x',
+  'https://iam.example.com#fragment', 'https://', 'https://iam.example.com\n',
+  'http://localhost\\@remote.example.com',
+  'http:localhost', 'http:/localhost', 'https:iam.example.com',
+]) {
+  for (const construct of clients(baseUrl)) {
+    let rejected = false
+    try { construct() } catch { rejected = true }
+    assert(rejected, `unsafe SDK base URL accepted: ${baseUrl}`)
+  }
+}
+for (const baseUrl of ['https://iam.example.com/prefix', 'http://localhost:8080', 'http://127.0.0.1:8080', 'http://[::1]:8080']) {
+  for (const construct of clients(baseUrl)) construct()
+}
+// The browser runtime SDK also supports same-origin requests.
+clients('')[0]()
 
 function decision(allowed) {
   return {
@@ -19,6 +196,48 @@ function decision(allowed) {
     operation: 'read',
     risk_level: 'medium',
   }
+}
+
+const captchaRequests = []
+const mfaChallenge = {
+  mfa_required: true, challenge_token: 'challenge', methods: ['totp', 'recovery_code', 'passkey'],
+  expires_in: 300, public_key: { challenge: 'encoded-challenge', rpId: 'example.test', allowCredentials: [] },
+}
+async function mfaLogin(data) {
+  return new SandIamClient({
+    baseUrl: 'https://iam.example.test', organizationCode: 'sand', applicationCode: 'app',
+    accessToken: () => '',
+    fetch: async () => new Response(JSON.stringify({ code: 200, data }), { status: 200 }),
+  }).login({ identifier: 'user', password: 'password' })
+}
+const mfaResult = await mfaLogin(mfaChallenge)
+assert(JSON.stringify(mfaResult.methods) === JSON.stringify(mfaChallenge.methods), 'MFA methods were lost')
+assert(mfaResult.expires_in === 300 && mfaResult.public_key.challenge === 'encoded-challenge', 'MFA challenge details were lost')
+assert(mfaResult.access_token === undefined && mfaResult.mfa_required === true, 'MFA challenge became a session')
+for (const invalid of [{ methods: 'totp' }, { methods: [1] }, { methods: [''] }, { expires_in: 0 }, { expires_in: '300' }, { public_key: [] }]) {
+  let rejected = false
+  try { await mfaLogin({ ...mfaChallenge, ...invalid }) } catch (error) {
+    rejected = error instanceof SandIamError && error.code === 'SAND_IAM_SDK_INVALID_RESPONSE'
+  }
+  assert(rejected, `invalid MFA fields accepted: ${JSON.stringify(invalid)}`)
+}
+const captchaClient = new SandIamClient({
+  baseUrl: 'https://iam.example.test', organizationCode: 'sand', applicationCode: 'app',
+  accessToken: () => 'existing-session',
+  fetch: async (url, init) => {
+    captchaRequests.push({ url, init })
+    return new Response(JSON.stringify({ code: 200, data: {
+      access_token: 'token', refresh_token: 'refresh', identity: { id: 9, display_name: 'User' },
+    } }), { status: 200 })
+  },
+})
+await captchaClient.register({ username: 'user', password: 'password', captchaToken: 'register-proof' })
+await captchaClient.login({ identifier: 'user', password: 'password' })
+for (const [index, request] of captchaRequests.entries()) {
+  const body = JSON.parse(request.init.body)
+  assert(body.captcha_token === ['register-proof', ''][index], 'captcha registration or optional login is incorrect')
+  assert(body.organization_code === 'sand' && body.application_code === 'app', 'captcha request scope changed')
+  assert(request.init.headers.Authorization === undefined && !request.url.includes('?'), 'captcha used auth header or URL')
 }
 
 let capturedRequest
@@ -89,10 +308,11 @@ const authClient = new SandIamClient({
     return new Response(JSON.stringify({ code: 200, data }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   },
 })
-const login = await authClient.login({ identifier: 'lawyer@example.test', password: 'secret-password', requestId: 'sdk-login' })
+const login = await authClient.login({ identifier: 'lawyer@example.test', password: 'secret-password', requestId: 'sdk-login', captchaToken: 'captcha-login-proof' })
 assert(login.access_token === 'siam_at_login', 'login response was not returned')
 assert(authRequests[0].init.method === 'POST' && authRequests[0].init.headers.Authorization === undefined, 'login unexpectedly used an application session')
 const loginBody = JSON.parse(authRequests[0].init.body)
+assert(loginBody.captcha_token === 'captcha-login-proof', 'login captcha token was omitted')
 assert(loginBody.organization_code === 'sand' && loginBody.application_code === 'lawyer', 'login did not bind the configured application')
 activeToken = login.access_token
 const profile = await authClient.profile('sdk-profile')

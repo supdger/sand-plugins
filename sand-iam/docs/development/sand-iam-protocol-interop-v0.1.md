@@ -55,6 +55,8 @@ Front-Channel 页面对 URL 做 HTML 转义并设置 CSP、no-store、no-referre
 
 ## 4. CAS
 
+验证服务票据时，所属客户主体必须存在且启用；主体停用或缺失时返回验证失败，不释放用户身份或属性。验证过的有效票据仍按一次消费规则失效，恢复主体后也不能重用，应重新发起登录。
+
 CAS 不复用 SandAdmin 后台登录。`017` 候选把每个 CAS 服务登记到具体接入应用，并要求全局唯一、不可修改、无通配符的精确 HTTPS `service` URL。服务 URL 最长 512 字节，可以保留自己的查询参数，但不得预置 `ticket`。
 
 当前候选流程：
@@ -79,13 +81,23 @@ Kerberos 不是“接收一个用户名请求头”。正式启用必须同时�
 
 当前候选已冻结并接入：
 
-- 部署侧 `SpnegoVerifier`，验证结果必须同时证明目标 SPN、mutual auth、channel binding 和 replay cache；默认实现只会返回“不可用”；
-- 部署侧 `SpnegoContextResolver`，只能从受信 TLS 终结器或服务器 API 取得通道绑定和远端地址，明确禁止读取客户端可伪造的身份/绑定请求头；
+- 内置 `PeclSpnegoVerifier`，使用 PECL krb5 的显式 acceptor 凭据限制 SPN，检查 mutual auth、channel-bound 和 replay 标志；依赖缺失时返回“不可用”；
+- 内置 `DirectTlsSpnegoContextResolver` 从实际 TLS 连接和固定服务端证书取得通道绑定及远端地址；反向代理部署仍需提供符合 `SpnegoContextResolver` 的可信实现，禁止读取客户端可伪造的身份/绑定请求头；
 - `kerberos` 身份源配置要求固定 `HTTP/...@REALM`、部署侧 `keytab_ref`、允许 Realm，以及三个强制安全开关；
 - principal 只查找身份源实例 + 接入应用内显式有效的 `IdentityBinding`，不按用户名猜测、不自动创建账号；
 - 登录成功沿用 federation session，使停用绑定后已签发会话也会在后续访问时失效。
 
 `SAND_IAM_KERBEROS_ENABLED` 默认关闭；验证器或传输上下文解析器缺失时 fail closed。真实正向验收仍必须使用临时 Realm、标准浏览器/curl `--negotiate` 和错 SPN/过期票据/重放负例。
+
+### 内置 GSSAPI 适配器的部署条件
+
+启用前安装 PECL krb5，链接 MIT Kerberos 1.19 或更新版本，配置可信 krb5.conf、KDC 连接超时和可写持久 replay cache；禁止 `KRB5RCACHETYPE=none`。`SAND_IAM_KERBEROS_KEYTABS` 为部署方 JSON 映射，例如 `{"iam-spn-v1":"/run/secrets/iam.keytab"}`，身份源只保存该引用，不能指定任意文件路径。本次源码实现不安装扩展、不创建或读取部署密钥、不启停服务。
+
+默认验证器调用 `KRB5CCache::initKeytab` 获取凭据，这一步需要访问 KDC；随后按完整 `HTTP/host@REALM` 获取 acceptor 凭据，拒绝非 Kerberos/SPNEGO 机制、未完成协商、缺失安全标志或过期上下文。部署需限制 KDC 超时；当前尚未验证真实扩展、Realm 和 Webman 阻塞时间，不能据离线替身测试确认生产可用。临时委派凭据不写出或交给业务。
+
+默认上下文解析器适用于 Workerman 直接终结 TLS 的固定单证书监听器。证书使用不可变文件路径；轮换时以新的监听器/连接采用新证书，不能覆盖旧连接对应的证书文件。无 TLS、SNI 证书选择歧义或无法识别的签名算法须拒绝。代理模式需要另外配置可信解析器，不能把转发头当认证依据。
+
+实现依据：[PECL GSSAPI API 源码](https://github.com/php/pecl-authentication-krb5/blob/master/gssapi.c)、[PECL 通道绑定实现](https://github.com/php/pecl-authentication-krb5/blob/master/channel.c)、[MIT GSSAPI 名称和通道绑定语义](https://web.mit.edu/kerberos/www/krb5-latest/doc/appdev/gssapi.html)、[RFC 5929 服务端证书绑定](https://www.rfc-editor.org/rfc/rfc5929.html)。已核实 `GSSAPIChannelBinding::setApplicationData` 为公开实例方法，按字符串字节长度复制数据，支持绑定摘要中的零字节；包内传递 `tls-server-end-point:` 前缀和原始摘要字节，不把摘要转成十六进制。真实 Realm 登录、错 SPN、无绑定、重放、多进程及重启后 replay cache 验证仍未完成。
 
 ## 6. RADIUS
 
@@ -94,10 +106,16 @@ RADIUS Server 属于网络接入面，没有塞进普通 HTTP controller。`018`
 - opt-in 独立 UDP worker，每批有界读取，日志只记录异常类型/文件/行号，不记录报文、用户名、密码或共享密钥；
 - 每个 NAS 绑定一个接入应用和不重叠的规范 IPv4/IPv6 CIDR，共享密钥使用 RADIUS 独立版本化密钥加密；
 - 所有 Access-Request 强制且只允许一个 Message-Authenticator，HMAC-MD5、User-Password 解封装和 Response Authenticator 严格按 RADIUS 既有协议计算；这里使用 MD5/HMAC-MD5 是协议互操作要求，不作为 SandIAM 其他密码或签名算法；
-- 通过真实 UDP 源地址选择唯一 NAS，不读取 HTTP 头；报文指纹进入 5 分钟唯一重放缓存；篡改、来源不明、重放和服务异常静默丢弃；
+- 通过真实 UDP 源地址选择唯一 NAS，不读取 HTTP 头；报文指纹进入 5 分钟唯一重放缓存；篡改、来源不明、重放和未预期的后端异常静默丢弃；
 - 仅支持 User-Name + User-Password。认证复用应用身份的密码锁定、限流、验证状态和审计，但不创建 Bearer 会话；已启用 MFA 的账号明确拒绝，不能绕过 MFA；
 - Access-Accept/Reject 始终带 Response Authenticator 和 Message-Authenticator。
 - 独立 1813 Accounting worker 校验 Accounting-Request Authenticator，支持 Start、Interim-Update、Stop；会话 ID 和用户名只保存带密钥指纹，计数器必须单调，缺失 Start 或倒退事件分别记为 `orphaned`/`conflict`，不伪造正常会话；相同已落库报文可幂等返回 Accounting-Response。
+
+Access 请求当前不缓存并重发原响应。有效报文通过 Message-Authenticator 校验后，先登记重放指纹，再检查用户名、应用与密码；原响应丢失或后续密码后端异常都不会撤销该指纹。因此，相同报文在指纹有效期内再次到达时静默丢弃，不重新验证密码，也不重发上次的 Access-Accept/Reject。该行为尚未通过真实 NAS 的重传与丢包场景验证，是当前候选的接入限制。
+
+客户端超时不能单独判断为密码错误：来源匹配、报文认证、重放、存储故障或网络丢包都可能没有响应。错误密码、非法用户名及停用应用则返回带签名的 Access-Reject。密码后端故障解除后的新请求恢复已有离线证据，相同已登记请求的重试恢复没有通过证据；不能把 Accounting 的重复响应能力视为 Access 登录也具备。
+
+Accounting-Response 表示本地事件处理事务已完成，不表示会话计数一定更新。接入方须同时检查事件的 `outcome`：`applied` 才表示本次应用到会话；`orphaned` 表示没有对应活动会话；`conflict` 包括重复 Start、时间或计数器倒退。后两者保留事件但不覆盖现有会话计数。认证失败、输入无效或存储异常时服务不返回响应；网络丢包与这些情况不能仅靠客户端超时区分。去重指纹包含完整原始报文，改变报文后的重传不属于同一指纹，不应将它理解为按会话 ID 自动去重。
 
 该阶段尚未实现 CHAP/EAP、Access-Challenge 和 RadSec/RADIUS 1.1，真实 FreeRADIUS/radclient 互操作也未执行，因此不能把当前候选称为完整 RADIUS Server。
 

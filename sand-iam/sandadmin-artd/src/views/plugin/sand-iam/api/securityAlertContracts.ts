@@ -73,6 +73,24 @@ export function parseSecurityAlertRows(value: unknown): SandIamSecurityAlertRow[
     .filter((item): item is SandIamSecurityAlertRow => item !== null)
 }
 
+export function parseSecurityAlertPage(value: unknown): {
+  data: SandIamSecurityAlertRow[]
+  total: number
+  currentPage: number
+  pageSize: number
+} {
+  const page = isRecord(value) && isRecord(value.data) ? value.data : value
+  const data = parseSecurityAlertRows(value)
+  const integer = (value: unknown, minimum: number, fallback: number): number =>
+    typeof value === 'number' && Number.isInteger(value) && value >= minimum ? value : fallback
+  return {
+    data,
+    total: isRecord(page) ? integer(page.total, 0, data.length) : data.length,
+    currentPage: isRecord(page) ? integer(page.current_page, 1, 1) : 1,
+    pageSize: isRecord(page) ? integer(page.per_page, 1, 20) : 20
+  }
+}
+
 /**
  * 告警状态用中文：待处理 / 已确认 / 已处理。
  */

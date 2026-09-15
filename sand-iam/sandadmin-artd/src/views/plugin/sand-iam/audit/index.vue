@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import {
@@ -11,7 +11,9 @@
     auditTimeLabel,
     describeAuditExportRangeError,
     parseSandIamAudit,
-    parseSandIamAudits,
+    parseSandIamAuditPage,
+    parseSandIamArchivedAudit,
+    parseSandIamArchivedAuditPage,
     type SandIamAuditRow
   } from '../api/delegationContracts'
   import { describeSandIamError } from '../api/errors'
@@ -26,12 +28,23 @@
   import type { SandIamRequestError, SandIamResourceRow } from '../api/types'
 
   const { hasAuth } = useAuth()
-  const canIndex = computed(() => hasAuth('sand_iam:audit:index'))
-  const canRead = computed(() => hasAuth('sand_iam:audit:read'))
-  const canExport = computed(() => hasAuth('sand_iam:audit:export'))
+  const mode = ref<'current' | 'archive'>(
+    !hasAuth('sand_iam:audit:index') && hasAuth('sand_iam:audit:archive_index') ? 'archive' : 'current'
+  )
+  const canIndex = computed(() => hasAuth(mode.value === 'archive' ? 'sand_iam:audit:archive_index' : 'sand_iam:audit:index'))
+  const canRead = computed(() => hasAuth(mode.value === 'archive' ? 'sand_iam:audit:archive_read' : 'sand_iam:audit:read'))
+  const canExport = computed(() => mode.value === 'current' && hasAuth('sand_iam:audit:export'))
   const canIndexOrganization = computed(() => hasAuth('sand_iam:organization:index'))
 
   const loading = ref(false)
+  const detailLoading = ref(false)
+  const exportLoading = ref(false)
+  const currentPage = ref(1)
+  const pageSize = ref(50)
+  const total = ref(0)
+  let listVersion = 0
+  let detailVersion = 0
+  let disposed = false
   const organizations = ref<readonly SandIamAuditFilterOption[]>([])
   const applications = ref<readonly SandIamAuditFilterOption[]>([])
   const applicationRows = ref<SandIamResourceRow[]>([])
@@ -42,6 +55,7 @@
   const outcome = ref('')
   const action = ref('')
   const resourceType = ref('')
+  const resourceId = ref('')
   const requestId = ref('')
   const fromTime = ref('')
   const toTime = ref('')
@@ -103,7 +117,12 @@
   }
 
   function queryParams(): Record<string, string | number> {
-    const params: Record<string, string | number> = { page: 1, limit: 50 }
+    const params: Record<string, string | number> = { page: currentPage.value, limit: pageSize.value }
+    const objectId = resourceId.value.trim()
+    if (objectId !== '' && !/^[1-9]\d*$/.test(objectId)) {
+      throw new Error('对象编号必须是正整数')
+    }
+    if (objectId !== '') params.resource_id = objectId
     const organization = selectedId(organizationId.value)
     const application = selectedId(applicationId.value)
     if (organization !== null) params.organization_id = organization
@@ -118,78 +137,112 @@
     return params
   }
 
-  async function loadOptions(): Promise<void> {
+  const applicationLoading = ref(false)
+  const organizationLoading = ref(false)
+  const applicationKeywords = ref('')
+  const organizationKeywords = ref('')
+  let applicationRequest = 0
+  let organizationRequest = 0
+
+  async function loadApplications(keywords = ''): Promise<void> {
+    const attempt = ++applicationRequest
+    if (disposed) return
+    applicationKeywords.value = keywords
+    applicationLoading.value = true
     applicationOptionError.value = null
-    organizationOptionError.value = null
     try {
-      const applicationResult = await listSandIamResource('application', {
-        page: 1,
-        limit: 100
-      })
-      applicationRows.value = listRows(applicationResult)
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      if (disposed || attempt !== applicationRequest) return
+      const selected = applicationRows.value.find(row => String(row.id) === applicationId.value)
+      const fetched = listRows(result)
+      applicationRows.value = selected && !fetched.some(row => row.id === selected.id) ? [selected, ...fetched] : fetched
       applications.value = auditApplicationOptions(applicationRows.value)
+      if (!canIndexOrganization.value) {
+        const retained = organizations.value.find(row => String(row.id) === organizationId.value)
+        const derived = auditOrganizationOptionsFromApplications(applicationRows.value)
+        organizations.value = retained && !derived.some(row => row.id === retained.id) ? [retained, ...derived] : derived
+      }
     } catch (error: unknown) {
-      applicationRows.value = []
-      applications.value = []
-      applicationOptionError.value = describeSandIamError(error)
-    }
-
-    if (!auditFilterEndpoints(canIndexOrganization.value).includes('organization')) {
-      organizations.value = auditOrganizationOptionsFromApplications(applicationRows.value)
-      return
-    }
-
-    try {
-      const organizationResult = await listSandIamResource('organization', {
-        page: 1,
-        limit: 100
-      })
-      organizations.value = auditApplicationOptions(listRows(organizationResult))
-    } catch (error: unknown) {
-      organizations.value = []
-      organizationOptionError.value = describeSandIamError(error)
+      if (!disposed && attempt === applicationRequest) applicationOptionError.value = describeSandIamError(error)
+    } finally {
+      if (!disposed && attempt === applicationRequest) applicationLoading.value = false
     }
   }
 
+  async function loadOrganizations(keywords = ''): Promise<void> {
+    const attempt = ++organizationRequest
+    if (disposed || !auditFilterEndpoints(canIndexOrganization.value).includes('organization')) return
+    organizationKeywords.value = keywords
+    organizationLoading.value = true
+    organizationOptionError.value = null
+    try {
+      const result = await listSandIamResource('organization', { page: 1, limit: 100, keywords })
+      if (disposed || !canIndexOrganization.value || attempt !== organizationRequest) return
+      const selected = organizations.value.find(row => String(row.id) === organizationId.value)
+      const fetched = auditApplicationOptions(listRows(result))
+      organizations.value = selected && !fetched.some(row => row.id === selected.id) ? [selected, ...fetched] : fetched
+    } catch (error: unknown) {
+      if (!disposed && canIndexOrganization.value && attempt === organizationRequest) organizationOptionError.value = describeSandIamError(error)
+    } finally {
+      if (!disposed && attempt === organizationRequest) organizationLoading.value = false
+    }
+  }
+
+  async function loadOptions(): Promise<void> {
+    await Promise.all([loadApplications(), loadOrganizations()])
+  }
+
   async function loadAudits(): Promise<void> {
-    if (!canIndex.value) return
+    if (disposed || !canIndex.value) return
+    const version = ++listVersion
     loading.value = true
     requestError.value = null
     try {
-      const result = await getSandIamAdmin('audit/index', queryParams())
-      const parsed = parseSandIamAudits(result)
-      rows.value = parsed
-      viewState.value = parsed.length === 0 ? 'empty' : 'ready'
+      const archive = mode.value === 'archive'
+      const result = await getSandIamAdmin(archive ? 'audit/archive/index' : 'audit/index', queryParams())
+      if (disposed || version !== listVersion) return
+      const page = archive ? parseSandIamArchivedAuditPage(result) : parseSandIamAuditPage(result)
+      rows.value = page.data
+      total.value = page.total
+      currentPage.value = page.currentPage
+      pageSize.value = page.pageSize
+      viewState.value = rows.value.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (disposed || version !== listVersion) return
       requestError.value = describeSandIamError(error)
       rows.value = []
     } finally {
-      loading.value = false
+      if (!disposed && version === listVersion) loading.value = false
     }
   }
 
   async function openDetail(row: SandIamAuditRow): Promise<void> {
+    if (disposed) return
     if (!canRead.value) {
       requestError.value = describeSandIamError(
         new Error('当前账号无权查看审计详情。请联系平台管理员开通审计详情查看权限。')
       )
       return
     }
-    loading.value = true
+    const version = ++detailVersion
+    detailLoading.value = true
     requestError.value = null
     try {
-      const result = await getSandIamAdmin('audit/read', { id: row.id })
+      const archive = mode.value === 'archive'
+      const result = await getSandIamAdmin(archive ? 'audit/archive/read' : 'audit/read', { id: row.id })
+      if (disposed || version !== detailVersion) return
       const payload = isRecord(result) && isRecord(result.data) ? result.data : result
-      const parsed = parseSandIamAudit(payload)
+      const parsed = archive ? parseSandIamArchivedAudit(payload) : parseSandIamAudit(payload)
       if (parsed === null) {
         throw new Error('审计详情返回格式不符合已冻结约定')
       }
       detail.value = parsed
       detailOpen.value = true
     } catch (error: unknown) {
+      if (disposed || version !== detailVersion) return
       requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed && version === detailVersion) detailLoading.value = false
     }
   }
 
@@ -197,6 +250,7 @@
    * CSV 走独立下载，不当普通 list 解析。有列表权限不等于有导出权限。
    */
   async function exportAudits(): Promise<void> {
+    if (disposed || exportLoading.value) return
     if (!canExport.value) {
       requestError.value = describeSandIamError(
         new Error('当前账号无权导出审计。请联系平台管理员开通审计导出权限。')
@@ -208,26 +262,46 @@
       requestError.value = describeSandIamError(new Error(rangeError))
       return
     }
-    loading.value = true
+    const from = fromTime.value
+    const to = toTime.value
+    const version = listVersion
+    exportLoading.value = true
     requestError.value = null
     try {
       const params = queryParams()
       delete params.page
       delete params.limit
       const blob = await downloadSandIamAdminBlob('audit/export', params)
+      if (disposed) return
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `sand-iam-audit-${fromTime.value}-${toTime.value}.csv`
+      link.download = `sand-iam-audit-${from}-${to}.csv`
       link.click()
       URL.revokeObjectURL(url)
       ElMessage.success('已保存')
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && version === listVersion) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed) exportLoading.value = false
     }
   }
+
+  watch([mode, organizationId, applicationId, actorType, outcome, action, resourceType, resourceId, requestId, fromTime, toTime], () => {
+    listVersion++
+    detailVersion++
+    currentPage.value = 1
+    total.value = 0
+    rows.value = []
+    detail.value = null
+    detailOpen.value = false
+    loading.value = false
+    detailLoading.value = false
+    requestError.value = null
+    viewState.value = 'idle'
+  }, { flush: 'sync' })
+
+  onScopeDispose(() => { disposed = true; listVersion++; detailVersion++ })
 
   onMounted(() => {
     void loadOptions()
@@ -244,6 +318,10 @@
           按对象追溯允许、拒绝和安全操作。默认列表显示发生时间、接入应用、操作者、做了什么、影响对象和结果；需要排错时可在详情中查看技术信息。
         </p>
       </div>
+      <ElRadioGroup v-model="mode" class="mb-4" aria-label="审计数据范围">
+        <ElRadioButton value="current">当前审计</ElRadioButton>
+        <ElRadioButton value="archive">归档审计</ElRadioButton>
+      </ElRadioGroup>
 
       <ElAlert
         v-if="!canIndex"
@@ -259,7 +337,9 @@
         type="info"
         :closable="false"
         title="不能导出"
-        description="当前账号可以查看，但不能导出。请联系平台管理员开通导出范围；导出时请选择不超过 31 天的时间段。"
+        :description="mode === 'archive'
+          ? '当前仅支持在线审计导出，归档审计可查询和查看详情。'
+          : '导出需要独立权限，并请选择不超过 31 天的时间段。'"
       />
       <ElAlert
         v-if="displayedError"
@@ -278,9 +358,11 @@
         description="当前筛选范围内没有审计记录。这与没有权限不同。"
       />
 
+      <ElButton v-if="applicationOptionError" :loading="applicationLoading" @click="loadApplications(applicationKeywords)">重试应用搜索</ElButton>
+      <ElButton v-if="organizationOptionError && canIndexOrganization" :loading="organizationLoading" @click="loadOrganizations(organizationKeywords)">重试客户主体搜索</ElButton>
       <ElForm label-width="160px" class="mb-4">
         <ElFormItem label="客户主体">
-          <ElSelect v-model="organizationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="organizationId" filterable :remote="canIndexOrganization" :remote-method="loadOrganizations" :loading="organizationLoading" clearable placeholder="按名称选择">
             <ElOption
               v-for="row in organizations"
               :key="row.id"
@@ -290,7 +372,7 @@
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="loadApplications" :loading="applicationLoading" clearable placeholder="按名称选择">
             <ElOption
               v-for="row in applications"
               :key="row.id"
@@ -325,7 +407,7 @@
           <ElButton type="primary" :disabled="!canIndex" :loading="loading" @click="loadAudits">
             查询
           </ElButton>
-          <ElButton :disabled="!canExport" :loading="loading" @click="exportAudits">
+          <ElButton :disabled="!canExport" :loading="exportLoading" @click="exportAudits">
             导出 CSV
           </ElButton>
         </ElFormItem>
@@ -347,6 +429,9 @@
             <ElFormItem label="对象类型">
               <ElInput v-model="resourceType" placeholder="输入技术人员提供的对象类型" />
             </ElFormItem>
+            <ElFormItem label="对象编号">
+              <ElInput v-model="resourceId" placeholder="输入正整数对象编号" />
+            </ElFormItem>
             <ElFormItem label="请求编号">
               <ElInput v-model="requestId" placeholder="输入技术人员提供的请求编号" />
             </ElFormItem>
@@ -355,6 +440,7 @@
       </ElCollapse>
 
       <ElTable v-loading="loading" :data="rows" border stripe empty-text="暂无可见审计">
+        <ElTableColumn v-if="mode === 'archive'" prop="original_audit_id" label="原审计ID" min-width="120" />
         <ElTableColumn label="发生时间" min-width="180">
           <template #default="scope">{{ auditTimeLabel(scope.row.create_time) }}</template>
         </ElTableColumn>
@@ -377,16 +463,27 @@
         </ElTableColumn>
         <ElTableColumn label="操作" min-width="100" fixed="right">
           <template #default="scope">
-            <ElButton size="small" :disabled="!canRead" @click="openDetail(scope.row)">
+            <ElButton size="small" :disabled="!canRead" :loading="detailLoading" @click="openDetail(scope.row)">
               详情
             </ElButton>
           </template>
         </ElTableColumn>
       </ElTable>
+      <ElPagination
+        v-if="total > 0"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="[20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        @current-change="loadAudits"
+        @size-change="currentPage = 1; loadAudits()"
+      />
     </ElCard>
 
     <ElDrawer v-model="detailOpen" title="审计详情" size="480px">
       <template v-if="detail">
+        <p v-if="detail.original_audit_id !== undefined">原审计ID：{{ detail.original_audit_id }}</p>
         <p>发生时间：{{ auditTimeLabel(detail.create_time) }}</p>
         <p>接入应用：{{ applicationName(detail.application_id) }}</p>
         <p>操作者类型：{{ actorLabel(detail.actor_type) }}</p>
@@ -402,7 +499,7 @@
             <p>原始操作名称：{{ detail.action }}</p>
             <p>原始对象类型：{{ detail.resource_type }}</p>
             <p>请求编号：{{ detail.request_id }}</p>
-            <p>记录编号：{{ detail.id }}</p>
+            <p>{{ mode === 'archive' ? '归档记录编号' : '记录编号' }}：{{ detail.id }}</p>
             <p>操作者参考：{{ detail.actor_ref || '—' }}</p>
             <p>资源参考：{{ detail.resource_id === null ? '—' : detail.resource_id }}</p>
             <p v-if="detail.context !== null">附加信息：{{ JSON.stringify(detail.context) }}</p>

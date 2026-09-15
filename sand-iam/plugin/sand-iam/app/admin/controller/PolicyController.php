@@ -8,6 +8,7 @@ use plugin\SandIam\app\admin\support\ApplicationResourceController;
 use plugin\SandIam\app\developer\ApplicationBusinessActionCatalog;
 use plugin\SandIam\app\model\Identity;
 use plugin\SandIam\app\model\Policy;
+use plugin\SandIam\app\model\PolicyVersion;
 use plugin\SandIam\app\model\Resource;
 use plugin\SandIam\app\model\Role;
 use plugin\SandIam\app\runtime\ScopeMatcher;
@@ -18,6 +19,7 @@ use plugin\sandadmin\exception\ApiException;
 use plugin\sandadmin\service\Permission;
 use support\Request;
 use support\Response;
+use think\facade\Db;
 
 final class PolicyController extends ApplicationResourceController
 {
@@ -27,16 +29,38 @@ final class PolicyController extends ApplicationResourceController
     protected string $resourceType = 'policy';
     #[Permission('SandIAM 策略列表', 'sand_iam:policy:index')] public function index(Request $request): Response { return parent::index($request); }
     #[Permission('SandIAM 策略读取', 'sand_iam:policy:read')] public function read(Request $request): Response { return parent::read($request); }
+    #[Permission('SandIAM 策略历史版本', 'sand_iam:policy:read')]
+    public function versions(Request $request): Response
+    {
+        $policy = $this->find($request);
+        $page = PolicyVersion::where('policy_id', (int) $policy->id)
+            ->field('id,version_no,operation,rollback_of_version_id,create_time')
+            ->order('version_no', 'desc')
+            ->paginate([
+                'page' => max(1, (int) $request->input('page', 1)),
+                'list_rows' => min(100, max(1, (int) $request->input('limit', 20))),
+            ])->toArray();
+        // The pointer identifies the selected runtime snapshot; policy status still gates use.
+        $page['published_version_id'] = $policy->published_version_id === null ? null : (int) $policy->published_version_id;
+        return $this->success($page);
+    }
     #[Permission('SandIAM 策略保存', 'sand_iam:policy:save')] public function save(Request $request): Response { return parent::save($request); }
-    #[Permission('SandIAM 策略停用', 'sand_iam:policy:disable')] public function disable(Request $request): Response { return parent::disable($request); }
+    #[Permission('SandIAM 策略停用', 'sand_iam:policy:disable')]
+    public function disable(Request $request): Response
+    {
+        $policy = $this->find($request);
+        $this->persistStatus($policy, ['status' => 2], 'disable', $request);
+        return $this->success('已停用');
+    }
 
     #[Permission('SandIAM 策略发布', 'sand_iam:policy:publish')]
     public function publish(Request $request): Response
     {
         $policy = $this->find($request);
         $this->assertPolicyShape($policy->toArray());
-        $published = (new PolicyVersionService())->publish((int) $policy->id, RequestId::fromRequest($request));
-        if (!$published['replayed']) $this->audit('publish', (int) $policy->id, $request);
+        $published = (new PolicyVersionService())->publish((int) $policy->id, RequestId::fromRequest($request), null, function () use ($policy, $request): void {
+            $this->audit('publish', (int) $policy->id, $request);
+        });
         return $this->success(['published_version_id' => (int) $published['version']->id, 'version_no' => (int) $published['version']->version_no, 'replayed' => $published['replayed']], '已发布不可变策略版本；草稿后续编辑不会改变当前运行版本');
     }
 
@@ -45,8 +69,9 @@ final class PolicyController extends ApplicationResourceController
     {
         $policy = $this->find($request); $versionId = (int) $request->post('version_id', 0);
         if ($versionId <= 0) throw new ApiException('SAND_IAM_VALIDATION_ERROR: 请提供要回滚到的策略版本', 400);
-        $published = (new PolicyVersionService())->publish((int) $policy->id, RequestId::fromRequest($request), $versionId);
-        if (!$published['replayed']) $this->audit('rollback', (int) $policy->id, $request);
+        $published = (new PolicyVersionService())->publish((int) $policy->id, RequestId::fromRequest($request), $versionId, function () use ($policy, $request): void {
+            $this->audit('rollback', (int) $policy->id, $request);
+        });
         return $this->success(['published_version_id' => (int) $published['version']->id, 'version_no' => (int) $published['version']->version_no], '已将历史快照作为新的策略版本发布；历史版本未被修改');
     }
 
@@ -64,9 +89,22 @@ final class PolicyController extends ApplicationResourceController
     public function revoke(Request $request): Response
     {
         $policy = $this->find($request);
-        $policy->save(['state' => 'revoked', 'status' => 2]);
-        $this->audit('revoke', (int) $policy->id, $request);
+        $this->persistStatus($policy, ['state' => 'revoked', 'status' => 2], 'revoke', $request);
         return $this->success('已撤销');
+    }
+
+    /** @param array{status:int,state?:string} $values */
+    private function persistStatus(object $policy, array $values, string $verb, Request $request): void
+    {
+        Db::startTrans();
+        try {
+            $policy->save($values);
+            $this->audit($verb, (int) $policy->id, $request);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
     }
 
     protected function assertReferences(array $payload, ?object $existing = null): void

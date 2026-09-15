@@ -41,6 +41,7 @@ namespace plugin\SandIam\app\service {
     {
         /** @var list<array{actor_ref:string,organization_id:?int,application_id:?int,action:string,resource_type:string,resource_id:?int,outcome:string,request_id:string}> */
         public static array $writes = [];
+        public static bool $fail = false;
 
         public function write(string $actorType, string $actorRef, ?int $organizationId, ?int $applicationId, string $action, string $resourceType, ?int $resourceId, string $outcome, string $requestId): void
         {
@@ -54,6 +55,7 @@ namespace plugin\SandIam\app\service {
                 'outcome' => $outcome,
                 'request_id' => $requestId,
             ];
+            if (self::$fail) throw new \RuntimeException('audit failure');
         }
     }
 }
@@ -62,11 +64,12 @@ namespace think\facade {
     final class Db
     {
         private static array $snapshots = [];
-        public static function startTrans(): void { self::$snapshots[] = serialize([\plugin\SandIam\app\model\AdminApplicationGrant::$rows, \plugin\SandIam\app\model\SecurityOperation::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]); }
+        public static function startTrans(): void { self::$snapshots[] = serialize([\plugin\SandIam\app\model\AdminApplicationGrant::$rows, \plugin\SandIam\app\model\SecurityOperation::$rows, \plugin\SandIam\app\service\AuditWriter::$writes, \plugin\SandIam\app\model\AdminOrganizationGrant::$rows]); }
         public static function commit(): void { array_pop(self::$snapshots); }
         public static function rollback(): void
         {
-            [$grants, $operations, $audits] = unserialize(array_pop(self::$snapshots), ['allowed_classes' => true]);
+            [$grants, $operations, $audits, $organizationGrants] = unserialize(array_pop(self::$snapshots), ['allowed_classes' => true]);
+            \plugin\SandIam\app\model\AdminOrganizationGrant::$rows = $organizationGrants;
             \plugin\SandIam\app\model\AdminApplicationGrant::$rows = $grants;
             \plugin\SandIam\app\model\SecurityOperation::$rows = $operations;
             \plugin\SandIam\app\service\AuditWriter::$writes = $audits;
@@ -79,8 +82,9 @@ namespace plugin\SandIam\app\admin\support {
 
     final class AdminOrganizationAccess
     {
+        public static bool $superAdmin = false;
         public function __construct(int $adminId, ?array $adminInfo) {}
-        public function isSuperAdmin(): bool { return false; }
+        public function isSuperAdmin(): bool { return self::$superAdmin; }
         /** @return list<int> */ public function organizationIds(): array { return [700]; }
         /** @return list<int> */ public function applicationIds(): array { return [21, 22]; }
         public function assertApplication(int $applicationId): void
@@ -93,7 +97,7 @@ namespace plugin\SandIam\app\admin\support {
             if ($organizationId === 700) return;
             throw new ApiException('SAND_IAM_ORGANIZATION_ACCESS_DENIED', 403);
         }
-        public function assertSuperAdmin(): void { throw new ApiException('SAND_IAM_ORGANIZATION_ACCESS_DENIED', 403); }
+        public function assertSuperAdmin(): void { if (!self::$superAdmin) throw new ApiException('SAND_IAM_ORGANIZATION_ACCESS_DENIED', 403); }
     }
 }
 
@@ -159,6 +163,15 @@ namespace plugin\SandIam\app\model {
             $id = count(self::$rows) + 1;
             return self::$rows[$id] = new GrantRecord(['id' => $id, ...$payload]);
         }
+    }
+    final class Organization {
+        public static function where(string $field, mixed $value): FakeQuery { return new FakeQuery([new GrantRecord(['id' => 700, 'status' => 1])], $field, $value); }
+    }
+    final class AdminOrganizationGrant {
+        public static array $rows = [];
+        public static function create(array $payload): GrantRecord { $id = count(self::$rows) + 1; return self::$rows[$id] = new GrantRecord(['id' => $id, ...$payload]); }
+        public static function find(int $id): ?GrantRecord { return self::$rows[$id] ?? null; }
+        public static function findOrEmpty(int $id): GrantRecord { return self::find($id) ?? new GrantRecord([], true); }
     }
 }
 
@@ -252,4 +265,41 @@ namespace {
     }
 
     echo "admin application grant audit behavior non-pg test passed\n";
+    foreach (['update', 'disable'] as $method) {
+        AdminApplicationGrant::find(1)->save(['status' => $method === 'update' ? 2 : 1]);
+        $before = serialize([AdminApplicationGrant::$rows, AuditWriter::$writes]);
+        $request = new Request(['id' => 1, 'status' => 1], [], $headers('grant-atomic-' . $method));
+        AuditWriter::$fail = true;
+        try { $controller->$method($request); throw new \RuntimeException('Audit failure ignored'); }
+        catch (\RuntimeException $error) { auditBehaviorAssert($error->getMessage() === 'audit failure', $error->getMessage()); }
+        finally { AuditWriter::$fail = false; }
+        auditBehaviorAssert(serialize([AdminApplicationGrant::$rows, AuditWriter::$writes]) === $before, 'Failed mutation retained delegation or audit');
+        $controller->$method($request);
+        auditBehaviorAssert(AdminApplicationGrant::find(1)->status === ($method === 'update' ? 1 : 2), 'Delegation recovery failed');
+    }
+    echo "admin application grant mutation audit rollback behavior PASS\n";
+    require dirname(__DIR__) . '/app/admin/controller/AdminOrganizationGrantController.php';
+    $organizationController = new \plugin\SandIam\app\admin\controller\AdminOrganizationGrantController();
+    $snapshot = static fn (): string => serialize([\plugin\SandIam\app\model\AdminOrganizationGrant::$rows, \plugin\SandIam\app\model\SecurityOperation::$rows, AuditWriter::$writes]);
+    foreach (['save', 'update', 'disable'] as $method) {
+        \plugin\SandIam\app\admin\support\AdminOrganizationAccess::$superAdmin = false;
+        $request = new Request(['id' => 1, 'admin_user_id' => 101, 'organization_id' => 700, 'status' => 1], [], $headers('organization-grant-' . $method));
+        $before = $snapshot();
+        try { $organizationController->$method($request); throw new \RuntimeException('Non-super administrator accepted'); }
+        catch (\plugin\sandadmin\exception\ApiException $error) { auditBehaviorAssert($error->getCode() === 403, 'Wrong super-admin error'); }
+        auditBehaviorAssert($snapshot() === $before, 'Rejected organization grant changed state');
+        \plugin\SandIam\app\admin\support\AdminOrganizationAccess::$superAdmin = true;
+        if ($method === 'update') \plugin\SandIam\app\model\AdminOrganizationGrant::find(1)->save(['status' => 2]);
+        $before = $snapshot();
+        AuditWriter::$fail = true;
+        try { $organizationController->$method($request); throw new \RuntimeException('Organization audit failure ignored'); }
+        catch (\RuntimeException $error) { auditBehaviorAssert($error->getMessage() === 'audit failure', $error->getMessage()); }
+        finally { AuditWriter::$fail = false; }
+        auditBehaviorAssert($snapshot() === $before, 'Failed organization grant retained state or audit');
+        $organizationController->$method($request);
+        auditBehaviorAssert(\plugin\SandIam\app\model\AdminOrganizationGrant::find(1)->status === ($method === 'disable' ? 2 : 1), 'Organization grant recovery failed');
+        $last = AuditWriter::$writes[count(AuditWriter::$writes) - 1];
+        auditBehaviorAssert($last['organization_id'] === 700 && $last['application_id'] === null, 'Organization audit scope incorrect');
+    }
+    echo "organization delegation permission and audit atomicity behavior PASS\n";
 }

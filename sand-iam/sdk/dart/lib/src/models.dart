@@ -1,5 +1,91 @@
 typedef SandIamJson = Map<String, Object?>;
 
+final class SandIamInvitationIdentity {
+  const SandIamInvitationIdentity({required this.id, required this.displayName});
+  final int id;
+  final String displayName;
+}
+
+final class SandIamCaptchaWidget {
+  const SandIamCaptchaWidget({required this.siteKey, required this.action, required this.applicationBinding});
+  String get kind => 'turnstile';
+  final String siteKey;
+  final String action;
+  final String applicationBinding;
+}
+
+final class SandIamCaptchaConfiguration {
+  const SandIamCaptchaConfiguration._(this.required, this.available, this.widget);
+  final bool required;
+  final bool? available;
+  final SandIamCaptchaWidget? widget;
+
+  factory SandIamCaptchaConfiguration.fromJson(SandIamJson json, String action) {
+    if (json['required'] == false) return const SandIamCaptchaConfiguration._(false, null, null);
+    if (json['required'] != true) throw const FormatException('Invalid captcha requirement');
+    if (json['available'] == false) return const SandIamCaptchaConfiguration._(true, false, null);
+    final widget = json['widget'];
+    if (json['available'] != true || widget is! SandIamJson || widget['kind'] != 'turnstile' ||
+        widget['action'] != action || !['login', 'register'].contains(action)) {
+      throw const FormatException('Invalid captcha widget');
+    }
+    final key = widget['site_key'];
+    final binding = widget['application_binding'];
+    final pattern = RegExp(r'^[A-Za-z0-9_-]{1,255}$');
+    if (key is! String || binding is! String || key.trim() != key || binding.trim() != binding ||
+        !pattern.hasMatch(key) || !pattern.hasMatch(binding)) {
+      throw const FormatException('Invalid captcha binding');
+    }
+    return SandIamCaptchaConfiguration._(true, true,
+        SandIamCaptchaWidget(siteKey: key, action: action, applicationBinding: binding));
+  }
+}
+
+final class SandIamMfaFactor {
+  SandIamMfaFactor.fromJson(SandIamJson json)
+      : id = _integer(json, 'id'), type = _string(json, 'type'),
+        name = _string(json, 'name'), status = _integer(json, 'status'),
+        createTime = _nullableString(json, 'create_time'),
+        lastUsedTime = _nullableString(json, 'last_used_time') {
+    if (id <= 0 || !['totp', 'passkey'].contains(type)) throw const FormatException('Invalid MFA factor');
+  }
+  final int id;
+  final String type;
+  final String name;
+  final int status;
+  final String? createTime;
+  final String? lastUsedTime;
+}
+
+final class SandIamTotpSetup {
+  SandIamTotpSetup.fromJson(SandIamJson json)
+      : factorId = _integer(json, 'factor_id'),
+        secretAvailable = _nullableBoolean(json, 'secret_available'),
+        secret = json['secret_available'] == false ? null : _string(json, 'secret'),
+        otpauthUri = json['secret_available'] == false ? null : _string(json, 'otpauth_uri') {
+    if (factorId <= 0 || (secretAvailable != false && (secret!.isEmpty || otpauthUri!.isEmpty))) throw const FormatException('Invalid TOTP setup');
+  }
+  final int factorId;
+  final String? secret;
+  final String? otpauthUri;
+  final bool? secretAvailable;
+}
+
+final class SandIamRecoveryCodes {
+  SandIamRecoveryCodes.fromJson(SandIamJson json, {bool confirmation = false})
+      : recoveryCodes = json['secret_available'] == false ? null : _stringList(json, 'recovery_codes'),
+        secretAvailable = _nullableBoolean(json, 'secret_available'),
+        enabled = _nullableBoolean(json, 'enabled') {
+    if ((secretAvailable != false && (recoveryCodes!.isEmpty || recoveryCodes!.any((code) => code.isEmpty))) ||
+        (confirmation && enabled != true)) {
+      throw const FormatException('Invalid recovery codes');
+    }
+  }
+  final List<String>? recoveryCodes;
+  final bool? enabled;
+  final bool? secretAvailable;
+}
+
 final class SandIamWorkloadContext {
   const SandIamWorkloadContext({
     required this.contextId,
@@ -11,14 +97,16 @@ final class SandIamWorkloadContext {
     required this.claims,
   });
 
-  factory SandIamWorkloadContext.issue(SandIamJson json) => SandIamWorkloadContext(
+  factory SandIamWorkloadContext.issue(SandIamJson json) =>
+      SandIamWorkloadContext(
         context: _string(json, 'context'),
         contextId: _string(json, 'context_id'),
         expireTime: _string(json, 'expire_time'),
         claims: json,
       );
 
-  factory SandIamWorkloadContext.verify(SandIamJson json) => SandIamWorkloadContext(
+  factory SandIamWorkloadContext.verify(SandIamJson json) =>
+      SandIamWorkloadContext(
         contextId: _string(json, 'context_id'),
         serviceCode: _string(json, 'service_code'),
         audience: _string(json, 'audience'),
@@ -108,10 +196,23 @@ final class SandIamAuthResult {
     this.verificationRequired,
     this.mfaRequired,
     this.challengeToken,
+    this.methods,
+    this.expiresIn,
+    this.publicKey,
+    this.stepUp,
   });
 
   factory SandIamAuthResult.fromJson(SandIamJson json) {
     final identityValue = json['identity'];
+    final expiresIn = _nullableInteger(json, 'expires_in');
+    if (expiresIn != null && expiresIn <= 0) {
+      throw const FormatException('expires_in must be positive');
+    }
+    final methods =
+        json['methods'] == null ? null : _stringList(json, 'methods');
+    if (methods != null && methods.any((method) => method.isEmpty)) {
+      throw const FormatException('methods must contain nonempty strings');
+    }
     return SandIamAuthResult(
       identity: identityValue == null
           ? null
@@ -124,6 +225,12 @@ final class SandIamAuthResult {
       verificationRequired: _nullableBoolean(json, 'verification_required'),
       mfaRequired: _nullableBoolean(json, 'mfa_required'),
       challengeToken: _nullableString(json, 'challenge_token'),
+      methods: methods,
+      stepUp: _nullableBoolean(json, 'step_up'),
+      expiresIn: expiresIn,
+      publicKey: json['public_key'] == null
+          ? null
+          : _asMap(json['public_key'], 'public_key'),
     );
   }
 
@@ -136,6 +243,10 @@ final class SandIamAuthResult {
   final bool? verificationRequired;
   final bool? mfaRequired;
   final String? challengeToken;
+  final List<String>? methods;
+  final int? expiresIn;
+  final SandIamJson? publicKey;
+  final bool? stepUp;
 }
 
 final class SandIamProfile {
@@ -324,4 +435,20 @@ SandIamNamedCode _namedCode(SandIamJson json, String key) {
   final value = _map(json, key);
   return SandIamNamedCode(
       code: _string(value, 'code'), name: _string(value, 'name'));
+}
+
+/// Serialized WebAuthn options; platform code owns the ceremony and encoding.
+final class SandIamPasskeyOptions {
+  const SandIamPasskeyOptions({required this.challengeToken, required this.publicKey});
+  final String challengeToken;
+  final SandIamJson publicKey;
+
+  factory SandIamPasskeyOptions.fromJson(SandIamJson json) {
+    final challenge = json['challenge_token'];
+    final publicKey = json['public_key'];
+    if (challenge is! String || challenge.trim().isEmpty || publicKey is! SandIamJson) {
+      throw const FormatException('Invalid passkey options');
+    }
+    return SandIamPasskeyOptions(challengeToken: challenge, publicKey: publicKey);
+  }
 }

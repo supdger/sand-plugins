@@ -27,8 +27,8 @@ namespace plugin\SandIam\app\service {
         public static array $writes = [];
         public function write(string $actorType, string $actorRef, ?int $organizationId, ?int $applicationId, string $action, string $resourceType, ?int $resourceId, string $outcome, string $requestId): void
         {
-            if (self::$fail) throw new \RuntimeException('injected audit failure');
             self::$writes[] = compact('actorType', 'actorRef', 'organizationId', 'applicationId', 'action', 'resourceType', 'resourceId', 'outcome', 'requestId');
+            if (self::$fail) throw new \RuntimeException('injected audit failure');
         }
     }
 }
@@ -39,6 +39,7 @@ namespace plugin\SandIam\app\model {
         public function __construct(array $values) { foreach ($values as $key => $value) $this->{$key} = $value; }
         public function save(array $values): void { foreach ($values as $key => $value) $this->{$key} = $value; }
         public function toArray(): array { return get_object_vars($this); }
+        public function isEmpty(): bool { return !isset($this->id); }
     }
     final class ModelQuery
     {
@@ -60,6 +61,7 @@ namespace plugin\SandIam\app\model {
         public static array $rows = [];
         public static function create(array $values): GrantRecord { $id = count(self::$rows) + 1; return self::$rows[$id] = new GrantRecord(['id' => $id, ...$values]); }
         public static function find(int $id): ?GrantRecord { return self::$rows[$id] ?? null; }
+        public static function findOrEmpty(int $id): GrantRecord { return self::find($id) ?? new GrantRecord([]); }
     }
     final class SecurityOperation
     {
@@ -117,9 +119,9 @@ namespace plugin\SandIam\app\admin\support {
         public function isSuperAdmin(): bool { return true; }
         public function organizationIds(): array { return []; }
         public function assertSuperAdmin(): void {}
-        public function assertOrganization(int $organizationId): void
+        public function assertApplication(int $applicationId): void
         {
-            if (!self::$allow || $organizationId !== 10) throw new \plugin\sandadmin\exception\ApiException('SAND_IAM_ORGANIZATION_ACCESS_DENIED', 403);
+            if (!self::$allow || $applicationId !== 20) throw new \plugin\sandadmin\exception\ApiException('SAND_IAM_APPLICATION_ACCESS_DENIED', 403);
         }
     }
 }
@@ -196,4 +198,51 @@ namespace {
     }
     serviceGrantAtomicAssert($beforeDenied === [count(ServiceGrant::$rows), count(SecurityOperation::$rows), count(AuditWriter::$writes)], 'permission or reference rejection wrote state');
     echo "service grant atomic create non-pg test passed\n";
+    $active = serialize([ServiceGrant::$rows, SecurityOperation::$rows, AuditWriter::$writes]);
+    foreach (['revoke', 'disable'] as $method) {
+        [ServiceGrant::$rows, SecurityOperation::$rows, AuditWriter::$writes] = unserialize($active);
+        AuditWriter::$fail = true;
+        try {
+            $controller->{$method}(serviceGrantAtomicRequest(['id' => 1], 'c04-revoke-failure'));
+            throw new \RuntimeException('revoke audit failure ignored');
+        } catch (\RuntimeException $exception) {
+            serviceGrantAtomicAssert($exception->getMessage() === 'injected audit failure', $exception->getMessage());
+        }
+        serviceGrantAtomicAssert(serialize([ServiceGrant::$rows, SecurityOperation::$rows, AuditWriter::$writes]) === $active, 'failed revoke retained grant state or audit');
+        AuditWriter::$fail = false;
+        $result = $controller->{$method}(serviceGrantAtomicRequest(['id' => 1], 'c04-revoke-recovered'));
+        serviceGrantAtomicAssert($result->data === '已撤销' && ServiceGrant::$rows[1]->status === 2 && ServiceGrant::$rows[1]->revoked_time !== null, 'revoke recovery did not revoke grant');
+        $audit = end(AuditWriter::$writes);
+        serviceGrantAtomicAssert($audit['action'] === 'service_grant.revoke' && $audit['organizationId'] === 10 && $audit['applicationId'] === 20 && $audit['resourceId'] === 1, 'revoke audit scope lost');
+        AdminOrganizationAccess::$allow = false;
+        $before = serialize([ServiceGrant::$rows, AuditWriter::$writes]);
+        try { $controller->{$method}(serviceGrantAtomicRequest(['id' => 1], 'c04-revoke-denied')); throw new \RuntimeException('denied revoke accepted'); }
+        catch (ApiException $exception) { serviceGrantAtomicAssert($exception->getCode() === 403, 'wrong revoke permission rejection'); }
+        serviceGrantAtomicAssert(serialize([ServiceGrant::$rows, AuditWriter::$writes]) === $before, 'denied revoke changed state');
+        AdminOrganizationAccess::$allow = true;
+    }
+    echo "service grant revoke/disable audit rollback non-pg test passed\n";
+    [ServiceGrant::$rows, SecurityOperation::$rows, AuditWriter::$writes] = unserialize($active);
+    $changes = [
+        'id' => 1,
+        'quota_policy' => ['max_invocation_attempts' => 2, 'window_seconds' => 60],
+        'data_class' => 'internal',
+        'expire_time' => '2099-01-01 00:00:00',
+    ];
+    AuditWriter::$fail = true;
+    try { $controller->update(serviceGrantAtomicRequest($changes, 'c04-update-failed')); throw new \RuntimeException('update audit failure ignored'); }
+    catch (\RuntimeException $exception) { serviceGrantAtomicAssert($exception->getMessage() === 'injected audit failure', $exception->getMessage()); }
+    serviceGrantAtomicAssert(serialize([ServiceGrant::$rows, SecurityOperation::$rows, AuditWriter::$writes]) === $active, 'failed update retained changed constraints or audit');
+    AuditWriter::$fail = false;
+    $result = $controller->update(serviceGrantAtomicRequest($changes, 'c04-update-recovered'));
+    serviceGrantAtomicAssert($result->data === '更新成功' && ServiceGrant::$rows[1]->quota_policy === $changes['quota_policy'] && ServiceGrant::$rows[1]->expire_time === $changes['expire_time'], 'update recovery lost constraints');
+    $audit = end(AuditWriter::$writes);
+    serviceGrantAtomicAssert($audit['action'] === 'service_grant.update' && $audit['applicationId'] === 20, 'update audit lost action or scope');
+    foreach (['workload_client_id' => 8, 'service_action_id' => 10, 'audience' => 'other'] as $field => $value) {
+        $before = serialize([ServiceGrant::$rows, AuditWriter::$writes]);
+        try { $controller->update(serviceGrantAtomicRequest(['id' => 1, $field => $value], 'c04-immutable')); throw new \RuntimeException('immutable grant field changed'); }
+        catch (ApiException $exception) { serviceGrantAtomicAssert($exception->getCode() === 409, 'immutable rejection changed'); }
+        serviceGrantAtomicAssert(serialize([ServiceGrant::$rows, AuditWriter::$writes]) === $before, 'immutable rejection wrote state');
+    }
+    echo "service grant update audit rollback non-pg test passed\n";
 }

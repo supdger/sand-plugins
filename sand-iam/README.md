@@ -14,7 +14,7 @@ SandIAM 只提供通用身份、授权和审计能力。业务资源、业务状
 
 ## 版本与兼容性
 
-当前源码候选版本为 `0.7.1`，支持 SandAdmin `6.x`，数据库仅支持 PostgreSQL。
+当前源码候选版本为 `0.7.2`，支持 SandAdmin `6.x`，数据库仅支持 PostgreSQL。
 
 随包 runtime 的 `plugin/sand-iam/vendor/` 与 `sdk/typescript/dist/` 是已审查的发布输入；其锁文件、
 固定工具链、生成范围和摘要见 [`release-build-contract.json`](release-build-contract.json)。正式候选只从
@@ -22,7 +22,7 @@ clean Git commit 的 blob 构建，不能以本机缓存或 ignored 文件替代
 管理 OpenAPI 中的 `0.13.0-candidate` 是接口契约版本，不等于插件发行版本。
 当前可证实的迁移与发布材料变化见[变更日志](CHANGELOG.md)。
 
-`0.7.1` 尚未发布：最终 clean commit、可复现候选 ZIP、包外签名和正式宿主验收尚未同时形成。不要把当前源码、历史候选或静态检查当作可下载或可安装的正式发行版。
+`0.7.2` 尚未发布：最终 clean commit、可复现候选 ZIP、包外签名和正式宿主验收尚未同时形成。不要把当前源码、历史候选或静态检查当作可下载或可安装的正式发行版。
 
 本源码候选尚未正式发布。不要把源码构建、静态检查或候选包生成视为生产可用证明；
 部署前应在隔离环境完成安装、升级、协议互操作、权限安全、备份恢复和业务闭环验证。
@@ -31,16 +31,20 @@ clean Git commit 的 blob 构建，不能以本机缓存或 ignored 文件替代
 
 1. 准备一个符合 `info.ini` 要求的 SandAdmin 6.x PostgreSQL 宿主，并先完成备份。
 2. 使用 SandPackage 从完整 SandIAM ZIP 安装，不要只复制 `plugin/sand-iam/` 子目录。
-3. 按管理端提示执行安装或升级，并在完成后重新登录。
-4. 按[第一次使用](docs/user-guide/sand-iam-first-connection.md)创建客户主体、应用和环境。
-5. 按[管理员操作手册](docs/user-guide/sand-iam-operator-guide.md)完成允许、拒绝、撤销和审计检查。
+3. 注入运行配置后，在宿主加载插件前执行
+   `php plugin/sand-iam/bin/check-runtime-configuration.php --profile=release`；空配置必须关闭失败，
+   预检通过只证明配置形状和开关依赖，不证明服务已经可用。
+4. 按管理端提示执行安装或升级，并在完成后重新登录。
+5. 按[第一次使用](docs/user-guide/sand-iam-first-connection.md)创建客户主体、应用和环境。
+6. 按[管理员操作手册](docs/user-guide/sand-iam-operator-guide.md)完成允许、拒绝、撤销和审计检查。
 
 完整步骤见[安装与升级](docs/user-guide/installation-and-upgrade.md)，恢复演练见[备份与恢复](docs/user-guide/backup-and-restore.md)。
 下载候选包后，先按[发布包校验](docs/user-guide/release-package-verification.md)核对包外 Ed25519 签名、
 manifest 和 ZIP 内逐文件摘要，再执行安装。
 
-已发布迁移文件不可修改。`0.7.1` 没有新增迁移：它只允许已完成 `001–037` 精确账本的
-`0.7.0` 安装执行原始 `038`。不要手工改写迁移账本、伪造失败状态或跳过前置核验。
+已发布迁移文件不可修改。`0.7.2` 只允许已完成 `001–038` 精确账本的 `0.7.1` 安装执行
+`039_service_grant_nullable_data_class.pgsql`，使服务授权的可空 `data_class` 与公开接口契约一致。
+不要手工改写迁移账本、伪造失败状态或跳过前置核验。
 安装、升级和卸载都可能改变数据库，应先备份，并只在获得环境负责人授权后执行。
 
 ## 接入应用
@@ -79,7 +83,7 @@ manifest 和 ZIP 内逐文件摘要，再执行安装。
 - `LICENSE`、`NOTICE`：SandIAM 的 Apache-2.0 许可证正文和版权告知；
 - `THIRD_PARTY_NOTICES.md`：第三方许可、分发形态和原许可证位置索引；
 - `migrations/`、`lifecycle/` 和根生命周期 SQL：PostgreSQL 安装、升级与卸载载荷；
-- `recovery/`：保留的 0.7.0 历史恢复证据，不随 0.7.1 正常包分发；当前正常升级不 opt-in 该描述器。
+- `recovery/`：保留的 0.7.0 历史恢复证据，不随 0.7.2 正常包分发；当前正常升级不 opt-in 该描述器。
 
 ## 获取帮助
 

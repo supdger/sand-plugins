@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
@@ -22,6 +22,13 @@
   const canRevoke = computed(() => hasAuth('sand_iam:scim:token_revoke'))
 
   const loading = ref(false)
+  const saving = ref(false)
+  const providerLoading = ref(false)
+  const applicationLoading = ref(false)
+  let disposed = false
+  let scopeVersion = 0
+  let listVersion = 0
+  const searchVersions = { provider: 0, application: 0 }
   const providers = ref<SandIamResourceRow[]>([])
   const applications = ref<SandIamResourceRow[]>([])
   const tokens = ref<ScimTokenRow[]>([])
@@ -31,7 +38,28 @@
   const expireTime = ref('')
   const requestError = ref<SandIamRequestError | null>(null)
   const issuedToken = ref('')
+  const issuedOwner = ref('')
   const viewState = ref<'idle' | 'empty' | 'ready'>('idle')
+  watch([providerId, applicationId], () => {
+    scopeVersion++
+    listVersion++
+    tokens.value = []
+    tokenName.value = ''
+    expireTime.value = ''
+    requestError.value = null
+    viewState.value = 'idle'
+    loading.value = false
+  }, { flush: 'sync' })
+  onScopeDispose(() => { disposed = true; scopeVersion++; listVersion++; issuedToken.value = ''; issuedOwner.value = '' })
+  function validSelection(): boolean {
+    const provider = providers.value.find(row => String(row.id) === providerId.value)
+    const application = applications.value.find(row => String(row.id) === applicationId.value)
+    return provider !== undefined && application !== undefined && provider.status === 1 &&
+      application.status === 1 && provider.organization_id === application.organization_id
+  }
+  function acknowledgeToken(): void {
+    if (!saving.value) { issuedToken.value = ''; issuedOwner.value = '' }
+  }
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -82,19 +110,33 @@
   }
 
   async function loadOptions(): Promise<void> {
+    await Promise.all([searchOptions('provider', ''), searchOptions('application', '')])
+  }
+
+  async function searchOptions(kind: 'provider' | 'application', keywords: string): Promise<void> {
+    const version = ++searchVersions[kind]
+    const busy = kind === 'provider' ? providerLoading : applicationLoading
+    const options = kind === 'provider' ? providers : applications
+    if (kind === 'provider') providerId.value = ''
+    else applicationId.value = ''
+    options.value = []
+    const permission = kind === 'provider' ? 'sand_iam:identity_provider:index' : 'sand_iam:application:index'
+    if (disposed || !hasAuth(permission)) return
+    busy.value = true
     try {
-      const [providerResult, applicationResult] = await Promise.all([
-        listSandIamResource('identity-provider', { page: 1, limit: 100 }),
-        listSandIamResource('application', { page: 1, limit: 100 })
-      ])
-      providers.value = listRows(providerResult)
-      applications.value = listRows(applicationResult)
+      const result = await listSandIamResource(kind === 'provider' ? 'identity-provider' : 'application',
+        { page: 1, limit: 100, keywords: keywords.trim() })
+      if (!disposed && version === searchVersions[kind]) options.value = listRows(result)
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && version === searchVersions[kind]) requestError.value = describeSandIamError(error)
+    } finally {
+      if (!disposed && version === searchVersions[kind]) busy.value = false
     }
   }
 
   async function loadTokens(): Promise<void> {
+    if (disposed || !canIndex.value || !validSelection()) return
+    const version = ++listVersion
     const provider = selectedId(providerId.value)
     const application = selectedId(applicationId.value)
     if (provider === null || application === null) {
@@ -108,20 +150,27 @@
         provider_id: provider,
         application_id: application
       })
+      if (disposed || version !== listVersion) return
       const rows = listRows(result)
         .map((item) => parseToken(item))
         .filter((item): item is ScimTokenRow => item !== null)
       tokens.value = rows
       viewState.value = rows.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (disposed || version !== listVersion) return
       requestError.value = describeSandIamError(error)
       tokens.value = []
     } finally {
-      loading.value = false
+      if (!disposed && version === listVersion) loading.value = false
     }
   }
 
   async function issueToken(): Promise<void> {
+    if (disposed || saving.value || !canIssue.value || issuedToken.value !== '' || !validSelection()) return
+    const version = scopeVersion
+    const providerRow = providers.value.find(row => String(row.id) === providerId.value)
+    const applicationRow = applications.value.find(row => String(row.id) === applicationId.value)
+    const owner = `${String(providerRow?.name ?? providerId.value)} / ${String(applicationRow?.name ?? applicationId.value)} / ${tokenName.value.trim()}`
     const provider = selectedId(providerId.value)
     const application = selectedId(applicationId.value)
     if (provider === null || application === null || tokenName.value.trim() === '') {
@@ -130,7 +179,7 @@
       )
       return
     }
-    loading.value = true
+    saving.value = true
     requestError.value = null
     try {
       const result = await postSandIamAction('scim/token/issue', {
@@ -139,25 +188,34 @@
         name: tokenName.value.trim(),
         expire_time: expireTime.value.trim() === '' ? null : expireTime.value
       })
+      if (disposed) return
       const payload = isRecord(result) && isRecord(result.data) ? result.data : result
       const token = isRecord(payload) && typeof payload.token === 'string' ? payload.token : ''
       if (token === '') {
         throw new Error('签发响应没有一次性令牌，请不要重试猜测。')
       }
       issuedToken.value = token
+      issuedOwner.value = owner
+      if (version !== scopeVersion) return
       ElMessage.success('已保存')
       await loadTokens()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && version === scopeVersion) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      saving.value = false
     }
   }
 
   async function revoke(row: ScimTokenRow): Promise<void> {
+    const version = scopeVersion
+    const request = listVersion
+    const current = (): boolean => !disposed && version === scopeVersion &&
+      request === listVersion && tokens.value.includes(row)
+    if (disposed || saving.value || !canRevoke.value || row.status !== 1 || !current() || !validSelection()) return
     const provider = selectedId(providerId.value)
     const application = selectedId(applicationId.value)
     if (provider === null || application === null) return
+    saving.value = true
     try {
       await ElMessageBox.confirm(
         `确认撤销「${row.name}」吗？撤销后不能恢复，目录同步必须改用新令牌。`,
@@ -165,9 +223,13 @@
         { type: 'warning', confirmButtonText: '确认撤销', cancelButtonText: '取消' }
       )
     } catch {
+      saving.value = false
       return
     }
-    loading.value = true
+    if (!current() || !canRevoke.value || row.status !== 1 || !validSelection()) {
+      saving.value = false
+      return
+    }
     requestError.value = null
     try {
       await postSandIamAction('scim/token/revoke', {
@@ -175,12 +237,13 @@
         application_id: application,
         token_id: row.id
       })
+      if (!current()) return
       ElMessage.success('已撤销')
       await loadTokens()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      saving.value = false
     }
   }
 
@@ -195,8 +258,7 @@
       <div class="mb-4">
         <h2 class="m-0 text-lg font-semibold">SCIM 供给令牌</h2>
         <p class="mb-0 mt-2 text-sm text-gray-500">
-          给已配置为 SCIM
-          的身份源签发目录同步令牌。默认列表只显示用途名称、状态、到期和最近使用；令牌明文只在签发成功后出现一次，刷新或关闭后无法再看。
+          给已挂载到接入应用的身份源签发目录同步令牌，具体可用范围由后端校验。默认列表只显示用途名称、状态、到期和最近使用；令牌明文只在签发成功后出现一次，刷新或关闭后无法再看。
         </p>
       </div>
 
@@ -227,7 +289,8 @@
 
       <ElForm label-width="160px" class="mb-4">
         <ElFormItem label="身份源">
-          <ElSelect v-model="providerId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="providerId" filterable remote :remote-method="(keywords: string) => searchOptions('provider', keywords)"
+            :loading="providerLoading" clearable placeholder="输入身份源名称搜索">
             <ElOption
               v-for="row in providers"
               :key="String(row.id)"
@@ -237,7 +300,8 @@
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="(keywords: string) => searchOptions('application', keywords)"
+            :loading="applicationLoading" clearable placeholder="输入应用名称搜索">
             <ElOption
               v-for="row in applications"
               :key="String(row.id)"
@@ -258,10 +322,12 @@
           <ElDatePicker v-model="expireTime" type="datetime" value-format="YYYY-MM-DD HH:mm:ss" />
         </ElFormItem>
         <ElFormItem>
-          <ElButton :disabled="!canIssue" @click="issueToken">签发</ElButton>
+          <ElButton :disabled="!canIssue || saving || issuedToken !== ''" @click="issueToken">签发</ElButton>
         </ElFormItem>
         <ElFormItem v-if="issuedToken !== ''" label="一次性令牌">
           <ElInput :model-value="issuedToken" type="textarea" readonly />
+          <p>令牌归属：{{ issuedOwner }}</p>
+          <ElButton :disabled="saving" @click="acknowledgeToken">我已安全保存，清除令牌</ElButton>
           <p class="mb-0 mt-1 text-xs text-gray-500"
             >关闭后无法再显示。不要写入日志、URL 或截图文件名。</p
           >
@@ -287,7 +353,7 @@
               v-if="scope.row.status === 1"
               size="small"
               type="warning"
-              :disabled="!canRevoke"
+              :disabled="!canRevoke || saving"
               @click="revoke(scope.row)"
             >
               撤销

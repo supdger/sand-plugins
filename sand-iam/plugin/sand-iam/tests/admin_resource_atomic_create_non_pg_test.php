@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+// behavior-test-gate: static-rule
+
 namespace plugin\sandadmin\exception {
     final class ApiException extends \RuntimeException {}
 }

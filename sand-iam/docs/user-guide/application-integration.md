@@ -61,7 +61,13 @@ API、范围不符或策略拒绝必须按返回的稳定 `SAND_IAM_*` 码拒绝
 `context`、同一 `audience` 和**每一个**待执行 `action`。两端均带 `Cache-Control: no-store`，并用各自
 request ID 关联审计。签发响应至少要求 `context`、`context_id`、`expire_time`；验证响应至少要求
 `context_id`、`service_code`、`audience` 和包含当前 action 的 `actions`。缺失任一字段、受众或动作
-不等、过期/重放、撤销凭证或错误 service 均拒绝，不能沿用旧 context。
+不等、到期、撤销凭证或错误 service 均拒绝。上下文验证会重新检查当前凭证、机器身份、环境、
+应用、客户主体和服务授权；调用方不得缓存一次允许结果来替代后续验证。
+
+短期 context 本身不是一次性消费票据。业务请求的防重放由服务端的操作编号或幂等键负责：
+同一业务意图重试必须沿用同一键，服务先重新验权，再返回已保存的结果，不能重复执行业务副作用；
+同一键换成其他业务对象或请求内容应拒绝。凭证或授权撤销后，即使已有幂等结果也必须先拒绝请求。
+下面的 provider 示例在每次持久化尝试前验证，包括幂等重试；仅调用 `verify` 不能替代这层业务防重放。
 
 ## 业务中间件装配
 
@@ -111,7 +117,8 @@ SDK 在
 ## 机器调用
 
 创建机器身份、服务授权和一次性凭证。调用方用凭证签发短期上下文，服务方用相同 audience 和 action 验证后
-才执行业务副作用。必须验证错误受众、无权动作、过期、重放和撤销后的拒绝；受控机器接入源码见
+才执行业务副作用。必须验证错误受众、无权动作、过期和撤销后的拒绝，以及相同幂等键重试不重复业务副作用、
+冲突重试被拒绝；受控机器接入源码见
 [machine-service-client](../../examples/machine-service-client/README.md) 的
 [`provider/` + `caller`](../../examples/machine-service-client/provider/README.md)：caller 在内存中取得短期 context，
 只经 header 交给 provider，provider 在幂等查询和业务副作用前验证。两条 consumer 路径都只提供离线门禁说明，

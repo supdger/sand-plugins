@@ -615,7 +615,7 @@ CREATE TABLE IF NOT EXISTS sand_iam_service_grant (
     service_action_id bigint NOT NULL REFERENCES sand_iam_service_action(id) ON DELETE RESTRICT,
     audience varchar(128) NOT NULL,
     quota_policy jsonb NOT NULL DEFAULT '{}'::jsonb,
-    data_class varchar(32) NOT NULL DEFAULT 'internal',
+    data_class varchar(32) NULL DEFAULT 'internal',
     network_policy jsonb NOT NULL DEFAULT '{}'::jsonb,
     expire_time timestamp(0) without time zone NULL,
     revoked_time timestamp(0) without time zone NULL,

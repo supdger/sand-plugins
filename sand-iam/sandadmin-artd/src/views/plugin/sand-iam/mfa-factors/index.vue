@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onUnmounted, ref } from 'vue'
+  import { computed, onUnmounted, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import {
     confirmSandIamTotp,
@@ -30,6 +30,38 @@
   const pendingFactorId = ref<number | null>(null)
   const oneTimeCodes = ref<string[]>([])
   const tokenReady = computed(() => accessToken.value.trim() !== '')
+  let disposed = false
+  let tokenVersion = 0
+  let listVersion = 0
+  watch(accessToken, () => {
+    tokenVersion++
+    listVersion++
+    factors.value = []
+    pendingFactorId.value = null
+    clearSensitive()
+    totpName.value = '验证器'
+    requestError.value = null
+    lastRequestId.value = ''
+    viewState.value = 'idle'
+  }, { flush: 'sync' })
+
+  function beginAction() {
+    if (disposed || acting.value || !tokenReady.value) return null
+    const token = accessToken.value
+    const version = tokenVersion
+    acting.value = true
+    requestError.value = null
+    return { token, current: () => !disposed && version === tokenVersion && token === accessToken.value }
+  }
+
+  function actionError(error: unknown): void {
+    requestError.value = describeRuntimeAuthError(error)
+    viewState.value = requestError.value.http === 403 ? 'forbidden' : 'error'
+  }
+
+  function acknowledgeCodes(): void {
+    if (!acting.value) oneTimeCodes.value = []
+  }
 
   function factorTypeLabel(type: SandIamRuntimeFactor['type']): string {
     return type === 'passkey' ? '通行密钥' : '验证器'
@@ -48,6 +80,10 @@
   }
 
   async function loadFactors(): Promise<void> {
+    if (disposed) return
+    const token = accessToken.value
+    const version = ++listVersion
+    const current = () => !disposed && version === listVersion && token === accessToken.value
     if (!tokenReady.value) {
       viewState.value = 'error'
       requestError.value = describeRuntimeAuthError(
@@ -58,11 +94,13 @@
     viewState.value = 'loading'
     requestError.value = null
     try {
-      const result = await listSandIamRuntimeFactors(accessToken.value)
+      const result = await listSandIamRuntimeFactors(token)
+      if (!current()) return
       lastRequestId.value = result.requestId
       factors.value = result.data
       viewState.value = result.data.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (!current()) return
       const described = describeRuntimeAuthError(error)
       requestError.value = described
       factors.value = []
@@ -71,41 +109,48 @@
   }
 
   async function startTotp(): Promise<void> {
-    acting.value = true
-    requestError.value = null
+    if (pendingFactorId.value !== null || oneTimeCodes.value.length > 0) return
+    const action = beginAction()
+    if (!action) return
     try {
       const result = await startSandIamTotp(
-        accessToken.value,
+        action.token,
         totpName.value,
         currentPassword.value
       )
+      if (!action.current()) return
+      currentPassword.value = ''
       lastRequestId.value = result.requestId
       pendingFactorId.value = result.data.factorId
       oneTimeSecret.value = result.data.secret
       oneTimeOtpauth.value = result.data.otpauthUri
       ElMessage.success('已保存')
     } catch (error: unknown) {
-      requestError.value = describeRuntimeAuthError(error)
+      if (action.current()) actionError(error)
     } finally {
       acting.value = false
     }
   }
 
   async function confirmTotp(): Promise<void> {
+    if (disposed || acting.value || !tokenReady.value || oneTimeCodes.value.length > 0) return
     if (pendingFactorId.value === null) {
-      requestError.value = describeRuntimeAuthError(
+      actionError(
         new Error('SAND_IAM_VALIDATION_ERROR: 请先完成添加验证器第一步')
       )
       return
     }
-    acting.value = true
-    requestError.value = null
+    const factorId = pendingFactorId.value
+    const action = beginAction()
+    if (!action) return
     try {
       const result = await confirmSandIamTotp(
-        accessToken.value,
-        pendingFactorId.value,
+        action.token,
+        factorId,
         totpCode.value
       )
+      if (!action.current() || pendingFactorId.value !== factorId) return
+      totpCode.value = ''
       lastRequestId.value = result.requestId
       oneTimeCodes.value = result.data
       oneTimeSecret.value = ''
@@ -114,38 +159,49 @@
       ElMessage.success('已保存')
       await loadFactors()
     } catch (error: unknown) {
-      requestError.value = describeRuntimeAuthError(error)
+      if (action.current()) actionError(error)
     } finally {
       acting.value = false
     }
   }
 
   async function rename(factor: SandIamRuntimeFactor): Promise<void> {
+    if (viewState.value === 'loading' || !factors.value.includes(factor)) return
+    const action = beginAction()
+    if (!action) return
+    const query = listVersion
+    const current = () => action.current() && query === listVersion && factors.value.includes(factor)
     try {
       const name = await ElMessageBox.prompt(
         `为「${factor.name}」填写新的显示名称。`,
         '重命名认证方式',
         { confirmButtonText: '保存', cancelButtonText: '取消', inputValue: factor.name }
       )
-      acting.value = true
+      if (!current()) return
       const result = await renameSandIamRuntimeFactor(
-        accessToken.value,
+        action.token,
         factor.id,
         factor.type,
         String(name.value ?? '')
       )
+      if (!current()) return
       lastRequestId.value = result.requestId
       ElMessage.success('已保存')
       await loadFactors()
     } catch (error: unknown) {
       if (error === 'cancel' || error === 'close') return
-      requestError.value = describeRuntimeAuthError(error)
+      if (current()) actionError(error)
     } finally {
       acting.value = false
     }
   }
 
   async function revoke(factor: SandIamRuntimeFactor): Promise<void> {
+    if (viewState.value === 'loading' || !factors.value.includes(factor)) return
+    const action = beginAction()
+    if (!action) return
+    const query = listVersion
+    const current = () => action.current() && query === listVersion && factors.value.includes(factor)
     try {
       const password = await ElMessageBox.prompt(
         `撤销「${factor.name}」后，该${factorTypeLabel(factor.type)}立即失效。请输入当前应用用户密码确认。验证器密钥和恢复码不会回显。`,
@@ -156,49 +212,57 @@
           inputType: 'password'
         }
       )
-      acting.value = true
+      if (!current()) return
       const result = await revokeSandIamRuntimeFactor(
-        accessToken.value,
+        action.token,
         factor.id,
         factor.type,
         String(password.value ?? '')
       )
+      if (!current()) return
       lastRequestId.value = result.requestId
       ElMessage.success('已撤销')
       await loadFactors()
     } catch (error: unknown) {
       if (error === 'cancel' || error === 'close') return
-      requestError.value = describeRuntimeAuthError(error)
+      if (current()) actionError(error)
     } finally {
       acting.value = false
     }
   }
 
   async function regenerate(): Promise<void> {
+    if (oneTimeCodes.value.length > 0 || pendingFactorId.value !== null) return
+    const action = beginAction()
+    if (!action) return
     try {
       const password = await ElMessageBox.prompt(
         '重新生成后，旧恢复码全部作废。请输入当前应用用户密码。新恢复码只展示一次。',
         '重新生成恢复码',
         { confirmButtonText: '重新生成', cancelButtonText: '取消', inputType: 'password' }
       )
-      acting.value = true
+      if (!action.current()) return
       const result = await regenerateSandIamRecoveryCodes(
-        accessToken.value,
+        action.token,
         String(password.value ?? '')
       )
+      if (!action.current()) return
       lastRequestId.value = result.requestId
       oneTimeCodes.value = result.data
       ElMessage.success('已保存')
     } catch (error: unknown) {
       if (error === 'cancel' || error === 'close') return
-      requestError.value = describeRuntimeAuthError(error)
+      if (action.current()) actionError(error)
     } finally {
       acting.value = false
     }
   }
 
   onUnmounted(() => {
+    disposed = true
+    listVersion++
     accessToken.value = ''
+    pendingFactorId.value = null
     clearSensitive()
   })
 </script>
@@ -288,8 +352,8 @@
         <ElTableColumn label="操作" min-width="180" fixed="right">
           <template #default="scope">
             <ElSpace>
-              <ElButton size="small" @click="rename(scope.row)">重命名</ElButton>
-              <ElButton size="small" type="warning" @click="revoke(scope.row)">撤销</ElButton>
+              <ElButton size="small" :disabled="acting" @click="rename(scope.row)">重命名</ElButton>
+              <ElButton size="small" type="warning" :disabled="acting" @click="revoke(scope.row)">撤销</ElButton>
             </ElSpace>
           </template>
         </ElTableColumn>
@@ -305,7 +369,7 @@
           <ElInput v-model="currentPassword" type="password" show-password autocomplete="off" />
         </ElFormItem>
         <ElFormItem>
-          <ElButton :disabled="!tokenReady" @click="startTotp">开始添加</ElButton>
+          <ElButton :disabled="!tokenReady || acting || pendingFactorId !== null || oneTimeCodes.length > 0" @click="startTotp">开始添加</ElButton>
         </ElFormItem>
         <ElFormItem v-if="oneTimeSecret !== ''" label="一次性密钥">
           <ElInput :model-value="oneTimeSecret" type="textarea" readonly />
@@ -320,13 +384,14 @@
           <ElInput v-model="totpCode" maxlength="6" />
         </ElFormItem>
         <ElFormItem v-if="pendingFactorId !== null">
-          <ElButton type="primary" @click="confirmTotp">确认绑定</ElButton>
+          <ElButton type="primary" :disabled="!tokenReady || acting" @click="confirmTotp">确认绑定</ElButton>
         </ElFormItem>
         <ElFormItem>
-          <ElButton :disabled="!tokenReady" @click="regenerate">重新生成恢复码</ElButton>
+          <ElButton :disabled="!tokenReady || acting || oneTimeCodes.length > 0 || pendingFactorId !== null" @click="regenerate">重新生成恢复码</ElButton>
         </ElFormItem>
         <ElFormItem v-if="oneTimeCodes.length > 0" label="一次性恢复码">
           <ElInput :model-value="oneTimeCodes.join('\n')" type="textarea" :rows="6" readonly />
+          <ElButton :disabled="acting" @click="acknowledgeCodes">我已安全保存，清除恢复码</ElButton>
         </ElFormItem>
       </ElForm>
     </ElCard>

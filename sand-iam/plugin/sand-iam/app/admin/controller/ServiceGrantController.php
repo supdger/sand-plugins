@@ -17,6 +17,7 @@ use plugin\sandadmin\exception\ApiException;
 use plugin\sandadmin\service\Permission;
 use support\Request;
 use support\Response;
+use think\facade\Db;
 
 final class ServiceGrantController extends AdminResourceController
 {
@@ -25,6 +26,78 @@ final class ServiceGrantController extends AdminResourceController
     protected array $requiredFields = ['workload_client_id', 'service_action_id', 'audience'];
     protected string $resourceType = 'service_grant';
     protected bool $atomicCreateAudit = true;
+    protected bool $atomicMutationAudit = true;
+    protected function formatIndexPage(array $page): array
+    {
+        $rows = $page['data'] ?? [];
+        if ($rows === []) return $page;
+        $actionIds = array_values(array_unique(array_filter(array_map(
+            static fn (array $row): int => (int) ($row['service_action_id'] ?? 0), $rows,
+        ))));
+        $actions = $actionIds === [] ? [] : ServiceAction::whereIn('id', $actionIds)->field('id,name,service_id')->select()->toArray();
+        $serviceIds = array_values(array_unique(array_column($actions, 'service_id')));
+        $services = $serviceIds === [] ? [] : Service::whereIn('id', $serviceIds)->field('id,name')->select()->toArray();
+        $actionsById = array_column($actions, null, 'id');
+        $servicesById = array_column($services, null, 'id');
+        foreach ($rows as &$row) {
+            $action = $actionsById[(int) ($row['service_action_id'] ?? 0)] ?? null;
+            $row['service_action_name'] = $action['name'] ?? null;
+            $row['service_name'] = $servicesById[(int) ($action['service_id'] ?? 0)]['name'] ?? null;
+        }
+        unset($row);
+        $page['data'] = $rows;
+        return $page;
+    }
+    #[Permission('SandIAM 服务授权服务候选', 'sand_iam:grant:index')]
+    public function services(Request $request): Response
+    {
+        $this->assertPayloadAccess(['workload_client_id' => (int) $request->input('workload_client_id', 0)]);
+        return $this->candidatePage(Service::where('status', 1)->field('id,code,name'), $request);
+    }
+
+    #[Permission('SandIAM 服务授权动作候选', 'sand_iam:grant:index')]
+    public function actions(Request $request): Response
+    {
+        $this->assertPayloadAccess(['workload_client_id' => (int) $request->input('workload_client_id', 0)]);
+        $serviceId = (int) $request->input('service_id', 0);
+        $id = (int) $request->input('id', 0);
+        if ($serviceId <= 0 && $id <= 0) throw new ApiException('SAND_IAM_VALIDATION_ERROR: 请先选择服务', 400);
+        $query = ServiceAction::where('status', 1)
+            ->whereIn('service_id', Service::where('status', 1)->column('id'))
+            ->field('id,code,name,service_id');
+        if ($serviceId > 0) $query->where('service_id', $serviceId);
+        return $this->candidatePage($query, $request);
+    }
+
+    private function candidatePage(object $query, Request $request): Response
+    {
+        $id = (int) $request->input('id', 0);
+        if ($id > 0) $query->where('id', $id);
+        $keywords = trim((string) $request->input('keywords', ''));
+        if ($keywords !== '') $query->whereLike('name', '%' . $keywords . '%');
+        return $this->success($query->order('id', 'asc')->paginate([
+            'page' => max(1, (int) $request->input('page', 1)),
+            'list_rows' => min(100, max(1, (int) $request->input('limit', 20))),
+        ])->toArray());
+    }
+    protected function applyIndexFilters(object $query, Request $request): void
+    {
+        $organizationId = (int) $request->input('organization_id', 0);
+        $applicationId = (int) $request->input('application_id', 0);
+        $environmentId = (int) $request->input('environment_id', 0);
+        if ($organizationId <= 0 && $applicationId <= 0 && $environmentId <= 0) return;
+        if ($organizationId > 0 || $applicationId > 0) {
+            $applications = $organizationId > 0
+                ? Application::where('organization_id', $organizationId)
+                : Application::where('id', $applicationId);
+            if ($applicationId > 0) $applications->where('id', $applicationId);
+            $environments = Environment::whereIn('application_id', $applications->column('id'));
+            if ($environmentId > 0) $environments->where('id', $environmentId);
+        } else {
+            $environments = Environment::where('id', $environmentId);
+        }
+        $query->whereIn('workload_client_id', WorkloadClient::whereIn('environment_id', $environments->column('id'))->column('id'));
+    }
     #[Permission('SandIAM 服务授权列表', 'sand_iam:grant:index')] public function index(Request $request): Response { return parent::index($request); }
     #[Permission('SandIAM 服务授权读取', 'sand_iam:grant:read')] public function read(Request $request): Response { return parent::read($request); }
     #[Permission('SandIAM 服务授权保存', 'sand_iam:grant:save')] public function save(Request $request): Response { return parent::save($request); }
@@ -32,7 +105,20 @@ final class ServiceGrantController extends AdminResourceController
     #[Permission('SandIAM 服务授权停用', 'sand_iam:grant:revoke')]
     public function disable(Request $request): Response { return $this->revoke($request); }
     #[Permission('SandIAM 服务授权撤销', 'sand_iam:grant:revoke')]
-    public function revoke(Request $request): Response { $model = $this->find($request); $model->save(['status' => 2, 'revoked_time' => date('Y-m-d H:i:s')]); $this->audit('revoke', (int) $model->id, $request); return $this->success('已撤销'); }
+    public function revoke(Request $request): Response
+    {
+        $model = $this->find($request);
+        Db::startTrans();
+        try {
+            $model->save(['status' => 2, 'revoked_time' => date('Y-m-d H:i:s')]);
+            $this->audit('revoke', (int) $model->id, $request);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
+        return $this->success('已撤销');
+    }
     protected function assertReferences(array $payload, ?object $existing = null): void
     {
         if ($existing !== null) {
@@ -71,7 +157,32 @@ final class ServiceGrantController extends AdminResourceController
         }
         return $payload;
     }
-    protected function applyOrganizationScope(object $query, array $organizationIds): void { $applicationIds = Application::whereIn('organization_id', $organizationIds)->column('id'); $environmentIds = Environment::whereIn('application_id', $applicationIds)->column('id'); $query->whereIn('workload_client_id', WorkloadClient::whereIn('environment_id', $environmentIds)->column('id')); }
+    protected function scopeIndexToOrganizations(object $query): void
+    {
+        $access = $this->access();
+        if ($access->isSuperAdmin()) return;
+        $applicationIds = $access->applicationIds();
+        if ($applicationIds === []) { $query->whereRaw('1 = 0'); return; }
+        $environmentIds = Environment::whereIn('application_id', $applicationIds)->column('id');
+        $query->whereIn('workload_client_id', WorkloadClient::whereIn('environment_id', $environmentIds)->column('id'));
+    }
+    protected function assertModelAccess(object $model): void
+    {
+        $this->assertPayloadAccess([], $model);
+    }
     protected function organizationIdForModel(object $model): ?int { $client = WorkloadClient::find($model->workload_client_id); $environment = $client ? Environment::find($client->environment_id) : null; $application = $environment ? Application::find($environment->application_id) : null; return $application ? (int) $application->organization_id : null; }
-    protected function assertPayloadAccess(array $payload, ?object $existing = null): void { $clientId = (int) ($payload['workload_client_id'] ?? $existing?->workload_client_id ?? 0); $client = WorkloadClient::find($clientId); $environment = $client ? Environment::find($client->environment_id) : null; $application = $environment ? Application::find($environment->application_id) : null; $this->access()->assertOrganization($application ? (int) $application->organization_id : 0); }
+    protected function auditScopeForModel(object $model): array
+    {
+        $client = WorkloadClient::find((int) ($model->workload_client_id ?? 0));
+        $environment = $client ? Environment::find($client->environment_id) : null;
+        $application = $environment ? Application::find($environment->application_id) : null;
+        return $application ? [(int) $application->organization_id, (int) $application->id] : [null, null];
+    }
+    protected function assertPayloadAccess(array $payload, ?object $existing = null): void
+    {
+        $clientId = (int) ($payload['workload_client_id'] ?? $existing?->workload_client_id ?? 0);
+        $client = WorkloadClient::find($clientId);
+        $environment = $client ? Environment::find($client->environment_id) : null;
+        $this->access()->assertApplication($environment ? (int) $environment->application_id : 0);
+    }
 }

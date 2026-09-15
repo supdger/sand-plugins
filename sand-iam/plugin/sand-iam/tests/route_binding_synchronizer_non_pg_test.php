@@ -9,9 +9,17 @@ namespace plugin\sandadmin\exception {
 namespace think\facade {
     final class Db
     {
-        public static function startTrans(): void {}
-        public static function commit(): void {}
-        public static function rollback(): void {}
+        public static array $snapshots = [];
+        public static function startTrans(): void
+        {
+            self::$snapshots[] = serialize([\plugin\SandIam\app\model\ApiRouteBinding::$rows, \plugin\SandIam\app\service\AuditWriter::$records]);
+        }
+        public static function commit(): void { array_pop(self::$snapshots); }
+        public static function rollback(): void
+        {
+            if (self::$snapshots === []) throw new \RuntimeException('Rollback without transaction');
+            [\plugin\SandIam\app\model\ApiRouteBinding::$rows, \plugin\SandIam\app\service\AuditWriter::$records] = unserialize(array_pop(self::$snapshots), ['allowed_classes' => true]);
+        }
     }
 }
 
@@ -71,7 +79,12 @@ namespace plugin\SandIam\app\service {
     final class AuditWriter
     {
         /** @var list<array<int,mixed>> */ public static array $records = [];
-        public function write(mixed ...$arguments): void { self::$records[] = $arguments; }
+        public static ?int $failAt = null;
+        public function write(mixed ...$arguments): void
+        {
+            self::$records[] = $arguments;
+            if (self::$failAt === count(self::$records)) throw new \RuntimeException('injected route audit failure');
+        }
     }
 }
 
@@ -142,6 +155,19 @@ namespace {
     routeBindingSyncAssert($preview['summary'] === ['新增' => 1, '更新' => 1, '停用' => 1, '保留外部绑定' => 2, '冲突' => 0, '未绑定' => 0, '忽略未标记路由' => 1], 'preview summary is incomplete or not human-readable');
     routeBindingSyncAssert($preview['operation_id'] === 'acceptance-run-0001', 'operation ID was not retained in the sync preview');
     routeBindingSyncAssert(in_array('SAND_IAM_ROUTE_SYNC_EXTERNAL_BINDING_UNCHANGED', array_column($preview['changes'], 'code'), true), 'manual or OpenAPI binding was not explicitly preserved');
+    $beforeFailure = serialize([ApiRouteBinding::$rows, \plugin\SandIam\app\service\AuditWriter::$records]);
+    foreach ([2, 3] as $failAt) {
+        \plugin\SandIam\app\service\AuditWriter::$failAt = $failAt;
+        try {
+            $synchronizer->synchronize($manifest, apply: true, disableMissing: true, operationId: 'acceptance-run-0001');
+            routeBindingSyncAssert(false, 'batch audit failure was ignored');
+        } catch (\RuntimeException $exception) {
+            routeBindingSyncAssert($exception->getMessage() === 'injected route audit failure', 'batch failed for an unexpected reason: ' . $exception->getMessage());
+        }
+        routeBindingSyncAssert(serialize([ApiRouteBinding::$rows, \plugin\SandIam\app\service\AuditWriter::$records]) === $beforeFailure, 'failed batch left route or audit changes');
+        routeBindingSyncAssert(\think\facade\Db::$snapshots === [], 'failed batch leaked its transaction');
+    }
+    \plugin\SandIam\app\service\AuditWriter::$failAt = null;
     $applied = $synchronizer->synchronize($manifest, apply: true, disableMissing: true, operationId: 'acceptance-run-0001');
     routeBindingSyncAssert($applied['dry_run'] === false && (int) ApiRouteBinding::$rows[1]->status === 2, 'apply did not actually disable the missing route_scan binding');
     routeBindingSyncAssert((string) ApiRouteBinding::$rows[3]->source === 'openapi' && (string) ApiRouteBinding::$rows[4]->source === 'manual' && (int) ApiRouteBinding::$rows[5]->status === 1, 'apply took ownership of manual or OpenAPI bindings');

@@ -28,7 +28,7 @@ final class Controller
                 $action = 'standalone_work_item.read';
                 $requestId = $this->requestId($headers);
                 $token = $this->bearerToken($headers);
-                $item = $this->repository->find((int) $matches[1]);
+                $item = $this->repository->find($this->itemId($matches[1]));
                 $actor = ($this->authorize)($token, $item, $action, $requestId);
                 $this->auditWriter->writeEvent($action, 'allowed', $item, null, $actor, $requestId);
                 return $this->itemResponse($item);
@@ -38,9 +38,10 @@ final class Controller
                 $requestId = $this->requestId($headers);
                 $this->assertSafeBody($body);
                 $token = $this->bearerToken($headers);
-                $item = $this->repository->find((int) $matches[1]);
+                $id = $this->itemId($matches[1]);
+                $item = $this->repository->find($id);
                 $item = $this->repository->close(
-                    (int) $matches[1],
+                    $id,
                     fn (WorkItem $loaded): string => ($this->authorize)($token, $loaded, $action, $requestId),
                     $this->auditWriter,
                     $requestId,
@@ -99,23 +100,33 @@ final class Controller
         return $value;
     }
 
+    private function itemId(string $value): int
+    {
+        $id = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($id === false) throw new HttpProblem(400, 'invalid_item_id');
+        return $id;
+    }
+
     private function assertSafeBody(string $body): void
     {
         if (trim($body) === '') {
             return;
         }
         try {
-            $input = json_decode($body, true, 16, JSON_THROW_ON_ERROR);
+            $input = json_decode($body, false, 16, JSON_THROW_ON_ERROR);
         } catch (\JsonException) {
             throw new HttpProblem(400, 'invalid_json');
         }
-        if (!is_array($input) || ($input !== [] && array_is_list($input))) {
+        if (!$input instanceof \stdClass) {
             throw new HttpProblem(400, 'invalid_body');
         }
         foreach (['organization_id', 'owner_identity_id', 'scope', 'attributes'] as $forbidden) {
-            if (array_key_exists($forbidden, $input)) {
+            if (property_exists($input, $forbidden)) {
                 throw new HttpProblem(400, 'body_scope_forbidden');
             }
+        }
+        if (get_object_vars($input) !== []) {
+            throw new HttpProblem(400, 'invalid_body');
         }
     }
 }

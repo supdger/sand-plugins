@@ -78,6 +78,20 @@ namespace {
     catch (ApiException $exception) { initializationDraftControllerAssert($exception->getCode() === 403 && str_contains($exception->getMessage(), 'SAND_IAM_APPLICATION_ACCESS_DENIED'), 'foreign draft disable lost stable scope denial'); }
     initializationDraftControllerAssert(InitializationService::$calls === ['preview', 'save', 'preview', 'update'], 'foreign draft disable reached the write service');
 
+    foreach (['update', 'disable'] as $operation) {
+        foreach ([true, false, 1.9, '1bad', '1.0', '1e0', null, [], 0, -1, (string) PHP_INT_MAX . '0'] as $revision) {
+            $before = InitializationService::$calls;
+            try {
+                $controller->$operation(initializationDraftControllerRequest(['id' => 3, 'revision' => $revision, 'manifest' => ['application_code' => 'allowed']]));
+                throw new \RuntimeException('invalid draft revision reached mutation');
+            } catch (ApiException $exception) {
+                initializationDraftControllerAssert($exception->getCode() === 400 && $exception->getMessage() === 'SAND_IAM_INITIALIZATION_DRAFT_REVISION_INVALID', 'revision error changed');
+            }
+            initializationDraftControllerAssert(InitializationService::$calls === $before, 'invalid revision called service');
+        }
+        $result = $controller->$operation(initializationDraftControllerRequest(['id' => 3, 'revision' => '1', 'manifest' => ['application_code' => 'allowed']]));
+        initializationDraftControllerAssert($result->data['revision'] === 2, 'form revision was not normalized');
+    }
     $reflection = new \ReflectionClass(InitializationController::class);
     foreach (['save', 'update', 'disable', 'draftIndex', 'draftRead'] as $method) initializationDraftControllerAssert(count($reflection->getMethod($method)->getAttributes()) === 1, "{$method} lacks its permission attribute");
     echo "initialization draft controller behavior non-PG test passed\n";

@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
@@ -8,7 +8,8 @@
     invitationCanResend,
     invitationCanRevoke,
     invitationStateLabel,
-    parseSandIamInvitations,
+    parseSandIamInvitationPage,
+    type SandIamInvitationState,
     type SandIamInvitationRow
   } from '../api/invitationContracts'
   import {
@@ -28,6 +29,20 @@
   const canRevoke = computed(() => hasAuth('sand_iam:identity_invitation:revoke'))
 
   const loading = ref(false)
+  const guestsLoading = ref(false)
+  const guestsError = ref<SandIamRequestError | null>(null)
+  const canSearchGuests = computed(() => hasAuth('sand_iam:identity:index'))
+  let guestVersion = 0
+  const saving = ref(false)
+  const currentPage = ref(1)
+  const pageSize = ref(20)
+  const total = ref(0)
+  const stateFilter = ref<SandIamInvitationState | ''>('')
+  const invitationStates: SandIamInvitationState[] = ['sending', 'pending', 'delivery_failed', 'accepted', 'revoked', 'expired']
+  let scopeVersion = 0
+  let listVersion = 0
+  let contextVersion = 0
+  let disposed = false
   const applications = ref<SandIamResourceRow[]>([])
   const groups = ref<SandIamIdentityGroupRow[]>([])
   const guests = ref<SandIamIdentityRow[]>([])
@@ -64,13 +79,27 @@
     return typeof row?.name === 'string' ? row.name : '关联应用名称暂不可用'
   }
 
-  async function loadApplications(): Promise<void> {
+  const applicationLoading = ref(false)
+  const applicationError = ref('')
+  const applicationKeywords = ref('')
+  let applicationRequest = 0
+
+  async function loadApplications(keywords = ''): Promise<void> {
+    const attempt = ++applicationRequest
+    if (disposed) return
+    applicationKeywords.value = keywords
+    applicationLoading.value = true
+    applicationError.value = ''
     try {
-      applications.value = listRows(
-        await listSandIamResource('application', { page: 1, limit: 100 })
-      )
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      if (disposed || attempt !== applicationRequest) return
+      const selected = applications.value.find(row => String(row.id) === applicationId.value)
+      const rows = listRows(result)
+      applications.value = selected && !rows.some(row => row.id === selected.id) ? [selected, ...rows] : rows
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && attempt === applicationRequest) applicationError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && attempt === applicationRequest) applicationLoading.value = false
     }
   }
 
@@ -78,25 +107,54 @@
    * 发送表单的用户组和访客都按本应用名称加载，禁止手填 ID。
    */
   async function loadContext(): Promise<void> {
+    const version = ++contextVersion
+    const guestRequest = guestVersion
     const application = selectedId(applicationId.value)
-    if (application === null) return
+    if (disposed || application === null) return
     try {
-      groups.value = parseSandIamIdentityGroups(
+      const groupRows = parseSandIamIdentityGroups(
         await getSandIamAdmin('identity-group/index', { application_id: application })
       )
-      guests.value = parseSandIamIdentities(
-        await listSandIamResource('identity', {
-          page: 1,
-          limit: 100,
-          application_id: application
-        })
-      ).filter((row) => row.lifecycle_state === 'guest')
+      if (disposed || version !== contextVersion) return
+      groups.value = groupRows
+      if (guestRequest === guestVersion) await searchGuests('')
     } catch (error: unknown) {
+      if (disposed || version !== contextVersion) return
       requestError.value = describeSandIamError(error)
     }
   }
 
+  async function searchGuests(keywords: string): Promise<void> {
+    const version = ++guestVersion
+    const application = selectedId(applicationId.value)
+    const current = (): boolean => !disposed && version === guestVersion &&
+      application === selectedId(applicationId.value)
+    guestIdentityId.value = ''
+    guests.value = []
+    guestsError.value = null
+    guestsLoading.value = false
+    if (disposed || application === null || !canSearchGuests.value) return
+    guestsLoading.value = true
+    try {
+      const rows = parseSandIamIdentities(await listSandIamResource('identity', {
+        page: 1, limit: 100, application_id: application, keywords: keywords.trim()
+      }))
+      if (current()) guests.value = rows.filter(row =>
+        row.application_id === application && row.lifecycle_state === 'guest')
+    } catch (error: unknown) {
+      if (current()) guestsError.value = describeSandIamError(error)
+    } finally {
+      if (current()) guestsLoading.value = false
+    }
+  }
+
   async function loadInvitations(): Promise<void> {
+    await loadInvitationPage(true)
+  }
+
+  async function loadInvitationPage(allowFallback: boolean): Promise<void> {
+    if (disposed) return
+    const version = ++listVersion
     const application = selectedId(applicationId.value)
     if (application === null) {
       requestError.value = describeSandIamError(
@@ -108,20 +166,36 @@
     loading.value = true
     requestError.value = null
     try {
-      invitations.value = parseSandIamInvitations(
-        await getSandIamAdmin('identity-invitation/index', { application_id: application })
-      )
+      const result = await getSandIamAdmin('identity-invitation/index', {
+        application_id: application, page: currentPage.value, limit: pageSize.value,
+        ...(stateFilter.value === '' ? {} : { state: stateFilter.value })
+      })
+      if (disposed || version !== listVersion) return
+      const page = parseSandIamInvitationPage(result)
+      total.value = page.total
+      pageSize.value = page.pageSize
+      const lastPage = Math.max(1, Math.ceil(page.total / page.pageSize))
+      if (allowFallback && page.data.length === 0 && page.currentPage > lastPage) {
+        currentPage.value = lastPage
+        await loadInvitationPage(false)
+        return
+      }
+      currentPage.value = page.currentPage
+      invitations.value = page.data
       viewState.value = invitations.value.length === 0 ? 'empty' : 'ready'
       await loadContext()
     } catch (error: unknown) {
+      if (disposed || version !== listVersion) return
       requestError.value = describeSandIamError(error)
       invitations.value = []
     } finally {
-      loading.value = false
+      if (!disposed && version === listVersion) loading.value = false
     }
   }
 
   async function sendInvitation(): Promise<void> {
+    if (disposed || saving.value || !canSend.value) return
+    const version = scopeVersion
     const application = selectedId(applicationId.value)
     if (application === null || target.value.trim() === '') {
       requestError.value = describeSandIamError(
@@ -136,10 +210,18 @@
       )
       return
     }
-    loading.value = true
+    const guest = selectedId(guestIdentityId.value)
+    if (guestIdentityId.value !== '' && (guestsLoading.value || !canSearchGuests.value ||
+      guestsError.value !== null || !guests.value.some(row => row.id === guest &&
+        row.application_id === application && row.lifecycle_state === 'guest'))) {
+      requestError.value = describeSandIamError(new Error('SAND_IAM_VALIDATION_ERROR: 请重新选择当前应用的访客'))
+      return
+    }
+    saving.value = true
+    const submittedTarget = target.value
+    const submittedGuest = guestIdentityId.value
     requestError.value = null
     try {
-      const guest = selectedId(guestIdentityId.value)
       await postSandIamAction('identity-invitation/send', {
         application_id: application,
         target_type: targetType.value,
@@ -150,18 +232,23 @@
           .filter((item) => Number.isInteger(item) && item > 0),
         ...(guest === null ? {} : { guest_identity_id: guest })
       })
+      if (disposed || version !== scopeVersion) return
       ElMessage.success('已保存')
-      target.value = ''
-      guestIdentityId.value = ''
+      if (target.value === submittedTarget) target.value = ''
+      if (guestIdentityId.value === submittedGuest) guestIdentityId.value = ''
       await loadInvitations()
     } catch (error: unknown) {
+      if (disposed || version !== scopeVersion) return
       requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed && version === scopeVersion) saving.value = false
     }
   }
 
   async function resendInvitation(row: SandIamInvitationRow): Promise<void> {
+    if (disposed || saving.value || loading.value || !canResend.value || !invitationCanResend(row.state) || !invitations.value.includes(row)) return
+    const version = scopeVersion
+    saving.value = true
     try {
       await ElMessageBox.confirm(
         `确认重发给「${row.target_masked}」吗？旧邀请链接将立即失效。`,
@@ -169,22 +256,29 @@
         { type: 'warning', confirmButtonText: '确认重发', cancelButtonText: '取消' }
       )
     } catch {
+      if (!disposed && version === scopeVersion) saving.value = false
       return
     }
-    loading.value = true
+    if (disposed || version !== scopeVersion) return
+    if (!canResend.value || !invitationCanResend(row.state) || !invitations.value.includes(row) || row.application_id !== selectedId(applicationId.value)) { saving.value = false; return }
     requestError.value = null
     try {
       await postSandIamAction('identity-invitation/resend', { id: row.id })
+      if (disposed || version !== scopeVersion) return
       ElMessage.success('已保存')
       await loadInvitations()
     } catch (error: unknown) {
+      if (disposed || version !== scopeVersion) return
       requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed && version === scopeVersion) saving.value = false
     }
   }
 
   async function revokeInvitation(row: SandIamInvitationRow): Promise<void> {
+    if (disposed || saving.value || loading.value || !canRevoke.value || !invitationCanRevoke(row.state) || !invitations.value.includes(row)) return
+    const version = scopeVersion
+    saving.value = true
     try {
       await ElMessageBox.confirm(
         `确认撤销「${row.target_masked}」的邀请吗？撤销后不能重放。`,
@@ -192,20 +286,48 @@
         { type: 'warning', confirmButtonText: '确认撤销', cancelButtonText: '取消' }
       )
     } catch {
+      if (!disposed && version === scopeVersion) saving.value = false
       return
     }
-    loading.value = true
+    if (disposed || version !== scopeVersion) return
+    if (!canRevoke.value || !invitationCanRevoke(row.state) || !invitations.value.includes(row) || row.application_id !== selectedId(applicationId.value)) { saving.value = false; return }
     requestError.value = null
     try {
       await postSandIamAction('identity-invitation/revoke', { id: row.id })
+      if (disposed || version !== scopeVersion) return
       ElMessage.success('已停用')
       await loadInvitations()
     } catch (error: unknown) {
+      if (disposed || version !== scopeVersion) return
       requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed && version === scopeVersion) saving.value = false
     }
   }
+
+  watch([applicationId, stateFilter], () => {
+    listVersion++
+    contextVersion++
+    guestVersion++
+    guestsLoading.value = false
+    guestsError.value = null
+    currentPage.value = 1
+    total.value = 0
+    invitations.value = []
+    groups.value = []
+    guests.value = []
+    selectedGroupIds.value = []
+    guestIdentityId.value = ''
+    loading.value = false
+    requestError.value = null
+    viewState.value = 'idle'
+  }, { flush: 'sync' })
+  watch(applicationId, () => {
+    scopeVersion++
+    saving.value = false
+    target.value = ''
+  }, { flush: 'sync' })
+  onScopeDispose(() => { disposed = true; scopeVersion++; listVersion++; contextVersion++; guestVersion++ })
 
   onMounted(() => {
     void loadApplications()
@@ -249,8 +371,12 @@
       />
 
       <ElForm label-width="160px" class="mb-4">
+        <ElFormItem v-if="applicationError" label="应用搜索失败">
+          <span role="alert">{{ applicationError }}</span>
+          <ElButton :loading="applicationLoading" @click="loadApplications(applicationKeywords)">重试搜索</ElButton>
+        </ElFormItem>
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="loadApplications" :loading="applicationLoading" clearable placeholder="按名称选择">
             <ElOption
               v-for="row in applications"
               :key="String(row.id)"
@@ -296,8 +422,12 @@
           <ElSelect
             v-model="guestIdentityId"
             filterable
+            remote
+            :remote-method="searchGuests"
+            :loading="guestsLoading"
+            :disabled="!canSearchGuests"
             clearable
-            placeholder="可选，按名称选择本应用访客"
+            placeholder="可选，输入访客姓名搜索"
           >
             <ElOption
               v-for="row in guests"
@@ -306,14 +436,25 @@
               :value="String(row.id)"
             />
           </ElSelect>
+          <span v-if="guestsError" class="ml-2 text-sm text-red-500">
+            访客搜索失败，请重新输入姓名重试。
+          </span>
         </ElFormItem>
         <ElFormItem>
-          <ElButton type="primary" :disabled="!canSend" :loading="loading" @click="sendInvitation">
+          <ElButton type="primary" :disabled="!canSend" :loading="saving" @click="sendInvitation">
             发送邀请
           </ElButton>
         </ElFormItem>
       </ElForm>
 
+      <ElForm inline>
+        <ElFormItem label="邀请状态">
+          <ElSelect v-model="stateFilter" placeholder="全部状态">
+            <ElOption label="全部状态" value="" />
+            <ElOption v-for="state in invitationStates" :key="state" :value="state" :label="invitationStateLabel(state)" />
+          </ElSelect>
+        </ElFormItem>
+      </ElForm>
       <ElTable v-loading="loading" :data="invitations" border stripe empty-text="暂无可见邀请">
         <ElTableColumn label="脱敏接收目标" min-width="180">
           <template #default="scope">{{ scope.row.target_masked }}</template>
@@ -337,7 +478,7 @@
             <ElButton
               v-if="invitationCanResend(scope.row.state)"
               size="small"
-              :disabled="!canResend"
+              :disabled="!canResend || saving || loading"
               @click="resendInvitation(scope.row)"
             >
               重发
@@ -346,7 +487,7 @@
               v-if="invitationCanRevoke(scope.row.state)"
               size="small"
               type="warning"
-              :disabled="!canRevoke"
+              :disabled="!canRevoke || saving || loading"
               @click="revokeInvitation(scope.row)"
             >
               撤销
@@ -354,6 +495,16 @@
           </template>
         </ElTableColumn>
       </ElTable>
+      <ElPagination
+        v-if="total > 0"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="[20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        @current-change="loadInvitations"
+        @size-change="currentPage = 1; loadInvitations()"
+      />
     </ElCard>
   </div>
 </template>

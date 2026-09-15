@@ -25,6 +25,23 @@ final class CredentialController extends BaseController
     {
         $query = Credential::order('id', 'desc');
         $this->scopeCredentials($query);
+        $organizationId = (int) $request->input('organization_id', 0);
+        $applicationId = (int) $request->input('application_id', 0);
+        $environmentId = (int) $request->input('environment_id', 0);
+        if ($organizationId > 0 || $applicationId > 0 || $environmentId > 0) {
+            if ($organizationId > 0 || $applicationId > 0) {
+                $applications = $organizationId > 0
+                    ? Application::where('organization_id', $organizationId)
+                    : Application::where('id', $applicationId);
+                if ($applicationId > 0) { $applications->where('id', $applicationId); }
+                $environments = Environment::whereIn('application_id', $applications->column('id'));
+                if ($environmentId > 0) { $environments->where('id', $environmentId); }
+            } else {
+                $environments = Environment::where('id', $environmentId);
+            }
+            $clientIds = WorkloadClient::whereIn('environment_id', $environments->column('id'))->column('id');
+            $query->whereIn('workload_client_id', $clientIds);
+        }
         $clientId = (int) $request->input('workload_client_id', 0);
         if ($clientId > 0) { $query->where('workload_client_id', $clientId); }
         return $this->success($query->paginate(['page' => max(1, (int) $request->input('page', 1)), 'list_rows' => min(100, max(1, (int) $request->input('limit', 20)))])->toArray());
@@ -107,7 +124,8 @@ final class CredentialController extends BaseController
     /** @return array{id:int,key_prefix:string,credential:string,expire_time:mixed} */
     private function create(int $clientId, string $name, mixed $expireTime, string $requestId, string $actor): array
     {
-        return (new \plugin\SandIam\app\service\CredentialIssuanceService())->issue($clientId, $name, $expireTime, $requestId, $actor);
+        [$organizationId, $applicationId] = $this->auditScopeForClient($clientId);
+        return (new \plugin\SandIam\app\service\CredentialIssuanceService())->issue($clientId, $name, $expireTime, $requestId, $actor, $organizationId, $applicationId);
     }
 
     private function credential(int $id): Credential
@@ -120,8 +138,34 @@ final class CredentialController extends BaseController
 
     private function enabledClient(int $id): void { if (!WorkloadClient::where('id', $id)->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 服务调用身份不存在或已停用', 400); }
     private function access(): AdminOrganizationAccess { $token = request()->header('check_admin', []); return new AdminOrganizationAccess(is_array($token) ? (int) ($token['id'] ?? 0) : 0, null); }
-    private function assertClientAccess(int $clientId): void { $client = WorkloadClient::find($clientId); $environment = $client ? Environment::find($client->environment_id) : null; $application = $environment ? Application::find($environment->application_id) : null; $this->access()->assertOrganization($application ? (int) $application->organization_id : 0); }
-    private function scopeCredentials(object $query): void { $access = $this->access(); if ($access->isSuperAdmin()) { return; } $organizationIds = $access->organizationIds(); if ($organizationIds === []) { $query->whereRaw('1 = 0'); return; } $applicationIds = Application::whereIn('organization_id', $organizationIds)->column('id'); $environmentIds = Environment::whereIn('application_id', $applicationIds)->column('id'); $query->whereIn('workload_client_id', WorkloadClient::whereIn('environment_id', $environmentIds)->column('id')); }
+    private function assertClientAccess(int $clientId): void
+    {
+        $client = WorkloadClient::find($clientId);
+        $environment = $client ? Environment::find($client->environment_id) : null;
+        $this->access()->assertApplication($environment ? (int) $environment->application_id : 0);
+    }
+    private function scopeCredentials(object $query): void
+    {
+        $access = $this->access();
+        if ($access->isSuperAdmin()) return;
+        $applicationIds = $access->applicationIds();
+        if ($applicationIds === []) { $query->whereRaw('1 = 0'); return; }
+        $environmentIds = Environment::whereIn('application_id', $applicationIds)->column('id');
+        $query->whereIn('workload_client_id', WorkloadClient::whereIn('environment_id', $environmentIds)->column('id'));
+    }
     private function actor(Request $request): string { $admin = $request->header('check_admin', []); return is_array($admin) ? (string) ($admin['id'] ?? 0) : '0'; }
-    private function audit(string $action, int $resourceId, string $requestId, string $actor): void { (new AuditWriter())->write('admin', $actor, null, null, $action, 'credential', $resourceId, 'succeeded', $requestId); }
+    /** @return array{0: ?int, 1: ?int} */
+    private function auditScopeForClient(int $clientId): array
+    {
+        $client = WorkloadClient::find($clientId);
+        $environment = $client ? Environment::find($client->environment_id) : null;
+        $application = $environment ? Application::find($environment->application_id) : null;
+        return $application ? [(int) $application->organization_id, (int) $application->id] : [null, null];
+    }
+    private function audit(string $action, int $resourceId, string $requestId, string $actor): void
+    {
+        $credential = Credential::find($resourceId);
+        [$organizationId, $applicationId] = $this->auditScopeForClient((int) ($credential?->workload_client_id ?? 0));
+        (new AuditWriter())->write('admin', $actor, $organizationId, $applicationId, $action, 'credential', $resourceId, 'succeeded', $requestId);
+    }
 }

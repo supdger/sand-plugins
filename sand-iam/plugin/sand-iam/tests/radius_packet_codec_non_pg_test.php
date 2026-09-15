@@ -8,10 +8,10 @@ use plugin\sandadmin\exception\ApiException;
 function t11RadiusFail(string $message): never { fwrite(STDERR, "IAM-T11 RADIUS codec test failed: {$message}\n"); exit(1); }
 function t11RadiusExpect(callable $callback, string $code): void { try { $callback(); } catch (ApiException $exception) { if (str_contains($exception->getMessage(), $code)) return; } t11RadiusFail("expected {$code}"); }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
-$root = dirname(__DIR__, 3);
-if (!is_file($hostRoot . '/vendor/autoload.php')) t11RadiusFail('SandAdmin host dependencies are unavailable');
-chdir($hostRoot); require $hostRoot . '/vendor/autoload.php'; require $root . '/plugin/sand-iam/app/functions.php';
+// This codec has no host/runtime dependencies beyond its exception type.
+class RadiusCodecTestException extends RuntimeException {}
+class_alias(RadiusCodecTestException::class, ApiException::class);
+require dirname(__DIR__) . '/app/radius/RadiusPacketCodec.php';
 
 $codec = new RadiusPacketCodec();
 $secret = 'radius-shared-secret-v1';

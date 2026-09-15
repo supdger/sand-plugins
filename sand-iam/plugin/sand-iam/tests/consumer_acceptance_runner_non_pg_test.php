@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+// behavior-test-gate: static-rule
+
 require_once dirname(__DIR__, 3) . '/tools/consumer-acceptance/Runtime.php';
 
 $root = dirname(__DIR__, 3);

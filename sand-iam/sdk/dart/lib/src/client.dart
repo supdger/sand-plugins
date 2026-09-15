@@ -117,11 +117,11 @@ final class SandIamClient {
             'subject_scope': subjectScope,
           })));
     } on FormatException catch (_) {
-      throw const SandIamException('SAND_IAM_SDK_INVALID_RESPONSE',
-          'SandIAM 返回的工作负载上下文不正确', 200);
+      throw const SandIamException(
+          'SAND_IAM_SDK_INVALID_RESPONSE', 'SandIAM 返回的工作负载上下文不正确', 200);
     } on TypeError catch (_) {
-      throw const SandIamException('SAND_IAM_SDK_INVALID_RESPONSE',
-          'SandIAM 返回的工作负载上下文不正确', 200);
+      throw const SandIamException(
+          'SAND_IAM_SDK_INVALID_RESPONSE', 'SandIAM 返回的工作负载上下文不正确', 200);
     }
   }
 
@@ -134,8 +134,11 @@ final class SandIamClient {
       String? sourceIp,
       String? requestId}) async {
     _validateWorkloadInput(context, serviceCode, audience, actions);
-    if (sourceIp != null && Uri.tryParse('http://[$sourceIp]') == null && !RegExp(r'^\d{1,3}(?:\.\d{1,3}){3}$').hasMatch(sourceIp)) {
-      throw const SandIamException('SAND_IAM_SDK_INVALID_ARGUMENT', 'sourceIp 必须是服务器已验证的 IP 地址', 0);
+    if (sourceIp != null &&
+        Uri.tryParse('http://[$sourceIp]') == null &&
+        !RegExp(r'^\d{1,3}(?:\.\d{1,3}){3}$').hasMatch(sourceIp)) {
+      throw const SandIamException(
+          'SAND_IAM_SDK_INVALID_ARGUMENT', 'sourceIp 必须是服务器已验证的 IP 地址', 0);
     }
     final baseRequestId = _requestId(requestId);
     SandIamWorkloadContext? claims;
@@ -147,20 +150,47 @@ final class SandIamClient {
             'POST', SandIamApi.runtimeContextVerify,
             noStore: true,
             requestId: _derivedRequestId(baseRequestId, index),
-            body: <String, Object?>{'context': context, 'audience': audience, 'action': action})));
+            body: <String, Object?>{
+              'context': context,
+              'audience': audience,
+              'action': action
+            })));
       } on FormatException catch (_) {
-        throw const SandIamException('SAND_IAM_SDK_INVALID_RESPONSE',
-            'SandIAM 返回的工作负载上下文不正确', 200);
+        throw const SandIamException(
+            'SAND_IAM_SDK_INVALID_RESPONSE', 'SandIAM 返回的工作负载上下文不正确', 200);
       } on TypeError catch (_) {
-        throw const SandIamException('SAND_IAM_SDK_INVALID_RESPONSE',
-            'SandIAM 返回的工作负载上下文不正确', 200);
+        throw const SandIamException(
+            'SAND_IAM_SDK_INVALID_RESPONSE', 'SandIAM 返回的工作负载上下文不正确', 200);
       }
-      if (current.serviceCode != serviceCode || current.actions == null || !current.actions!.contains(action)) {
-        throw const SandIamException('SAND_IAM_SDK_INVALID_RESPONSE', 'SandIAM 返回的上下文与请求的服务或动作不一致', 200);
+      if (current.serviceCode != serviceCode ||
+          current.actions == null ||
+          !current.actions!.contains(action)) {
+        throw const SandIamException(
+            'SAND_IAM_SDK_INVALID_RESPONSE', 'SandIAM 返回的上下文与请求的服务或动作不一致', 200);
       }
       claims = current;
     }
     return claims!;
+  }
+
+  /// Accepting an invitation does not start a session.
+  Future<SandIamInvitationIdentity> acceptInvitation({
+    required String token, required String username, required String password,
+    String? displayName, String? requestId,
+  }) async {
+    if (token.trim().isEmpty || username.trim().isEmpty || password.isEmpty) {
+      throw const SandIamException('SAND_IAM_SDK_INVALID_ARGUMENT', '邀请令牌、账号和密码不能为空', 0);
+    }
+    final data = await _request('POST', SandIamApi.acceptInvitation,
+      requestId: requestId, noStore: true,
+      body: {'token': token, 'username': username, 'password': password, 'display_name': displayName ?? ''});
+    if (data is! SandIamJson) throw const SandIamException('SAND_IAM_SDK_INVALID_RESPONSE', 'SandIAM 返回的邀请用户信息不正确', 200);
+    final id = data['id'];
+    final name = data['display_name'];
+    if (id is! int || id <= 0 || name is! String) {
+      throw const SandIamException('SAND_IAM_SDK_INVALID_RESPONSE', 'SandIAM 返回的邀请用户信息不正确', 200);
+    }
+    return SandIamInvitationIdentity(id: id, displayName: name);
   }
 
   Future<SandIamAuthResult> register(
@@ -169,6 +199,7 @@ final class SandIamClient {
       String? displayName,
       String? email,
       String? phone,
+      String? captchaToken,
       String? userAgent,
       String? requestId}) async {
     final data = await _request('POST', SandIamApi.register,
@@ -180,6 +211,7 @@ final class SandIamClient {
           'display_name': displayName ?? username,
           'email': email ?? '',
           'phone': phone ?? '',
+          'captcha_token': captchaToken ?? '',
           'user_agent': userAgent ?? '',
         });
     return _authResult(data);
@@ -188,6 +220,7 @@ final class SandIamClient {
   Future<SandIamAuthResult> login(
       {required String identifier,
       required String password,
+      String? captchaToken,
       String? userAgent,
       String? requestId}) async {
     if (identifier.trim().isEmpty || password.isEmpty) {
@@ -199,9 +232,230 @@ final class SandIamClient {
         body: <String, Object?>{
           ..._applicationPayload(),
           'identifier': identifier,
+          'captcha_token': captchaToken ?? '',
           'password': password,
           'user_agent': userAgent ?? '',
         }));
+  }
+
+  /// Submit an application-bound MFA challenge; a step-up result is not a login.
+  Future<SandIamAuthResult> verifyMfaChallenge({
+    required String challengeToken,
+    required String method,
+    String? code,
+    String? rawId,
+    SandIamJson? response,
+    String? userAgent,
+    String? requestId,
+  }) async {
+    if (challengeToken.trim().isEmpty ||
+        !['totp', 'recovery_code', 'passkey'].contains(method) ||
+        (method == 'passkey'
+            ? rawId == null || rawId.isEmpty || response == null
+            : code == null || code.isEmpty)) {
+      throw const SandIamException(
+          'SAND_IAM_SDK_INVALID_ARGUMENT', 'MFA 挑战和验证字段不完整', 0);
+    }
+    return _authResult(await _request(
+      'POST', SandIamApi.verifyMfaChallenge,
+      requestId: requestId,
+      body: <String, Object?>{
+        ..._applicationPayload(),
+        'challenge_token': challengeToken,
+        'method': method,
+        'user_agent': userAgent ?? '',
+        if (method == 'passkey') 'rawId': rawId,
+        if (method == 'passkey') 'response': response,
+        if (method != 'passkey') 'code': code,
+      },
+    ));
+  }
+
+  /// The platform performs WebAuthn and serializes binary response fields.
+  Future<SandIamPasskeyOptions> passkeyRegistrationOptions({String name = '',
+      required String currentPassword, String? requestId}) async {
+    if (currentPassword.isEmpty) throw _invalidMfaInput();
+    final data = await _request('POST', SandIamApi.passkeyRegistrationOptions,
+        authenticated: true, requestId: requestId,
+        body: {'name': name, 'current_password': currentPassword});
+    return _mfaResult(() => SandIamPasskeyOptions.fromJson(_object(data)));
+  }
+
+  Future<void> passkeyRegistrationFinish({required String challengeToken,
+      required String rawId, required SandIamJson response, String? requestId}) async {
+    final proof = _passkeyProof(challengeToken, rawId, response,
+        ['clientDataJSON', 'attestationObject']);
+    await _request('POST', SandIamApi.passkeyRegistrationFinish,
+        authenticated: true, requestId: requestId,
+        body: {'challenge_token': challengeToken, 'rawId': rawId, 'response': proof});
+  }
+
+  Future<SandIamPasskeyOptions> passkeyAuthenticationOptions({String? requestId}) async {
+    final data = await _request('POST', SandIamApi.passkeyAuthenticationOptions,
+        requestId: requestId, body: _applicationPayload());
+    return _mfaResult(() => SandIamPasskeyOptions.fromJson(_object(data)));
+  }
+
+  Future<SandIamAuthResult> passkeyAuthenticationFinish({required String challengeToken,
+      required String rawId, required SandIamJson response,
+      String? userAgent, String? requestId}) async {
+    final proof = _passkeyProof(challengeToken, rawId, response,
+        ['clientDataJSON', 'authenticatorData', 'signature', 'userHandle']);
+    return _authResult(await _request('POST', SandIamApi.passkeyAuthenticationFinish,
+        requestId: requestId, body: {..._applicationPayload(),
+          'challenge_token': challengeToken, 'rawId': rawId, 'response': proof,
+          'user_agent': userAgent ?? ''}));
+  }
+
+  Future<SandIamCaptchaConfiguration> captchaConfiguration(String action, {String? requestId}) async {
+    if (!['login', 'register'].contains(action)) throw _invalidMfaInput();
+    final data = await _request('GET', SandIamApi.captchaConfiguration,
+        requestId: requestId, noStore: true, query: {..._applicationPayload(), 'action': action});
+    return _mfaResult(() => SandIamCaptchaConfiguration.fromJson(_object(data), action));
+  }
+
+  Future<SandIamAuthResult> stepUpPassword(String password, {String? requestId}) async {
+    if (password.isEmpty) throw _invalidMfaInput();
+    final result = _authResult(await _request('POST', SandIamApi.stepUpPassword,
+        authenticated: true, requestId: requestId, body: {'password': password}));
+    if (result.stepUp != true || result.expiresIn == null) {
+      throw const SandIamException('SAND_IAM_SDK_INVALID_RESPONSE', '密码升级结果不正确', 200);
+    }
+    return result;
+  }
+
+  Future<SandIamAuthResult> startMfaStepUp({String? requestId}) async {
+    final result = _authResult(await _request('POST', SandIamApi.startMfaStepUp,
+        authenticated: true, requestId: requestId, body: <String, Object?>{}));
+    if (result.mfaRequired != true || (result.challengeToken?.trim().isEmpty ?? true) ||
+        (result.methods?.isEmpty ?? true) || result.expiresIn == null) {
+      throw const SandIamException('SAND_IAM_SDK_INVALID_RESPONSE', 'MFA 升级挑战不正确', 200);
+    }
+    return result;
+  }
+
+  Future<void> unlinkFederation(int bindingId, {String? requestId}) async {
+    if (bindingId <= 0) throw _invalidMfaInput();
+    await _request('POST', SandIamApi.unlinkFederation, authenticated: true,
+        requestId: requestId, body: {'binding_id': bindingId});
+  }
+
+  Future<List<SandIamMfaFactor>> mfaFactors({String? requestId}) async {
+    final data = await _request('GET', SandIamApi.mfaFactors,
+        authenticated: true, requestId: requestId);
+    return _mfaResult(() => _list(data).map(SandIamMfaFactor.fromJson).toList());
+  }
+
+  Future<SandIamTotpSetup> startTotp({String name = '',
+      required String currentPassword, String? requestId}) async {
+    if (currentPassword.isEmpty) throw _invalidMfaInput();
+    final data = await _request('POST', SandIamApi.startTotp,
+        authenticated: true, requestId: requestId,
+        body: {'name': name, 'current_password': currentPassword});
+    return _mfaResult(() => SandIamTotpSetup.fromJson(_object(data)));
+  }
+
+  Future<SandIamRecoveryCodes> confirmTotp({required int factorId,
+      required String code, String? requestId}) async {
+    _validateMfaFactor(factorId, 'totp');
+    if (code.trim().isEmpty) throw _invalidMfaInput();
+    final data = await _request('POST', SandIamApi.confirmTotp,
+        authenticated: true, requestId: requestId,
+        body: {'factor_id': factorId, 'code': code});
+    return _mfaResult(() => SandIamRecoveryCodes.fromJson(_object(data), confirmation: true));
+  }
+
+  Future<void> renameMfaFactor({required int factorId, required String type,
+      required String name, String? requestId}) async {
+    _validateMfaFactor(factorId, type);
+    await _request('POST', SandIamApi.renameMfaFactor, authenticated: true,
+        requestId: requestId, body: {'factor_id': factorId, 'type': type, 'name': name});
+  }
+
+  Future<void> revokeMfaFactor({required int factorId, required String type,
+      required String password, String? requestId}) async {
+    _validateMfaFactor(factorId, type);
+    if (password.isEmpty) throw _invalidMfaInput();
+    await _request('POST', SandIamApi.revokeMfaFactor, authenticated: true,
+        requestId: requestId, body: {'factor_id': factorId, 'type': type, 'password': password});
+  }
+
+  Future<SandIamRecoveryCodes> regenerateRecoveryCodes({
+      required String password, String? requestId}) async {
+    if (password.isEmpty) throw _invalidMfaInput();
+    final data = await _request('POST', SandIamApi.regenerateRecoveryCodes,
+        authenticated: true, requestId: requestId, body: {'password': password});
+    return _mfaResult(() => SandIamRecoveryCodes.fromJson(_object(data)));
+  }
+
+  Future<void> requestVerification({
+    required String identifier,
+    required String channel,
+    String? requestId,
+  }) async {
+    _validateRecoveryInput(identifier, channel);
+    await _request('POST', SandIamApi.requestVerification,
+        requestId: requestId, body: <String, Object?>{
+          ..._applicationPayload(), 'identifier': identifier, 'channel': channel,
+          'purpose': channel == 'email' ? 'email_verify' : 'phone_verify',
+        });
+  }
+
+  Future<void> confirmVerification({
+    required String identifier,
+    required String channel,
+    required String code,
+    String? requestId,
+  }) async {
+    _validateRecoveryInput(identifier, channel);
+    if (code.trim().isEmpty) {
+      throw const SandIamException(
+          'SAND_IAM_SDK_INVALID_ARGUMENT', '验证码不能为空', 0);
+    }
+    await _request('POST', SandIamApi.confirmVerification,
+        requestId: requestId, body: <String, Object?>{
+          ..._applicationPayload(), 'identifier': identifier, 'channel': channel,
+          'code': code,
+          'purpose': channel == 'email' ? 'email_verify' : 'phone_verify',
+        });
+  }
+
+  Future<void> forgotPassword({
+    required String identifier,
+    required String channel,
+    String? requestId,
+  }) async {
+    _validateRecoveryInput(identifier, channel);
+    await _request('POST', SandIamApi.forgotPassword,
+        requestId: requestId, body: <String, Object?>{
+          ..._applicationPayload(), 'identifier': identifier, 'channel': channel,
+        });
+  }
+
+  Future<void> resetPassword({
+    required String identifier,
+    required String channel,
+    required String code,
+    required String password,
+    String? requestId,
+  }) async {
+    _validateRecoveryInput(identifier, channel);
+    if (code.trim().isEmpty || password.isEmpty) {
+      throw const SandIamException(
+          'SAND_IAM_SDK_INVALID_ARGUMENT', '验证码和新密码不能为空', 0);
+    }
+    await _request('POST', SandIamApi.resetPassword,
+        requestId: requestId, body: <String, Object?>{
+          ..._applicationPayload(), 'identifier': identifier, 'channel': channel,
+          'code': code, 'password': password,
+        });
+  }
+
+  void _validateRecoveryInput(String identifier, String channel) {
+    if (identifier.trim().isEmpty || !['email', 'phone'].contains(channel)) {
+      throw const SandIamException(
+          'SAND_IAM_SDK_INVALID_ARGUMENT', '账号和验证通道不正确', 0);
+    }
   }
 
   Future<SandIamAuthResult> refresh(String refreshToken,
@@ -387,6 +641,7 @@ final class SandIamClient {
   static Future<SandIamHttpResponse> _defaultTransport(
       SandIamHttpRequest request) async {
     final outgoing = http.Request(request.method, request.uri)
+      ..followRedirects = false
       ..headers.addAll(request.headers);
     if (request.body != null) outgoing.body = request.body!;
     final streamed = await outgoing.send();
@@ -404,8 +659,8 @@ void _validateWorkloadInput(String secretOrContext, String serviceCode,
       audience.trim().isEmpty ||
       actions.isEmpty ||
       actions.any((String value) => !action.hasMatch(value))) {
-    throw const SandIamException('SAND_IAM_SDK_INVALID_ARGUMENT',
-        '工作负载服务、受众和动作必须使用已声明的稳定代码', 0);
+    throw const SandIamException(
+        'SAND_IAM_SDK_INVALID_ARGUMENT', '工作负载服务、受众和动作必须使用已声明的稳定代码', 0);
   }
 }
 
@@ -452,6 +707,18 @@ SandIamException _remoteError(Object? value, int status) {
       match?.group(1) ?? 'SAND_IAM_REQUEST_FAILED', message, status);
 }
 
+SandIamException _invalidMfaInput() => const SandIamException(
+    'SAND_IAM_SDK_INVALID_ARGUMENT', 'MFA 参数不正确', 0);
+void _validateMfaFactor(int id, String type) {
+  if (id <= 0 || !['totp', 'passkey'].contains(type)) throw _invalidMfaInput();
+}
+T _mfaResult<T>(T Function() parse) {
+  try { return parse(); }
+  on FormatException {
+    throw const SandIamException('SAND_IAM_SDK_INVALID_RESPONSE', 'MFA 返回结果不正确', 200);
+  }
+}
+
 SandIamAuthResult _authResult(Object? value) {
   try {
     return SandIamAuthResult.fromJson(_object(value));
@@ -476,4 +743,15 @@ List<SandIamJson> _list(Object? value) {
         'SAND_IAM_SDK_INVALID_RESPONSE', 'SandIAM 返回的数据不是列表', 200);
   }
   return value.cast<SandIamJson>();
+}
+
+SandIamJson _passkeyProof(String challenge, String rawId, SandIamJson response, List<String> fields) {
+  if (challenge.trim().isEmpty || rawId.trim().isEmpty) throw _invalidMfaInput();
+  final proof = <String, Object?>{};
+  for (final field in fields) {
+    final value = response[field];
+    if (value is! String || value.trim().isEmpty) throw _invalidMfaInput();
+    proof[field] = value;
+  }
+  return proof;
 }

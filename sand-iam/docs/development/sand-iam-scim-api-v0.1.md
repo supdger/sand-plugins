@@ -6,6 +6,8 @@
 
 ## 资源
 
+Group PATCH 清空 `externalId` 可用 `{"op":"remove","path":"externalId"}`、`{"op":"replace","path":"externalId","value":null}` 或 `{"op":"replace","value":{"externalId":null}}`。成功后响应与重新读取均不再含该属性，资源 ID 和成员不变，版本递增。PUT 省略 `externalId` 保留原值，显式传 `null` 才清空。
+
 - `GET /ServiceProviderConfig`、`GET /Schemas`、`GET /ResourceTypes`
 - `GET|POST /Users`，`GET|PATCH|PUT|DELETE /Users/{id}`
 - `GET|POST /Groups`，`GET|PATCH|PUT|DELETE /Groups/{id}`
@@ -30,3 +32,7 @@ Group PATCH 支持完整 `members` 替换/增加/清空、无 `path` 的对象�
 | `SAND_IAM_SCIM_PRECONDITION_FAILED` | 412 / `invalidVers` | ETag 不匹配 |
 
 每个成功的写操作以 token 的实际 application 留审计。`ProvisioningEvent` 的落库字段仍待 006 架构在受控 PostgreSQL 生命周期中读取确认；在确认前不得把该模型当作已完成的事件证据。
+
+Group 创建、替换、PATCH 和删除的成功审计与组及成员变更同事务提交。审计写入失败时，组状态、成员和版本号一起回滚，更新请求可使用原 `If-Match` 重试；成功更新后再使用旧版本返回 412，删除后的组返回 404，不提供响应丢失后的自动重放恢复。
+
+User 创建、替换、PATCH 和删除同样将成功审计纳入事务；审计失败时，身份属性、来源绑定、版本及该来源会话的撤销一起回滚。成功停用或删除后，仅该来源绑定及其会话失效，共享 Identity 保留启用状态；旧版本重试和已删除资源分别按 412、404 处理。

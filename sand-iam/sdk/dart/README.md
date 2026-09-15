@@ -1,5 +1,11 @@
 # SandIAM Dart / Flutter SDK
 
+接受邀请使用 `client.acceptInvitation(token: token, username: username, password: password, displayName: displayName, requestId: requestId)`，返回 `SandIamInvitationIdentity`（`id/displayName`），之后仍须登录。请求匿名发送，邀请令牌仅放在 POST body，不拼进 API URL；服务端依据邀请确定所属应用，SDK 不另传组织/应用。失败保留服务端错误码，不自动重试。
+
+登录返回 `mfaRequired == true` 时尚未获得会话。读取 `methods` 展示可选验证方式、`expiresIn` 提示有效期；`publicKey` 保留服务端 Passkey 请求参数，由应用交给目标平台的认证组件处理。不要把挑战令牌当作访问令牌。
+
+启用验证码时，应用完成挑战后将一次性令牌通过 `captchaToken: token` 传给 `login(...)` 或 `register(...)`。SDK 将其映射为请求体的 `captcha_token`，不生成或缓存令牌；省略参数不绕过服务端验证码策略。
+
 这是一个纯 Dart 包，可直接用于 Flutter、Dart 服务和命令行工具。它覆盖：
 
 - 应用用户注册、登录、刷新、退出；
@@ -133,3 +139,35 @@ dart run sand_iam:sand_iam snippet --language flutter
 ```
 
 CLI 不接收用户密码、访问令牌、客户端密钥或 RADIUS 共享密钥。
+# MFA 挑战提交
+
+`login()` 返回 `mfaRequired` 时，调用 `verifyMfaChallenge(challengeToken: token, method: 'totp', code: code, requestId: requestId)`；恢复码使用 `method: 'recovery_code'`。Passkey 使用 `method: 'passkey'`、base64url `rawId` 和 `response`，包含 base64url `clientDataJSON`、`authenticatorData`、`signature` 及可选 `userHandle`，由平台认证响应提供。
+
+请求固定绑定构造时的组织/应用，不读取或附带会话令牌。重试同一次请求保留 `requestId`。结果 `stepUp == true` 和 `expiresIn` 表示原会话升级成功，不是新登录；不要将它当作含 `accessToken` 的登录结果。本方法不启动会话升级挑战。
+# 密码恢复
+
+先调用 `forgotPassword(identifier: identifier, channel: 'email', requestId: requestId)`，再调用 `resetPassword(identifier: identifier, channel: 'email', code: code, password: password, requestId: requestId)`。短信通道值为 `'phone'`，不是 `'sms'`；重置使用 `password`。两方法返回 `Future<void>`，固定组织/应用且不读取会话凭证。发送成功不证明账号存在，请统一提示“如账号存在，重置验证码已发送”。重置后重新登录，SDK 不自动登录；错误继续抛出，重试同一次请求保留原请求号。
+# 注册联系方式验证
+
+调用 `requestVerification(identifier: identifier, channel: 'email', requestId: requestId)` 请求验证码，再调用 `confirmVerification(identifier: identifier, channel: 'email', code: code, requestId: requestId)`。手机通道为 `'phone'`。SDK 固定推导 `email_verify` / `phone_verify`，不开放密码恢复 purpose。两方法固定应用、匿名、返回 `Future<void>`，不会自动登录。请求成功统一提示“如账号存在，验证码已发送”，不判断账号是否存在；错误继续抛出，同一次重试保留请求号。
+# 默认传输重定向
+
+运行与管理客户端的默认 HTTP 传输均禁用自动重定向，3xx 按请求失败处理，避免把会话、机器凭证或管理员令牌转发到重定向地址。请配置最终服务地址；自定义 transport 也必须保持此边界。
+# MFA 自助管理
+
+幂等重放可能返回 `secretAvailable == false`，此时 `secret/otpauthUri/recoveryCodes` 为 null，仍保留 factorId 或 enabled 等状态。不要据此自动重新签发，也不要尝试重新显示秘密。
+
+`mfaFactors()` 返回 TOTP/Passkey 列表；`startTotp(currentPassword: password, name: name)` 返回 `factorId/secret/otpauthUri`，`confirmTotp(factorId: id, code: code)` 返回启用状态和 `recoveryCodes`。`renameMfaFactor(factorId: id, type: 'totp', name: name)` 改名；`revokeMfaFactor(factorId: id, type: 'passkey', password: password)` 撤销；`regenerateRecoveryCodes(password: password)` 重生成恢复码。所有方法支持 `requestId`。
+
+六项均要求当前会话。服务校验真实当前密码，已有升级状态不能代替密码。SDK 不自动缓存、保存或重试一次性 TOTP 秘密与恢复码；调用方只在受控内存展示，安全交付后清除，勿写日志或持久存储。返回数据经过类型校验，服务错误继续抛出。
+# Passkey 调用
+
+CLI `snippet` 在输出前使用 SDK 构造器校验地址、客户主体和应用代码，不发起网络请求。示例使用规范化 URL，并按 PHP、TypeScript、Dart 的字符串规则转义；Dart 的 `$` 不会被当作生成代码中的插值。
+
+登录或注册前可调用 `captchaConfiguration('login', requestId: requestId)`（也支持 `register`）。`required == false` 无需验证码；`required == true && available == false` 表示不可用，不能绕过；可用时读取 `widget` 的 `kind/siteKey/action/applicationBinding`，由平台展示并将令牌交给已有登录或注册方法。该 GET 不读取会话。
+
+敏感操作由应用明确选择 `stepUpPassword(password, requestId: requestId)` 或 `startMfaStepUp(requestId: requestId)`，后者挑战通过 `verifyMfaChallenge` 提交。`stepUp == true` 升级当前会话，不是新登录。`unlinkFederation(bindingId, requestId: requestId)` 返回 `Future<void>`；近期验证和备用登录保护仍由服务端检查，SDK 不自动升级、解除绑定或重试。
+
+已登录时先调用 `passkeyRegistrationOptions(name: name, currentPassword: password)`，将返回的 `publicKey` 交给平台完成注册，再调用 `passkeyRegistrationFinish(challengeToken: options.challengeToken, rawId: rawId, response: response)`。注册完成返回 `Future<void>`，不会生成登录令牌。
+
+登录时调用 `passkeyAuthenticationOptions()`，平台取得凭据后调用 `passkeyAuthenticationFinish(challengeToken: options.challengeToken, rawId: rawId, response: response, userAgent: userAgent)`。认证请求匿名绑定 SDK 配置的组织和应用，返回既有认证结果。平台负责 WebAuthn ceremony（浏览器为 `credentials.create/get`）、二进制转换与 base64url 序列化；注册响应提供 `clientDataJSON/attestationObject`，认证响应提供 `clientDataJSON/authenticatorData/signature/userHandle`，其中 `userHandle` 必填。SDK 仅传输响应，不调用平台 API、不缓存凭据、不自动重试；各方法支持 `requestId`。

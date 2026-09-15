@@ -34,7 +34,8 @@ Passkey authentication options 也要求一次认证意图复用同一 `X-Reques
 | `POST /mfa/factors/rename` | 重命名 | `factor_id`、`type`、`name` |
 | `POST /mfa/factors/revoke` | 撤销 | `factor_id`、`type`、当前 `password` |
 | `POST /mfa/recovery/regenerate` | 重新生成恢复码 | 当前 `password`；原恢复码全部作废 |
-| `POST /mfa/challenge/verify` | 密码后完成 MFA | 应用代码、`challenge_token`、`method` 和验证码/断言 |
+| `POST /mfa/challenge/verify` | 完成登录或当前会话的 MFA 二次验证 | 应用代码、`challenge_token`、`method` 和验证码/断言；登录挑战返回会话，二次验证挑战返回 `step_up: true`、`expires_in: 300` |
+| `POST /step-up/mfa/start` | 为当前会话发起 MFA 二次验证 | Bearer access token；返回 `mfa_required`、`challenge_token`、`methods`、`expires_in` 及适用的 `public_key` |
 | `POST /passkeys/registration/options` | 添加通行密钥选项 | `name`、`current_password`；返回 WebAuthn creation options |
 | `POST /passkeys/registration/finish` | 完成添加 | `challenge_token`、浏览器 Credential 响应 |
 | `POST /passkeys/authentication/options` | 无密码登录选项 | 应用代码；返回 discoverable-credential request options |
@@ -42,12 +43,22 @@ Passkey authentication options 也要求一次认证意图复用同一 `X-Reques
 
 ## 端到端流程
 
+### 管理认证方式
+
+重命名和撤销只作用于当前应用、当前身份的启用因子，`type` 为 `totp` 或 `passkey`；因子不存在或不属于该范围时返回 `SAND_IAM_MFA_FACTOR_NOT_FOUND`（404）。撤销前必须通过当前密码验证。
+
+两种管理操作的状态变更和成功审计在同一事务提交，审计失败会回滚本次变更。撤销 TOTP 同时停用该因子尚可用的恢复码；撤销 Passkey 不停用 TOTP 恢复码。这两个接口不撤销已有登录会话，设备丢失后还需通过会话管理处理该设备的会话。
+
+撤销成功后因子不再出现在 `GET /mfa/factors` 中，再次撤销同一因子返回 404。若请求超时，先重新读取认证方式确认状态；这两个管理接口没有上述挑战接口的响应恢复机制，不能依赖相同 `X-Request-Id` 重放首次响应。
+
 ### TOTP 与恢复码
 
 1. 已登录用户提交当前密码调用 `totp/start`。服务器先执行独立限流的二次认证，再生成 20-byte secret；明文只在本次响应出现。仅持有被盗 access token 不能绑定新验证器。
 2. 用户提交 `totp/confirm`；RFC 6238 SHA-1 / 30 秒 / 6 位在前后一个时间窗内验证。成功时间步写入 `last_used_counter`，同一步再次使用返回 `SAND_IAM_MFA_TOTP_REPLAYED`。
 3. 成功后返回 10 个恢复码，数据库只保存 HMAC。重新生成或撤销 TOTP 会失效旧码。
 4. 密码登录成功且存在启用 TOTP/Passkey 时，不签发会话，而返回 5 分钟一次性 `challenge_token`；通过 TOTP 或恢复码后才签发正式会话。
+
+已登录会话的 MFA 二次验证使用同一个挑战提交接口，但用途不同：先带当前 Bearer access token 调用 `/step-up/mfa/start`，再以应用代码、挑战和认证材料提交 `/mfa/challenge/verify`，提交时不依赖 Bearer token。成功只更新挑战绑定的原会话，返回 `step_up` 和 `expires_in`，不会签发新会话。原会话已失效时拒绝完成或恢复，不能把二次验证挑战用于其他会话。响应丢失后的同请求恢复仍受上述 30 秒窗口与指纹约束，只恢复原二次验证结果。
 
 ### Passkey
 

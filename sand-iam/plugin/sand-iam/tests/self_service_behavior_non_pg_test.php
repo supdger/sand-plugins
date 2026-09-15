@@ -12,8 +12,16 @@ namespace think\facade {
         public static int $starts = 0;
         public static int $commits = 0;
         public static int $rollbacks = 0;
-        public static function startTrans(): void { self::$starts++; }
-        public static function commit(): void { self::$commits++; }
+        public static ?\Closure $beforeStart = null;
+        public static ?\Closure $afterCommit = null;
+        public static function startTrans(): void {
+            if (self::$beforeStart !== null) { $callback = self::$beforeStart; self::$beforeStart = null; $callback(); }
+            self::$starts++;
+        }
+        public static function commit(): void {
+            self::$commits++;
+            if (self::$afterCommit !== null) { $callback = self::$afterCommit; self::$afterCommit = null; $callback(); }
+        }
         public static function rollback(): void { self::$rollbacks++; }
     }
 }
@@ -149,11 +157,21 @@ namespace plugin\SandIam\app\service {
 
     final class HumanAuthService
     {
+        public static bool $tokenValid = true;
         /** @var array<string,array{0:Application,1:Identity}> */ public static array $principals = [];
         /** @return array{0:Application,1:Identity} */
         public function authenticatedPrincipal(string $accessToken): array
         {
+            $this->authenticatedSession($accessToken);
             return self::$principals[$accessToken] ?? throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+        }
+        public function authenticatedSession(string $accessToken): \plugin\SandIam\app\model\AuthSession
+        {
+            $id = $accessToken === 'access-a' ? 1 : ($accessToken === 'access-b' ? 4 : 0);
+            $session = \plugin\SandIam\app\model\AuthSession::where('id', $id)->where('status', 1)->find();
+            if (!self::$tokenValid || $session === null || $session->revoked_time !== null
+                || ($session->access_expire_time ?? '2099-01-01 00:00:00') <= date('Y-m-d H:i:s')) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+            return $session;
         }
     }
 
@@ -256,5 +274,47 @@ namespace {
     selfServiceAssert(IdentityEventPublisher::$events === [['application_id' => 11, 'identity_id' => 1001, 'event_type' => 'identity.updated', 'fields' => ['display_name'], 'request_id' => 'self-service-profile-update-001']], 'profile update must publish the scoped identity.updated event');
     selfServiceAssert(AuditWriter::$writes === [['actorType' => 'identity', 'actorRef' => '1001', 'organizationId' => 101, 'applicationId' => 11, 'action' => 'identity.profile_update', 'resourceType' => 'identity', 'resourceId' => 1001, 'outcome' => 'succeeded', 'requestId' => 'self-service-profile-update-001', 'detail' => ['fields' => ['display_name']]]], 'profile update must write the matching scoped audit record');
 
+    $before = serialize([$identityA, IdentityEventPublisher::$events, AuditWriter::$writes]);
+    Db::$beforeStart = static function (): void { AuthSession::$rows[0]->status = 2; AuthSession::$rows[0]->revoked_time = '2026-09-14 12:00:00'; };
+    try {
+        $service->updateProfile('access-a', 'Revoked update', 'self-service-revoked-update');
+        throw new \RuntimeException('revoked session changed profile');
+    } catch (\plugin\sandadmin\exception\ApiException $exception) {
+        selfServiceAssert($exception->getCode() === 401, 'revoked profile update must return 401');
+    }
+    selfServiceAssert(serialize([$identityA, IdentityEventPublisher::$events, AuditWriter::$writes]) === $before, 'revoked profile update changed identity, event or audit');
+    AuthSession::$rows[0]->status = 1;
+    AuthSession::$rows[0]->revoked_time = null;
+    foreach (['rotation', 'expiry'] as $failure) {
+        Db::$beforeStart = static function () use ($failure): void {
+            if ($failure === 'rotation') HumanAuthService::$tokenValid = false;
+            else AuthSession::$rows[0]->access_expire_time = '2000-01-01 00:00:00';
+        };
+        try {
+            $service->updateProfile('access-a', 'Invalid token update', 'self-service-token-change');
+            throw new \RuntimeException('invalidated token changed profile');
+        } catch (\plugin\sandadmin\exception\ApiException $exception) {
+            selfServiceAssert($exception->getCode() === 401, 'invalidated token must return 401');
+        }
+        selfServiceAssert(serialize([$identityA, IdentityEventPublisher::$events, AuditWriter::$writes]) === $before, 'invalidated token changed identity, event or audit');
+        HumanAuthService::$tokenValid = true;
+        AuthSession::$rows[0]->access_expire_time = '2099-01-01 00:00:00';
+    }
+    Db::$afterCommit = static function (): void { AuthSession::$rows[0]->status = 2; };
+    $committed = $service->updateProfile('access-a', 'Committed name', 'self-service-commit-result');
+    selfServiceAssert($committed['display_name'] === 'Committed name' && $identityA->display_name === 'Committed name', 'committed update must return its success snapshot without post-commit authentication');
+    AuthSession::$rows[0]->status = 1;
+    foreach (["\u{3000}", "\u{00A0}\u{2003}", "\u{200B}\u{3000}\t"] as $blankName) {
+        $before = serialize([$identityA, IdentityEventPublisher::$events, AuditWriter::$writes]);
+        try {
+            $service->updateProfile('access-a', $blankName, 'unicode-blank-profile');
+            throw new \RuntimeException('Unicode blank profile name accepted');
+        } catch (\plugin\sandadmin\exception\ApiException $exception) {
+            selfServiceAssert($exception->getCode() === 400, 'Unicode blank profile must return 400');
+        }
+        selfServiceAssert(serialize([$identityA, IdentityEventPublisher::$events, AuditWriter::$writes]) === $before, 'Unicode blank profile changed identity or audit');
+    }
+    $unicodeName = $service->updateProfile('access-a', "\u{3000}张\u{00A0}\u{2003}三\u{3000}", 'unicode-profile-name');
+    selfServiceAssert($unicodeName['display_name'] === '张 三', 'Unicode whitespace must normalize and trim around visible text');
     echo "self service behavior non-pg test passed\n";
 }

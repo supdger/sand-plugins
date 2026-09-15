@@ -20,9 +20,14 @@ final class SelfServiceController extends BaseController
 
     public function updateProfile(Request $request): Response
     {
+        $accessToken = $this->bearer($request);
+        $displayName = $request->post('display_name');
+        if (!is_string($displayName)) {
+            throw new ApiException('SAND_IAM_VALIDATION_ERROR: 显示名称必须是文本', 400);
+        }
         return $this->success((new SelfServiceService())->updateProfile(
-            $this->bearer($request),
-            (string) $request->post('display_name', ''),
+            $accessToken,
+            $displayName,
             $this->requestId($request),
         ), '个人资料已更新');
     }

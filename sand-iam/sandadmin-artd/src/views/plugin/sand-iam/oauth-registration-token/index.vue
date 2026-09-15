@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
@@ -9,7 +9,7 @@
     parseRegistrationHosts,
     parseRegistrationScopes,
     parseRegistrationTokenIssue,
-    parseRegistrationTokenRows,
+    parseRegistrationTokenPage,
     registrationTokenStatusLabel,
     summarizeHosts,
     summarizeScopes,
@@ -25,6 +25,16 @@
   const canRevoke = computed(() => hasAuth('sand_iam:oauth_registration_token:revoke'))
 
   const loading = ref(false)
+  const saving = ref(false)
+  const applicationLoading = ref(false)
+  const page = ref(1)
+  const pageSize = ref(20)
+  const total = ref(0)
+  const issuedOwner = ref('')
+  let disposed = false
+  let scopeVersion = 0
+  let listVersion = 0
+  let searchVersion = 0
   const applications = ref<SandIamResourceRow[]>([])
   const tokens = ref<SandIamRegistrationTokenRow[]>([])
   const applicationId = ref('')
@@ -38,6 +48,30 @@
   const secretReplayHint = ref('')
   const secretDialogOpen = ref(false)
   const viewState = ref<'idle' | 'empty' | 'ready'>('idle')
+  watch(applicationId, () => {
+    scopeVersion++
+    listVersion++
+    page.value = 1
+    tokens.value = []
+    total.value = 0
+    tokenName.value = ''
+    hostsText.value = 'app.example.com'
+    scopesText.value = 'openid profile'
+    ttlHours.value = 24
+    maxUses.value = 1
+    requestError.value = null
+    loading.value = false
+    viewState.value = 'idle'
+  }, { flush: 'sync' })
+  watch([page, pageSize], () => {
+    listVersion++
+    tokens.value = []
+    void loadTokens()
+  })
+
+  function validApplication(): boolean {
+    return !applicationLoading.value && applications.value.some(row => row.id === selectedId(applicationId.value))
+  }
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -63,15 +97,24 @@
   function clearSecret(): void {
     issuedToken.value = ''
     secretReplayHint.value = ''
+    issuedOwner.value = ''
   }
 
-  async function loadApplications(): Promise<void> {
+  async function loadApplications(keywords = ''): Promise<void> {
+    if (disposed || (!canIndex.value && !canIssue.value && !canRevoke.value)) return
+    const version = ++searchVersion
+    applicationId.value = ''
+    applications.value = []
+    applicationLoading.value = true
     try {
-      applications.value = listRows(
-        await listSandIamResource('application', { page: 1, limit: 100 })
+      const rows = listRows(
+        await listSandIamResource('application', { page: 1, limit: 100, keywords: keywords.trim() })
       )
+      if (!disposed && version === searchVersion) applications.value = rows
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && version === searchVersion) requestError.value = describeSandIamError(error)
+    } finally {
+      if (!disposed && version === searchVersion) applicationLoading.value = false
     }
   }
 
@@ -79,6 +122,7 @@
    * 必须先按名称选接入应用。后端 index 要求 application_id。
    */
   async function loadTokens(): Promise<void> {
+    if (disposed || !canIndex.value || !validApplication()) return
     const application = selectedId(applicationId.value)
     if (application === null) {
       requestError.value = describeSandIamError(
@@ -88,20 +132,26 @@
     }
     if (!canIndex.value) return
     loading.value = true
+    const version = ++listVersion
+    const scope = scopeVersion
+    const current = () => !disposed && scope === scopeVersion && version === listVersion
     requestError.value = null
     try {
-      const rows = parseRegistrationTokenRows(
+      const result = parseRegistrationTokenPage(
         await getSandIamAdmin('oauth-registration-token/index', {
-          application_id: application
+          application_id: application, page: page.value, limit: pageSize.value
         })
       )
-      tokens.value = rows
-      viewState.value = rows.length === 0 ? 'empty' : 'ready'
+      if (!current()) return
+      tokens.value = result.rows
+      total.value = result.total
+      viewState.value = result.rows.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (!current()) return
       requestError.value = describeSandIamError(error)
       tokens.value = []
     } finally {
-      loading.value = false
+      if (current()) loading.value = false
     }
   }
 
@@ -109,6 +159,7 @@
    * 签发成功才弹明文；重试或缺失 token 只引导重新签发，不回放旧值。
    */
   async function issueToken(): Promise<void> {
+    if (disposed || saving.value || !canIssue.value || !validApplication() || issuedToken.value !== '') return
     const application = selectedId(applicationId.value)
     const issueError = describeRegistrationTokenIssueError(
       tokenName.value,
@@ -123,7 +174,9 @@
       )
       return
     }
-    loading.value = true
+    saving.value = true
+    const scope = scopeVersion
+    const owner = `${applicationName(application)}（应用 ${application}） / ${tokenName.value.trim()}`
     requestError.value = null
     try {
       const parsed = parseRegistrationTokenIssue(
@@ -136,6 +189,8 @@
           max_uses: maxUses.value
         })
       )
+      if (disposed) return
+      issuedOwner.value = owner
       if (parsed === null) {
         issuedToken.value = ''
         secretReplayHint.value =
@@ -146,11 +201,11 @@
       }
       secretDialogOpen.value = true
       ElMessage.success('已保存')
-      await loadTokens()
+      if (scope === scopeVersion) await loadTokens()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && scope === scopeVersion) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      saving.value = false
     }
   }
 
@@ -158,6 +213,13 @@
    * 撤销后不能恢复。成功只显示“已撤销”，失败走后端稳定码。
    */
   async function revoke(row: SandIamRegistrationTokenRow): Promise<void> {
+    if (disposed || saving.value || loading.value || !canRevoke.value || !validApplication() ||
+      !tokens.value.includes(row) || row.application_id !== selectedId(applicationId.value) || row.status !== 1) return
+    const scope = scopeVersion
+    const query = listVersion
+    const current = () => !disposed && scope === scopeVersion && query === listVersion &&
+      tokens.value.includes(row) && row.application_id === selectedId(applicationId.value) && row.status === 1
+    saving.value = true
     try {
       await ElMessageBox.confirm(
         `确认撤销「${row.name}」吗？撤销后不能恢复，客户端必须改用新令牌。`,
@@ -165,22 +227,25 @@
         { type: 'warning', confirmButtonText: '确认撤销', cancelButtonText: '取消' }
       )
     } catch {
+      saving.value = false
       return
     }
-    loading.value = true
+    if (!current() || !canRevoke.value) { saving.value = false; return }
     requestError.value = null
     try {
       await postSandIamAction('oauth-registration-token/revoke', { id: row.id })
+      if (!current()) return
       ElMessage.success('已撤销')
       await loadTokens()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      saving.value = false
     }
   }
 
   async function closeSecretDialog(done: () => void): Promise<void> {
+    const token = issuedToken.value
     if (issuedToken.value === '') {
       clearSecret()
       done()
@@ -192,6 +257,7 @@
         '确认关闭令牌窗口',
         { type: 'warning', confirmButtonText: '已保存，关闭', cancelButtonText: '继续查看' }
       )
+      if (disposed || issuedToken.value !== token) return
       clearSecret()
       done()
     } catch {
@@ -201,6 +267,13 @@
 
   onMounted(() => {
     void loadApplications()
+  })
+  onScopeDispose(() => {
+    disposed = true
+    listVersion++
+    searchVersion++
+    clearSecret()
+    secretDialogOpen.value = false
   })
 </script>
 
@@ -249,7 +322,7 @@
 
       <ElForm label-width="170px" class="mb-4">
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="loadApplications" :loading="applicationLoading" clearable placeholder="按名称搜索">
             <ElOption
               v-for="row in applications"
               :key="String(row.id)"
@@ -284,7 +357,7 @@
           <ElInputNumber v-model="maxUses" :min="1" :max="1000" />
         </ElFormItem>
         <ElFormItem>
-          <ElButton :disabled="!canIssue" :loading="loading" @click="issueToken">签发</ElButton>
+          <ElButton :disabled="!canIssue || saving || issuedToken !== '' || !validApplication()" :loading="saving" @click="issueToken">签发</ElButton>
         </ElFormItem>
       </ElForm>
 
@@ -318,7 +391,7 @@
               v-if="scope.row.status === 1"
               size="small"
               type="warning"
-              :disabled="!canRevoke"
+              :disabled="!canRevoke || saving"
               @click="revoke(scope.row)"
             >
               撤销
@@ -326,6 +399,9 @@
           </template>
         </ElTableColumn>
       </ElTable>
+      <ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total"
+        :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next"
+        @size-change="page = 1" />
     </ElCard>
 
     <ElDialog
@@ -334,8 +410,8 @@
       width="620px"
       :close-on-click-modal="false"
       :before-close="closeSecretDialog"
-      @closed="clearSecret"
     >
+      <p>{{ issuedOwner }}</p>
       <ElAlert
         v-if="issuedToken !== ''"
         type="warning"

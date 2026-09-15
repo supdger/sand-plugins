@@ -66,6 +66,12 @@ function unwrap(value: unknown): unknown {
   return isRecord(value) && 'data' in value ? value.data : value
 }
 
+export function parseInitializationPagination(value: unknown, fallbackTotal: number): { total: number } {
+  const payload = isRecord(value) && isRecord(value.data) ? value.data : value
+  const total = isRecord(payload) ? payload.total : null
+  return { total: typeof total === 'number' && Number.isInteger(total) && total >= 0 ? total : fallbackTotal }
+}
+
 function objectTypeLabel(type: string): string {
   if (type === 'application') return '接入应用'
   if (type === 'role') return '角色'

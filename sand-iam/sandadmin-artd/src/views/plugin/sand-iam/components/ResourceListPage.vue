@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import './sandIamPage.css'
-  import { computed, onMounted, reactive, ref, watch } from 'vue'
+  import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
@@ -24,6 +24,7 @@
     updateSandIamResource
   } from '../api/write'
   import ResourceEditor from './ResourceEditor.vue'
+  import PolicyHistory from './PolicyHistory.vue'
   import type {
     SandIamFilterKey,
     SandIamFormField,
@@ -71,10 +72,16 @@
   const pageSize = ref(20)
   const loading = ref(false)
   const saving = ref(false)
+  let disposed = false
+  let listRequestId = 0
   const requestError = ref<SandIamRequestError | null>(null)
   const editorOpen = ref(false)
   const creating = ref(true)
   const editingRow = ref<SandIamResourceRow | null>(null)
+  let editorVersion = 0
+  let editorQuery = ''
+  let editorListVersion = 0
+  let editorRowId: number | null = null
   const issuedSecret = ref<string | null>(null)
   const credentialDialogOpen = ref(false)
   const keywords = ref('')
@@ -89,6 +96,9 @@
   const outcome = ref('')
   const scopeType = ref('')
   const relationTargetId = ref('')
+  const historyPolicyId = ref<number | null>(null)
+  const relationConfirming = ref(false)
+  const actionConfirming = ref(false)
   const referenceOptions = reactive<Record<string, ReferenceOption[]>>({})
   const referenceLoading = reactive<Record<string, boolean>>({})
   const referenceError = reactive<Record<string, string>>({})
@@ -103,16 +113,15 @@
   const canIndex = computed(() => hasAuth(props.indexPermission))
   const canSave = computed(
     () =>
-      hasAuth(`${props.permissionPrefix}:save`) ||
-      hasAuth(`${props.permissionPrefix}:issue`) ||
-      hasAuth(`${props.permissionPrefix}:grant`)
+      hasAuth(`${props.permissionPrefix}:${props.writeMode === 'credential' ? 'issue' :
+        props.writeMode === 'relation' ? 'grant' : 'save'}`)
   )
   const canUpdate = computed(
-    () => hasAuth(`${props.permissionPrefix}:update`) || hasAuth(`${props.permissionPrefix}:rotate`)
+    () => hasAuth(`${props.permissionPrefix}:update`)
   )
   const canDisable = computed(
     () =>
-      hasAuth(`${props.permissionPrefix}:disable`) || hasAuth(`${props.permissionPrefix}:revoke`)
+      hasAuth(`${props.permissionPrefix}:disable`)
   )
   const hasRows = computed(() => rows.value.length > 0)
   const referenceErrorMessages = computed(() =>
@@ -344,22 +353,31 @@
       referenceError[key] = ''
       return
     }
+    const relationTarget = props.writeMode === 'relation' && key === props.relationGrantField
+    const requestId = (referenceRequestId[key] ?? 0) + 1
+    referenceRequestId[key] = requestId
+    const relationIdentity = identityId.value
+    if (relationTarget) {
+      relationTargetId.value = ''
+      referenceOptions[key] = []
+    }
     const params = referenceParams(key, keywords)
     if (params === null) {
       referenceOptions[key] = []
+      referenceLoading[key] = false
       referenceError[key] = missingReferenceMessage(key)
       return
     }
-    const requestId = (referenceRequestId[key] ?? 0) + 1
-    referenceRequestId[key] = requestId
     const selectedValue = selectedReferenceValue(key)
     const selectedOption = referenceOptions[key]?.find((option) => option.value === selectedValue)
     referenceLoading[key] = true
     referenceError[key] = ''
     try {
       const response = await listSandIamResource(endpoint, params)
-      if (referenceRequestId[key] !== requestId) return
+      if (disposed || referenceRequestId[key] !== requestId ||
+        (relationTarget && relationIdentity !== identityId.value)) return
       const options = referenceRows(response)
+        .filter(row => !relationTarget || row.application_id === params.application_id)
         .map((row) => referenceOption(row, key))
         .filter((option): option is ReferenceOption => option !== null)
       referenceOptions[key] =
@@ -374,7 +392,7 @@
         referenceError[key] = `没有可用的${sandIamFieldLabel(key)}，请先创建或启用关联对象。`
       }
     } catch (error: unknown) {
-      if (referenceRequestId[key] !== requestId) return
+      if (disposed || referenceRequestId[key] !== requestId) return
       const described = describeSandIamError(error)
       if (described.http === 401) clearSensitiveState()
       referenceOptions[key] = []
@@ -383,7 +401,7 @@
           ? `无权查看${sandIamFieldLabel(key)}，请联系平台管理员确认权限或管理范围。`
           : `无法加载${sandIamFieldLabel(key)}：${described.detail}`
     } finally {
-      if (referenceRequestId[key] === requestId) {
+      if (!disposed && referenceRequestId[key] === requestId) {
         referenceLoading[key] = false
       }
     }
@@ -548,29 +566,34 @@
   }
 
   async function load(): Promise<void> {
+    if (disposed) return
+    const requestId = ++listRequestId
     if (identityMissing.value) {
       rows.value = []
       total.value = 0
       requestError.value = null
+      loading.value = false
       return
     }
     loading.value = true
     requestError.value = null
     try {
       const response = await listSandIamResource(props.endpoint, buildParams())
+      if (disposed || requestId !== listRequestId) return
       const page = normalizePage(response)
       rows.value = page.data
       total.value = page.total
       currentPage.value = page.currentPage
       pageSize.value = page.pageSize
     } catch (error: unknown) {
+      if (disposed || requestId !== listRequestId) return
       rows.value = []
       total.value = 0
       const described = describeSandIamError(error)
       if (described.http === 401) clearSensitiveState()
       requestError.value = described
     } finally {
-      loading.value = false
+      if (!disposed && requestId === listRequestId) loading.value = false
     }
   }
 
@@ -607,14 +630,25 @@
   }
 
   function openCreate(): void {
+    if (writeBusy() || !showWrites.value || props.writeMode === 'relation' || !canSave.value) return
+    editorVersion++
+    editorQuery = JSON.stringify(buildParams())
+    editorListVersion = listRequestId
     creating.value = true
     editingRow.value = null
+    editorRowId = null
     editorOpen.value = true
   }
 
   function openEdit(row: SandIamResourceRow): void {
+    if (writeBusy() || !showWrites.value || props.writeMode === 'credential' ||
+      props.writeMode === 'relation' || !canUpdate.value || !rows.value.includes(row) || rowId(row) === null) return
+    editorVersion++
+    editorQuery = JSON.stringify(buildParams())
+    editorListVersion = listRequestId
     creating.value = false
     editingRow.value = row
+    editorRowId = rowId(row)
     editorOpen.value = true
   }
 
@@ -685,33 +719,55 @@
     return row.status === 2 || row.status === '2'
   }
 
+  function writeBusy(): boolean {
+    return disposed || loading.value || saving.value || actionConfirming.value || relationConfirming.value
+  }
+
+  function supportsStatusWrite(): boolean {
+    return ['crud', 'policy', 'binding', 'oauth-client', 'business-action'].includes(props.writeMode)
+  }
+
   async function restoreEnabled(row: SandIamResourceRow): Promise<void> {
     const id = rowId(row)
-    if (id === null) return
-    await runWrite(() => updateSandIamResource(props.endpoint, { id, status: 1 }), '已恢复启用')
+    if (id === null || writeBusy() || !supportsStatusWrite() || !canUpdate.value ||
+      !rows.value.includes(row) || !isDisabled(row)) return
+    const query = JSON.stringify(buildParams()), version = listRequestId
+    const current = () => version === listRequestId && query === JSON.stringify(buildParams()) && rows.value.includes(row)
+    await runWrite(() => updateSandIamResource(props.endpoint, { id, status: 1 }), '已恢复启用', undefined, false, current)
   }
 
   async function runWrite(
     task: () => Promise<unknown>,
     successText: string,
-    describeError: (error: unknown) => SandIamRequestError = describeSandIamError
+    describeError: (error: unknown) => SandIamRequestError = describeSandIamError,
+    issuesSecret = false,
+    isCurrent: () => boolean = () => true
   ): Promise<void> {
+    if (disposed || saving.value) return
+    if (issuesSecret && issuedSecret.value !== null) {
+      ElMessage.warning('请先完成当前凭证的安全交付并关闭凭证窗口，再签发或轮换。')
+      return
+    }
     saving.value = true
     requestError.value = null
     try {
       const result = await task()
-      captureIssuedSecret(result)
+      if (disposed) return
+      if (issuesSecret) captureIssuedSecret(result)
+      if (!isCurrent()) return
+      if (!issuesSecret) captureIssuedSecret(result)
       editorOpen.value = false
       ElMessage.success(successText)
       await load()
     } catch (error: unknown) {
+      if (disposed || !isCurrent()) return
       const described = describeError(error)
       if (described.http === 401) {
         clearSensitiveState()
       }
       requestError.value = described
     } finally {
-      saving.value = false
+      if (!disposed) saving.value = false
     }
   }
 
@@ -726,8 +782,16 @@
   }
 
   async function onEditorSubmit(payload: Readonly<Record<string, unknown>>): Promise<void> {
+    if (writeBusy() || !editorOpen.value || !showWrites.value || props.writeMode === 'relation' ||
+      editorQuery !== JSON.stringify(buildParams()) || editorListVersion !== listRequestId) return
+    const version = editorVersion
+    const isCreating = creating.value
+    const original = editingRow.value
+    if (isCreating ? !canSave.value : (!canUpdate.value || original === null || !rows.value.includes(original))) return
+    const current = () => version === editorVersion && editorOpen.value &&
+      editorQuery === JSON.stringify(buildParams()) && editorListVersion === listRequestId
     if (props.writeMode === 'credential') {
-      await runWrite(() => postSandIamAction('credential/issue', payload), '凭证已签发')
+      await runWrite(() => postSandIamAction('credential/issue', payload), '凭证已签发', undefined, true, current)
       return
     }
     if (creating.value) {
@@ -735,16 +799,25 @@
       await runWrite(
         () => saveSandIamResource(props.endpoint, payload, !isEnvironmentCreation),
         '已保存',
-        isEnvironmentCreation ? describeEnvironmentEditorSaveError : undefined
+        isEnvironmentCreation ? describeEnvironmentEditorSaveError : undefined,
+        props.writeMode === 'oauth-client',
+        current
       )
       return
     }
-    await runWrite(() => updateSandIamResource(props.endpoint, payload), '已保存')
+    const id = editorRowId
+    if (id === null || original === null || rowId(original) !== id) return
+    await runWrite(() => updateSandIamResource(props.endpoint, { ...payload, id }), '已保存', undefined, false, current)
   }
 
   async function confirmDisable(row: SandIamResourceRow): Promise<void> {
     const id = rowId(row)
-    if (id === null) return
+    if (id === null || writeBusy() || !supportsStatusWrite() || !canDisable.value ||
+      !rows.value.includes(row) || isDisabled(row)) return
+    const query = JSON.stringify(buildParams()), version = listRequestId, status = row.status
+    const current = () => !disposed && version === listRequestId && query === JSON.stringify(buildParams()) &&
+      rows.value.includes(row) && row.status === status
+    actionConfirming.value = true
     try {
       await ElMessageBox.confirm(
         `确认停用「${resourceLabel(row)}」吗？${
@@ -760,18 +833,52 @@
         }
       )
     } catch {
+      actionConfirming.value = false
       return
     }
-    await runWrite(() => disableSandIamResource(props.endpoint, id), '已停用')
+    try {
+      if (!current() || !canDisable.value) return
+      await runWrite(() => disableSandIamResource(props.endpoint, id), '已停用', undefined, false, current)
+    } finally {
+      actionConfirming.value = false
+    }
   }
 
   async function confirmAction(
     path: string,
-    data: Readonly<Record<string, unknown>>,
+    _data: Readonly<Record<string, unknown>>,
     title: string,
     row: SandIamResourceRow,
     impact: string
   ): Promise<void> {
+    if (path === 'credential/rotate' || path === 'credential/revoke' || path === 'oauth-client/secret/rotate') {
+      await confirmCredentialAction(path, row, title, impact)
+      return
+    }
+    if (props.writeMode === 'relation') {
+      if (path === `${props.endpoint}/revoke`) await confirmRelationRevoke(row, impact)
+      return
+    }
+    const actions: Readonly<Record<string, { mode: string; endpoint: string; permission: string }>> = {
+      'policy/publish': { mode: 'policy', endpoint: 'policy', permission: 'sand_iam:policy:publish' },
+      'policy/revoke': { mode: 'policy', endpoint: 'policy', permission: 'sand_iam:policy:revoke' },
+      'grant/revoke': { mode: 'grant', endpoint: 'grant', permission: 'sand_iam:grant:revoke' },
+      'application-business-action/publish': { mode: 'business-action', endpoint: 'application-business-action', permission: 'sand_iam:api_resource:update' }
+    }
+    const action = actions[path]
+    const id = rowId(row)
+    const request = listRequestId
+    const query = JSON.stringify(buildParams())
+    const status = row.status
+    const state = row.state
+    const current = (): boolean => !disposed && request === listRequestId &&
+      query === JSON.stringify(buildParams()) && rows.value.includes(row)
+    const allowed = (): boolean => action !== undefined && current() &&
+      props.writeMode === action.mode && props.endpoint === action.endpoint &&
+      hasAuth(action.permission) && row.status === status && row.state === state &&
+      (path !== 'application-business-action/publish' || row.status === 1)
+    if (id === null || saving.value || actionConfirming.value || !allowed()) return
+    actionConfirming.value = true
     try {
       await ElMessageBox.confirm(`确认${title}「${resourceLabel(row)}」吗？${impact}`, title, {
         type: 'warning',
@@ -779,6 +886,11 @@
         cancelButtonText: '取消'
       })
     } catch {
+      actionConfirming.value = false
+      return
+    }
+    if (!allowed()) {
+      actionConfirming.value = false
       return
     }
     const successText = title.includes('撤销')
@@ -788,12 +900,87 @@
         : title.includes('轮换')
           ? '已轮换'
           : '已保存'
-    await runWrite(() => postSandIamAction(path, data), successText)
+    try {
+      await runWrite(() => postSandIamAction(path, { id }), successText,
+        describeSandIamError, false, current)
+    } finally {
+      actionConfirming.value = false
+    }
+  }
+
+  async function confirmCredentialAction(
+    path: string, row: SandIamResourceRow, title: string, impact: string
+  ): Promise<void> {
+    const oauth = path === 'oauth-client/secret/rotate'
+    const rotates = path !== 'credential/revoke'
+    const permission = oauth ? 'sand_iam:oauth_client:rotate' :
+      path === 'credential/rotate' ? 'sand_iam:credential:rotate' : 'sand_iam:credential:revoke'
+    const id = rowId(row)
+    const request = listRequestId
+    const query = JSON.stringify(buildParams())
+    const status = row.status
+    const current = (): boolean => !disposed && request === listRequestId &&
+      query === JSON.stringify(buildParams()) && rows.value.includes(row)
+    const allowed = (): boolean => current() && hasAuth(permission) && row.status === status &&
+      (oauth ? props.writeMode === 'oauth-client' && props.endpoint === 'oauth-client' &&
+        row.client_type === 'confidential' && row.status === 1 :
+        props.writeMode === 'credential' && props.endpoint === 'credential')
+    if (id === null || saving.value || actionConfirming.value || !allowed()) return
+    if (rotates && issuedSecret.value !== null) {
+      ElMessage.warning('请先完成当前凭证的安全交付并关闭凭证窗口，再签发或轮换。')
+      return
+    }
+    actionConfirming.value = true
+    try {
+      await ElMessageBox.confirm(`确认${title}「${resourceLabel(row)}」吗？${impact}`, title, {
+        type: 'warning', confirmButtonText: `确认${title}`, cancelButtonText: '取消'
+      })
+      if (!allowed()) return
+      // 轮换响应中的一次性密钥必须交付；换页后仍由 runWrite 保存，不能丢弃。
+      await runWrite(() => postSandIamAction(path, { id }), rotates ? '已轮换' : '已撤销',
+        describeSandIamError, rotates, rotates ? () => true : current)
+    } catch {
+      // 用户取消确认。
+    } finally {
+      actionConfirming.value = false
+    }
+  }
+
+  async function confirmRelationRevoke(row: SandIamResourceRow, impact: string): Promise<void> {
+    const id = rowId(row)
+    const identity = identityId.value
+    const request = listRequestId
+    const reference = referenceRequestId[props.relationGrantField]
+    const valid = (): boolean => !disposed && identity === identityId.value &&
+      reference === referenceRequestId[props.relationGrantField] &&
+      request === listRequestId && rows.value.includes(row) &&
+      parsePositiveInt(identity) !== null && row.identity_id === parsePositiveInt(identity) &&
+      hasAuth(`${props.permissionPrefix}:revoke`)
+    if (saving.value || relationConfirming.value || id === null || !valid()) return
+    relationConfirming.value = true
+    try {
+      await ElMessageBox.confirm(`确认撤销「${resourceLabel(row)}」吗？${impact}`, '撤销关系', {
+        type: 'warning', confirmButtonText: '确认撤销', cancelButtonText: '取消'
+      })
+      if (!valid()) return
+      await runWrite(() => postSandIamAction(`${props.endpoint}/revoke`, { id }),
+        '已撤销', describeSandIamError, false, valid)
+    } catch {
+      // 取消确认不会改变当前列表。
+    } finally {
+      relationConfirming.value = false
+    }
   }
 
   async function grantRelation(): Promise<void> {
+    const key = props.relationGrantField
+    if (disposed || saving.value || relationConfirming.value || props.writeMode !== 'relation' ||
+      !hasAuth(`${props.permissionPrefix}:grant`) || referenceLoading[key] || referenceError[key]) return
     const identity = parsePositiveInt(identityId.value)
     const target = parsePositiveInt(relationTargetId.value)
+    const params = referenceParams(key)
+    const option = referenceOptions[key]?.find(item => item.value === relationTargetId.value)
+    if (params === null || option === undefined || option.row.application_id !== params.application_id) return
     if (identity === null || target === null) {
       requestError.value = describeSandIamError(new Error('请选择应用身份和要授予的对象'))
       return
@@ -802,19 +989,35 @@
       props.relationGrantField === 'user_type_id'
         ? { identity_id: identity, user_type_id: target }
         : { identity_id: identity, role_id: target }
-    await runWrite(() => postSandIamAction(`${props.endpoint}/grant`, data), '已保存')
+    const selectedIdentity = identityId.value
+    const version = referenceRequestId[key]
+    await runWrite(() => postSandIamAction(`${props.endpoint}/grant`, data), '已保存',
+      describeSandIamError, false,
+      () => selectedIdentity === identityId.value && version === referenceRequestId[key])
   }
 
   onMounted(() => {
     void load()
     void loadReferenceOptions()
   })
+  watch(() => JSON.stringify(buildParams()), () => { historyPolicyId.value = null }, { flush: 'sync' })
+  watch(rows, () => {
+    if (historyPolicyId.value !== null && !rows.value.some(row => rowId(row) === historyPolicyId.value)) {
+      historyPolicyId.value = null
+    }
+  })
+
+  onUnmounted(() => {
+    disposed = true
+    listRequestId++
+    clearSensitiveState()
+  })
 
   watch(identityId, () => {
     if (props.writeMode !== 'relation') return
     relationTargetId.value = ''
-    void loadReferenceOptions()
-  })
+    void loadReferenceOption(props.relationGrantField)
+  }, { flush: 'sync' })
 
   watch(organizationId, () => {
     if (hasApplicationGrantContext.value) return
@@ -1020,6 +1223,8 @@
             v-model="relationTargetId"
             clearable
             filterable
+            remote
+            :remote-method="(keywords: string) => searchReferenceOptions(relationGrantField, keywords)"
             :disabled="identityMissing"
             :loading="referenceLoading[relationGrantField] === true"
             :placeholder="
@@ -1035,7 +1240,7 @@
           </ElSelect>
         </ElFormItem>
         <ElFormItem v-if="writeMode === 'relation'">
-          <ElButton :disabled="!canSave" type="success" @click="grantRelation">授予</ElButton>
+          <ElButton :disabled="!canSave || saving || relationConfirming || referenceLoading[relationGrantField] === true" type="success" @click="grantRelation">授予</ElButton>
         </ElFormItem>
       </ElForm>
 
@@ -1156,6 +1361,7 @@
               </ElButton>
               <ElButton
                 v-if="writeMode === 'policy' && hasAuth(`${permissionPrefix}:publish`)"
+                :disabled="saving || actionConfirming"
                 size="small"
                 type="success"
                 @click="
@@ -1170,8 +1376,11 @@
               >
                 发布
               </ElButton>
+              <ElButton v-if="writeMode === 'policy' && hasAuth('sand_iam:policy:read')" size="small"
+                @click="historyPolicyId = rowId(scope.row)">版本历史</ElButton>
               <ElButton
                 v-if="writeMode === 'policy' && hasAuth(`${permissionPrefix}:revoke`)"
+                :disabled="saving || actionConfirming"
                 size="small"
                 type="danger"
                 @click="
@@ -1188,6 +1397,7 @@
               </ElButton>
               <ElButton
                 v-if="writeMode === 'grant' && hasAuth(`${permissionPrefix}:revoke`)"
+                :disabled="saving || actionConfirming"
                 size="small"
                 type="danger"
                 @click="
@@ -1203,7 +1413,8 @@
                 撤销
               </ElButton>
               <ElButton
-                v-if="writeMode === 'relation' && canDisable"
+                v-if="writeMode === 'relation' && hasAuth(`${permissionPrefix}:revoke`)"
+                :disabled="saving || relationConfirming"
                 size="small"
                 type="danger"
                 @click="
@@ -1221,11 +1432,12 @@
               <ElButton
                 v-if="
                   writeMode === 'oauth-client' &&
-                  canUpdate &&
+                  hasAuth('sand_iam:oauth_client:rotate') &&
                   scope.row.client_type === 'confidential' &&
                   scope.row.status === 1
                 "
                 size="small"
+                :disabled="saving || actionConfirming"
                 @click="
                   confirmAction(
                     'oauth-client/secret/rotate',
@@ -1240,6 +1452,7 @@
               </ElButton>
               <ElButton
                 v-if="writeMode === 'business-action' && hasAuth(`${permissionPrefix}:update`)"
+                :disabled="saving || actionConfirming || scope.row.status !== 1"
                 size="small"
                 type="success"
                 @click="
@@ -1255,7 +1468,8 @@
                 发布
               </ElButton>
               <ElButton
-                v-if="writeMode === 'credential' && canUpdate"
+                v-if="writeMode === 'credential' && hasAuth('sand_iam:credential:rotate')"
+                :disabled="saving || actionConfirming"
                 size="small"
                 @click="
                   confirmAction(
@@ -1270,7 +1484,8 @@
                 轮换
               </ElButton>
               <ElButton
-                v-if="writeMode === 'credential' && canDisable"
+                v-if="writeMode === 'credential' && hasAuth('sand_iam:credential:revoke')"
+                :disabled="saving || actionConfirming"
                 size="small"
                 type="danger"
                 @click="
@@ -1311,6 +1526,8 @@
       </div>
     </ElCard>
 
+    <PolicyHistory v-if="writeMode === 'policy'" :policy-id="historyPolicyId"
+      :busy="saving || actionConfirming" @close="historyPolicyId = null" @changed="load" @busy="saving = $event" />
     <ResourceEditor
       v-model="editorOpen"
       :title="editorTitle"

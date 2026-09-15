@@ -76,9 +76,16 @@ export interface SandIamFormField {
   readonly label: string
   readonly kind: SandIamFieldKind
   readonly required?: boolean
+  /** 可选文本或日期清空时显式提交 null，以移除已有约束。 */
+  readonly clearableToNull?: boolean
+  /** 空文本显式提交空字符串；仅用于后端以空字符串清除配置的字段。 */
+  readonly clearableToEmptyString?: boolean
+  readonly allowEmptyArray?: boolean
   readonly createOnly?: boolean
   readonly updateOnly?: boolean
   readonly referenceEndpoint?: SandIamResourceEndpoint
+  readonly grantCandidate?: 'services' | 'actions'
+  readonly organizationAdminCandidate?: boolean
   readonly dependency?: SandIamReferenceDependency
   /**
    * 应用委派只可读取已获授应用。组织名称由 application/index 的

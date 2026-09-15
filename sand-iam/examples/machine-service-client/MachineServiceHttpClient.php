@@ -20,6 +20,8 @@ final class MachineServiceHttpClient
             'header' => implode("\r\n", $headerLines) . "\r\n",
             'content' => json_encode($body, JSON_THROW_ON_ERROR),
             'ignore_errors' => true,
+            'follow_location' => 0,
+            'max_redirects' => 0,
             'timeout' => 10,
         ]]));
         if ($response === false) {
@@ -65,10 +67,13 @@ final class MachineServiceHttpClient
 
     private static function assertUrl(string $url): void
     {
-        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
-        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
-        $localHttp = $scheme === 'http' && in_array($host, ['127.0.0.1', 'localhost', '::1'], true);
-        if ($scheme !== 'https' && !$localHttp) {
+        $parts = parse_url($url);
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        $localHttp = $scheme === 'http' && in_array($host, ['127.0.0.1', 'localhost', '[::1]'], true);
+        if ($parts === false || $host === '' || preg_match('/\s/', $url) || str_contains($url, '\\')
+            || isset($parts['user']) || isset($parts['query']) || isset($parts['fragment'])
+            || ($scheme !== 'https' && !$localHttp)) {
             throw new InvalidArgumentException('SandIAM 地址必须使用 HTTPS；仅本机开发允许 HTTP');
         }
     }

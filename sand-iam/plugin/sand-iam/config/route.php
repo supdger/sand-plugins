@@ -112,8 +112,11 @@ Route::group('/app/sand-iam/admin', static function (): void {
         Route::post('/' . $segment . '/disable', [$controller, 'disable']);
     }
     Route::post('/grant/revoke', [ServiceGrantController::class, 'revoke']);
+    Route::get('/grant/services', [ServiceGrantController::class, 'services']);
+    Route::get('/grant/actions', [ServiceGrantController::class, 'actions']);
     Route::post('/policy/publish', [PolicyController::class, 'publish']);
     Route::post('/policy/rollback', [PolicyController::class, 'rollback']);
+    Route::get('/policy/versions', [PolicyController::class, 'versions']);
     Route::post('/policy/simulate', [PolicyController::class, 'simulate']);
     Route::post('/policy/revoke', [PolicyController::class, 'revoke']);
     Route::post('/application-business-action/publish', [ApplicationBusinessActionController::class, 'publish']);
@@ -162,6 +165,7 @@ Route::group('/app/sand-iam/admin', static function (): void {
     Route::get('/webhook/delivery/read', [WebhookController::class, 'readDelivery']);
     Route::post('/webhook/delivery/retry', [WebhookController::class, 'retryDelivery']);
     Route::get('/admin-application-grant/admin-options', [AdminApplicationGrantController::class, 'adminOptions']);
+    Route::get('/admin-organization-grant/admin-options', [AdminOrganizationGrantController::class, 'adminOptions']);
     Route::post('/acceptance-fixture/cleanup', [AcceptanceFixtureController::class, 'cleanup']);
     Route::post('/acceptance-fixture/webhook-event', [AcceptanceFixtureController::class, 'webhookEvent']);
     Route::get('/acceptance-fixture/status', [AcceptanceFixtureController::class, 'status']);
@@ -250,6 +254,7 @@ Route::post('/api/sand-iam/v1/invitations/accept', [InvitationController::class,
 Route::post('/api/sand-iam/v1/guests/upsert', [GuestIdentityController::class, 'upsert'])->middleware([GuestIdentitySensitiveMiddleware::class]);
 
 Route::group('/api/sand-iam/v1/auth', static function (): void {
+    Route::get('/captcha/config', [AuthController::class, 'captchaConfiguration']);
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/refresh', [AuthController::class, 'refresh']);

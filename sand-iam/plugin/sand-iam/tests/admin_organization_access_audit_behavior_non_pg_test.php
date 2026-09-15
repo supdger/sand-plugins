@@ -152,4 +152,31 @@ namespace {
     accessAuditAssert(!in_array($fallback, ['access-application-0001', 'access-recovery-0002', 'access-organization-0003', 'access-super-admin-0004'], true), 'non-HTTP fallback must not leak an HTTP request id');
 
     echo "admin organization access audit behavior non-PG test passed\n";
+    $organizationGrant = new Record(['admin_user_id' => 7, 'organization_id' => 10, 'status' => 1]);
+    $applicationGrant = new Record(['admin_user_id' => 7, 'application_id' => 101, 'status' => 1]);
+    \plugin\SandIam\app\model\AdminOrganizationGrant::$rows = [$organizationGrant];
+    \plugin\SandIam\app\model\AdminApplicationGrant::$rows = [$applicationGrant];
+    accessAuditAssert($access->organizationIds() === [10] && $access->applicationIds() === [101], 'Active grants must resolve and deduplicate scopes');
+    $access->assertOrganization(10);
+    $access->assertApplication(101);
+    $organizationGrant->status = 2;
+    accessAuditAssert($access->organizationIds() === [] && $access->applicationIds() === [101], 'Organization revocation must preserve independent application grant');
+    accessAuditDenied(static fn () => $access->assertOrganization(10), 'revoked organization grant');
+    $access->assertApplication(101);
+    $applicationGrant->status = 2;
+    accessAuditAssert($access->applicationIds() === [], 'Revoked application grant cached');
+    accessAuditDenied(static fn () => $access->assertApplication(101), 'all sources revoked');
+    $organizationGrant->status = 1;
+    $access->assertApplication(101);
+    accessAuditAssert($access->applicationIds() === [101], 'Restored organization delegation must apply without new resolver');
+    Organization::$rows[10]->status = 2;
+    accessAuditAssert($access->organizationIds() === [] && $access->applicationIds() === [], 'Disabled organization scope leaked');
+    accessAuditDenied(static fn () => $access->assertApplication(101), 'disabled organization');
+    Organization::$rows[10]->status = 1;
+    Application::$rows[101]->status = 2;
+    accessAuditAssert($access->applicationIds() === [], 'Disabled application scope leaked');
+    accessAuditDenied(static fn () => $access->assertApplication(101), 'disabled application');
+    Application::$rows[101]->status = 1;
+    $access->assertApplication(101);
+    echo "delegation live scope revocation and restoration behavior PASS (same resolver, non-PG)\n";
 }

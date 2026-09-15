@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
@@ -15,6 +15,7 @@
     parseInitializationManifest,
     parseInitializationPreview,
     parseInitializationRuns,
+    parseInitializationPagination,
     type SandIamInitializationDraft,
     type SandIamInitializationDraftDetail,
     type SandIamInitializationPreview,
@@ -41,6 +42,12 @@
   const organizations = ref<SandIamResourceRow[]>([])
   const runs = ref<SandIamInitializationRun[]>([])
   const drafts = ref<SandIamInitializationDraft[]>([])
+  const runPage = ref(1)
+  const runSize = ref(20)
+  const runTotal = ref(0)
+  const draftPage = ref(1)
+  const draftSize = ref(20)
+  const draftTotal = ref(0)
   const applicationId = ref('')
   const exportPackageCode = ref('')
   const manifestText = ref('')
@@ -51,6 +58,47 @@
   const runViewState = ref<'idle' | 'empty' | 'ready'>('idle')
   const draftViewState = ref<'idle' | 'empty' | 'ready'>('idle')
   const successHint = ref('')
+  let disposed = false
+  let contextVersion = 0
+  let scopeVersion = 0
+  let runVersion = 0
+  let draftVersion = 0
+  watch([runPage, runSize], () => { runVersion++; runs.value = [] }, { flush: 'sync' })
+  watch([draftPage, draftSize], () => { draftVersion++; drafts.value = [] }, { flush: 'sync' })
+  watch(manifestText, () => {
+    contextVersion++
+    preview.value = null
+    pendingManifest.value = null
+    successHint.value = ''
+  }, { flush: 'sync' })
+  watch(applicationId, () => {
+    scopeVersion++
+    contextVersion++
+    runVersion++
+    draftVersion++
+    runs.value = []
+    drafts.value = []
+    runPage.value = 1
+    draftPage.value = 1
+    runTotal.value = 0
+    draftTotal.value = 0
+    editingDraft.value = null
+    manifestText.value = ''
+    preview.value = null
+    pendingManifest.value = null
+    requestError.value = null
+    successHint.value = ''
+    runViewState.value = 'idle'
+    draftViewState.value = 'idle'
+  }, { flush: 'sync' })
+  onScopeDispose(() => { disposed = true; scopeVersion++; contextVersion++; runVersion++; draftVersion++ })
+  function captureContext(): () => boolean {
+    const version = contextVersion
+    return () => !disposed && version === contextVersion
+  }
+  function visibleRow(row: { application_id: number | null }): boolean {
+    return selectedId(applicationId.value) === null || row.application_id === selectedId(applicationId.value)
+  }
 
   const canSaveCurrentDraft = computed(() =>
     editingDraft.value === null ? canSaveDraft.value : canUpdateDraft.value
@@ -98,33 +146,58 @@
     return run.applied_time === null ? '尚未应用' : '已记录操作人'
   }
 
-  async function loadOptions(): Promise<void> {
+  const applicationLoading = ref(false)
+  const applicationError = ref('')
+  const applicationKeywords = ref('')
+  let applicationRequest = 0
+
+  async function loadApplications(keywords = ''): Promise<void> {
+    const attempt = ++applicationRequest
+    if (disposed) return
+    applicationKeywords.value = keywords
+    applicationLoading.value = true
+    applicationError.value = ''
     try {
-      const [organizationResult, applicationResult] = await Promise.all([
-        listSandIamResource('organization', { page: 1, limit: 100 }),
-        listSandIamResource('application', { page: 1, limit: 100 })
-      ])
-      organizations.value = listRows(organizationResult)
-      applications.value = listRows(applicationResult)
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      if (disposed || attempt !== applicationRequest) return
+      const selected = applications.value.find(row => String(row.id) === applicationId.value)
+      const rows = listRows(result)
+      applications.value = selected && !rows.some(row => row.id === selected.id) ? [selected, ...rows] : rows
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && attempt === applicationRequest) applicationError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && attempt === applicationRequest) applicationLoading.value = false
+    }
+  }
+
+  async function loadOptions(): Promise<void> {
+    void loadApplications()
+    try {
+      const result = await listSandIamResource('organization', { page: 1, limit: 100 })
+      if (!disposed) organizations.value = listRows(result)
+    } catch (error: unknown) {
+      if (!disposed) requestError.value = describeSandIamError(error)
     }
   }
 
   async function loadRuns(): Promise<void> {
-    if (!canIndex.value) return
+    if (disposed || !canIndex.value) return
+    const version = ++runVersion
     beginLoading()
     requestError.value = null
     try {
       const application = selectedId(applicationId.value)
-      runs.value = parseInitializationRuns(
-        await getSandIamAdmin(
+      const response = await getSandIamAdmin(
           'initialization/index',
-          application === null ? {} : { application_id: application }
+          { page: runPage.value, limit: runSize.value, ...(application === null ? {} : { application_id: application }) }
         )
-      )
+      if (disposed || version !== runVersion) return
+      const result = parseInitializationRuns(response)
+      runs.value = result
+      runTotal.value = parseInitializationPagination(response, result.length).total
       runViewState.value = runs.value.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (disposed || version !== runVersion) return
       requestError.value = describeSandIamError(error)
       runs.value = []
     } finally {
@@ -133,19 +206,23 @@
   }
 
   async function loadDrafts(): Promise<void> {
-    if (!canIndex.value) return
+    if (disposed || !canIndex.value) return
+    const version = ++draftVersion
     beginLoading()
     requestError.value = null
     try {
       const application = selectedId(applicationId.value)
-      drafts.value = parseInitializationDrafts(
-        await getSandIamAdmin(
+      const response = await getSandIamAdmin(
           'initialization/draft-index',
-          application === null ? {} : { application_id: application }
+          { page: draftPage.value, limit: draftSize.value, ...(application === null ? {} : { application_id: application }) }
         )
-      )
+      if (disposed || version !== draftVersion) return
+      const result = parseInitializationDrafts(response)
+      drafts.value = result
+      draftTotal.value = parseInitializationPagination(response, result.length).total
       draftViewState.value = drafts.value.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (disposed || version !== draftVersion) return
       requestError.value = describeSandIamError(error)
       drafts.value = []
     } finally {
@@ -174,6 +251,9 @@
    * 导出只下载系统生成的包。密钥、用户和凭证不会进入初始化包。
    */
   async function exportPackage(): Promise<void> {
+    if (disposed || loading.value || !canExport.value) return
+    const current = captureContext()
+    const packageCode = exportPackageCode.value.trim()
     const application = selectedId(applicationId.value)
     if (application === null || exportPackageCode.value.trim() === '') {
       requestError.value = describeSandIamError(
@@ -186,14 +266,15 @@
     try {
       const result = await getSandIamAdmin('initialization/export', {
         application_id: application,
-        package_code: exportPackageCode.value.trim()
+        package_code: packageCode
       })
+      if (!current() || packageCode !== exportPackageCode.value.trim()) return
       const payload = isRecord(result) && 'data' in result ? result.data : result
-      downloadJson(`${exportPackageCode.value.trim()}.json`, payload)
+      downloadJson(`${packageCode}.json`, payload)
       ElMessage.success('已保存')
       successHint.value = '初始化包已导出。导出结果不含密钥、用户账号和凭证。'
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
       endLoading()
     }
@@ -203,6 +284,8 @@
    * 必须先预检。preview_hash 只留在内存，过期后只能重新预检，不能强制覆盖。
    */
   async function previewManifest(): Promise<void> {
+    if (disposed || loading.value || !canPreview.value) return
+    const current = captureContext()
     beginLoading()
     requestError.value = null
     preview.value = null
@@ -213,6 +296,7 @@
       const parsed = parseInitializationPreview(
         await postSandIamAction('initialization/preview', { manifest })
       )
+      if (!current()) return
       if (parsed === null) {
         requestError.value = describeSandIamError(
           new Error('SAND_IAM_INITIALIZATION_INVALID: 预检返回格式不符合已冻结约定')
@@ -223,7 +307,7 @@
       pendingManifest.value = manifest
       successHint.value = '已预检。请按新增、修改、不变确认差异后再应用。'
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
       endLoading()
     }
@@ -281,13 +365,16 @@
   }
 
   async function loadDraftForEditing(row: SandIamInitializationDraft): Promise<void> {
-    if (row.status !== 1 || !canRead.value) return
+    if (disposed || loading.value || row.status !== 1 || !canRead.value ||
+      !drafts.value.includes(row) || !visibleRow(row)) return
+    const current = captureContext()
     beginLoading()
     requestError.value = null
     try {
       const draft = parseInitializationDraftDetail(
         await getSandIamAdmin('initialization/draft-read', { id: row.id })
       )
+      if (!current() || !drafts.value.includes(row) || !canRead.value) return
       if (draft === null) {
         requestError.value = describeSandIamError(
           new Error('SAND_IAM_INITIALIZATION_INVALID: 草稿返回格式不符合已冻结约定')
@@ -300,13 +387,15 @@
       pendingManifest.value = null
       successHint.value = `已打开草稿「${draft.package_code}」的第 ${String(draft.revision)} 版。请预检后再更新。`
     } catch (error: unknown) {
-      requestError.value = describeDraftError(error)
+      if (current()) requestError.value = describeDraftError(error)
     } finally {
       endLoading()
     }
   }
 
   function startNewDraft(): void {
+    if (disposed || loading.value) return
+    contextVersion++
     editingDraft.value = null
     preview.value = null
     pendingManifest.value = null
@@ -315,6 +404,7 @@
   }
 
   async function saveDraft(): Promise<void> {
+    if (disposed || loading.value) return
     if (preview.value === null || pendingManifest.value === null) {
       requestError.value = describeSandIamError(
         new Error('SAND_IAM_INITIALIZATION_PREVIEW_STALE: 请先完成预检再保存草稿')
@@ -322,18 +412,21 @@
       return
     }
     if (!canSaveCurrentDraft.value) return
+    const current = captureContext()
+    const manifest = pendingManifest.value
     beginLoading()
     requestError.value = null
     try {
       const currentDraft = editingDraft.value
       const result =
         currentDraft === null
-          ? await postSandIamAction('initialization/save', { manifest: pendingManifest.value })
+          ? await postSandIamAction('initialization/save', { manifest })
           : await postSandIamAction('initialization/update', {
               id: currentDraft.id,
               revision: currentDraft.revision,
-              manifest: pendingManifest.value
+              manifest
             })
+      if (!current()) return
       const mutation = parseInitializationDraftMutation(result)
       if (mutation === null) {
         requestError.value = describeSandIamError(
@@ -347,7 +440,7 @@
           revision: mutation.revision,
           status: mutation.status,
           manifest_hash: mutation.manifest_hash,
-          manifest: pendingManifest.value
+          manifest
         }
       } else {
         editingDraft.value = null
@@ -362,14 +455,19 @@
           : '初始化草稿已更新。'
       await loadDrafts()
     } catch (error: unknown) {
-      requestError.value = describeDraftError(error)
+      if (current()) requestError.value = describeDraftError(error)
     } finally {
       endLoading()
     }
   }
 
   async function disableDraft(row: SandIamInitializationDraft): Promise<void> {
-    if (row.status !== 1 || !canDisableDraft.value) return
+    if (disposed || loading.value || row.status !== 1 || !canDisableDraft.value ||
+      !drafts.value.includes(row) || !visibleRow(row)) return
+    const contextCurrent = captureContext()
+    const version = draftVersion
+    const current = (): boolean => contextCurrent() && version === draftVersion && drafts.value.includes(row)
+    beginLoading()
     try {
       await ElMessageBox.confirm(
         `确认停用草稿「${row.package_code}」吗？停用后不能继续编辑，需新建草稿。`,
@@ -377,14 +475,19 @@
         { type: 'warning', confirmButtonText: '确认停用', cancelButtonText: '取消' }
       )
     } catch {
+      endLoading()
       return
     }
-    beginLoading()
+    if (!current() || !canDisableDraft.value || !drafts.value.includes(row) || row.status !== 1) {
+      endLoading()
+      return
+    }
     requestError.value = null
     try {
       const mutation = parseInitializationDraftMutation(
         await postSandIamAction('initialization/disable', { id: row.id, revision: row.revision })
       )
+      if (!current()) return
       if (mutation === null) {
         requestError.value = describeSandIamError(
           new Error('SAND_IAM_INITIALIZATION_INVALID: 草稿停用返回格式不符合已冻结约定')
@@ -396,7 +499,7 @@
       successHint.value = '初始化草稿已停用。'
       await loadDrafts()
     } catch (error: unknown) {
-      requestError.value = describeDraftError(error)
+      if (current()) requestError.value = describeDraftError(error)
     } finally {
       endLoading()
     }
@@ -406,26 +509,33 @@
    * 只能提交最近一次预检的 preview_hash。失败后必须重新预检，不能强制覆盖。
    */
   async function applyManifest(): Promise<void> {
+    if (disposed || loading.value || !canApply.value) return
     if (preview.value === null || pendingManifest.value === null) {
       requestError.value = describeSandIamError(
         new Error('SAND_IAM_INITIALIZATION_PREVIEW_STALE: 请先完成预检并确认中文差异')
       )
       return
     }
+    const current = captureContext()
+    const manifest = pendingManifest.value
+    const hash = preview.value.preview_hash
+    preview.value = null
+    pendingManifest.value = null
     beginLoading()
     requestError.value = null
     try {
       await postSandIamAction('initialization/apply', {
-        manifest: pendingManifest.value,
-        preview_hash: preview.value.preview_hash
+        manifest,
+        preview_hash: hash
       })
+      if (!current()) return
       ElMessage.success('已保存')
       successHint.value = '初始化配置已应用。'
       preview.value = null
       pendingManifest.value = null
       await loadRuns()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
       endLoading()
     }
@@ -435,25 +545,36 @@
    * 回滚确认摘要按后端冻结公式计算，页面不展示该摘要，也不提供强制覆盖。
    */
   async function rollbackRun(row: SandIamInitializationRun): Promise<void> {
+    if (disposed || loading.value || !canRollback.value || !runs.value.includes(row) || !visibleRow(row)) return
     if (row.state !== 'applied') {
       requestError.value = describeSandIamError(
         new Error('SAND_IAM_INITIALIZATION_ROLLBACK_INVALID: 只有已应用的记录可以回滚')
       )
       return
     }
+    const scope = scopeVersion
+    const current = (): boolean => !disposed && scope === scopeVersion && runs.value.includes(row)
+    const hash = row.package_hash
     beginLoading()
     requestError.value = null
     try {
-      const confirmation = await buildInitializationRollbackConfirmation(row.id, row.package_hash)
+      try {
+        await ElMessageBox.confirm(`确认回滚「${row.package_code}」吗？系统会检查配置漂移，不会强制覆盖后续修改。`,
+          '回滚初始化配置', { type: 'warning', confirmButtonText: '确认回滚', cancelButtonText: '取消' })
+      } catch { return }
+      if (!current() || !canRollback.value || row.state !== 'applied' || row.package_hash !== hash) return
+      const confirmation = await buildInitializationRollbackConfirmation(row.id, hash)
+      if (!current() || !canRollback.value || row.state !== 'applied' || row.package_hash !== hash) return
       await postSandIamAction('initialization/rollback', {
         id: row.id,
         confirmation
       })
+      if (!current()) return
       ElMessage.success('已保存')
       successHint.value = '初始化配置已回滚。若出现漂移，请重新预检，不要强制覆盖。'
       await loadRuns()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (current()) requestError.value = describeSandIamError(error)
     } finally {
       endLoading()
     }
@@ -517,8 +638,12 @@
         :description="successHint"
       />
       <ElForm label-width="170px" class="mb-4">
+        <ElFormItem v-if="applicationError" label="应用搜索失败">
+          <span role="alert">{{ applicationError }}</span>
+          <ElButton :loading="applicationLoading" @click="loadApplications(applicationKeywords)">重试搜索</ElButton>
+        </ElFormItem>
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="loadApplications" :loading="applicationLoading" clearable placeholder="按名称选择">
             <ElOption
               v-for="row in applications"
               :key="String(row.id)"
@@ -694,6 +819,9 @@
             </template>
           </ElTableColumn>
         </ElTable>
+        <ElPagination v-model:current-page="draftPage" v-model:page-size="draftSize" :total="draftTotal"
+          :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next"
+          @current-change="loadDrafts" @size-change="draftPage = 1; loadDrafts()" />
       </section>
 
       <section class="mt-6">
@@ -751,6 +879,9 @@
             </template>
           </ElTableColumn>
         </ElTable>
+        <ElPagination v-model:current-page="runPage" v-model:page-size="runSize" :total="runTotal"
+          :page-sizes="[20, 50, 100]" layout="total, sizes, prev, pager, next"
+          @current-change="loadRuns" @size-change="runPage = 1; loadRuns()" />
       </section>
     </ElCard>
   </div>

@@ -42,17 +42,28 @@ final class SelfServiceService
     public function updateProfile(string $accessToken, string $displayName, string $requestId): array
     {
         $displayName = $this->displayName($displayName);
-        [$application, $identity] = (new HumanAuthService())->authenticatedPrincipal($accessToken);
+        $auth = new HumanAuthService();
+        [$application, $identity] = $auth->authenticatedPrincipal($accessToken);
+        $session = $auth->authenticatedSession($accessToken);
+        $sessionId = (int) $session->id;
+        $organizationId = (int) $application->organization_id;
         Db::startTrans();
         try {
-            $application = Application::where('id', (int) $application->id)->where('status', 1)->lock(true)->find();
-            $organization = $application === null ? null : Organization::where('id', (int) $application->organization_id)->where('status', 1)->lock(true)->find();
+            $organization = Organization::where('id', $organizationId)->where('status', 1)->lock(true)->find();
+            $application = Application::where('id', (int) $application->id)->where('organization_id', $organizationId)->where('status', 1)->lock(true)->find();
             $identity = $application === null ? null : Identity::where('id', (int) $identity->id)
                 ->where('application_id', (int) $application->id)
                 ->where('status', 1)
                 ->lock(true)
                 ->find();
             if ($application === null || $organization === null || $identity === null) {
+                throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
+            }
+            $session = AuthSession::where('id', $sessionId)
+                ->where('application_id', (int) $application->id)
+                ->where('identity_id', (int) $identity->id)
+                ->lock(true)->find();
+            if ($session === null || (int) $auth->authenticatedSession($accessToken)->id !== $sessionId) {
                 throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
             }
             $identity->save(['display_name' => $displayName]);
@@ -69,12 +80,13 @@ final class SelfServiceService
                 $this->requestId($requestId),
                 ['fields' => ['display_name']],
             );
+            $profile = $this->profile($accessToken);
             Db::commit();
         } catch (\Throwable $exception) {
             Db::rollback();
             throw $exception;
         }
-        return $this->profile($accessToken);
+        return $profile;
     }
 
     /** @return list<array<string,mixed>> */
@@ -130,7 +142,7 @@ final class SelfServiceService
             throw new ApiException('SAND_IAM_VALIDATION_ERROR: 显示名称必须是 UTF-8 文本', 400);
         }
         $value = preg_replace('/[\p{Cc}\p{Cf}]+/u', '', $value) ?? '';
-        $value = preg_replace('/\s+/u', ' ', trim($value)) ?? '';
+        $value = trim(preg_replace('/\s+/u', ' ', $value) ?? '');
         if ($value === '' || mb_strlen($value) > 128) {
             throw new ApiException('SAND_IAM_VALIDATION_ERROR: 显示名称须为 1–128 个字符', 400);
         }

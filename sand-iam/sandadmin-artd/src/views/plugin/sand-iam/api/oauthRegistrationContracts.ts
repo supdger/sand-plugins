@@ -86,6 +86,14 @@ export function parseRegistrationTokenRows(value: unknown): SandIamRegistrationT
     .filter((item): item is SandIamRegistrationTokenRow => item !== null)
 }
 
+export function parseRegistrationTokenPage(value: unknown) {
+  const payload = isRecord(value) && isRecord(value.data) ? value.data : value
+  const rows = parseRegistrationTokenRows(value)
+  const total = isRecord(payload) && typeof payload.total === 'number' &&
+    Number.isInteger(payload.total) && payload.total >= 0 ? payload.total : rows.length
+  return { rows, total }
+}
+
 /**
  * 签发成功才取出明文 token；缺失时返回 null，调用方只能引导重新签发。
  */

@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+// behavior-test-gate: static-rule
+
 /** Execute the documented restore guard against fake PostgreSQL CLIs only. */
 
 $root = dirname(__DIR__, 3);

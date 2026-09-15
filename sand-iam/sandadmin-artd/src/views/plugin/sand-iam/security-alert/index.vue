@@ -1,12 +1,12 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
   import { ElMessage } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
   import { listSandIamResource } from '../api/resource'
   import {
-    parseSecurityAlertRows,
+    parseSecurityAlertPage,
     securityAlertSeverityLabel,
     securityAlertStatusLabel,
     type SandIamSecurityAlertRow
@@ -19,6 +19,20 @@
   const canResolve = computed(() => hasAuth('sand_iam:security_alert:resolve'))
 
   const loading = ref(false)
+  const resolving = ref(false)
+  const status = ref('')
+  const severity = ref('')
+  const ruleCode = ref('')
+  const organizationLoading = ref(false)
+  const applicationLoading = ref(false)
+  const optionError = ref('')
+  let organizationRequest = 0
+  let applicationRequest = 0
+  const currentPage = ref(1)
+  const pageSize = ref(20)
+  const total = ref(0)
+  let requestId = 0
+  let disposed = false
   const applications = ref<SandIamResourceRow[]>([])
   const organizations = ref<SandIamResourceRow[]>([])
   const alerts = ref<SandIamSecurityAlertRow[]>([])
@@ -55,16 +69,37 @@
     return typeof row?.name === 'string' ? row.name : '关联客户主体名称暂不可用'
   }
 
-  async function loadOptions(): Promise<void> {
+  async function searchOrganizations(keywords = ''): Promise<void> {
+    const attempt = ++organizationRequest
+    if (disposed || !canIndex.value) return
+    organizationLoading.value = true
+    optionError.value = ''
     try {
-      const [organizationResult, applicationResult] = await Promise.all([
-        listSandIamResource('organization', { page: 1, limit: 100 }),
-        listSandIamResource('application', { page: 1, limit: 100 })
-      ])
-      organizations.value = listRows(organizationResult)
-      applications.value = listRows(applicationResult)
+      const result = await listSandIamResource('organization', { page: 1, limit: 100, keywords })
+      if (!disposed && canIndex.value && attempt === organizationRequest) organizations.value = listRows(result)
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && attempt === organizationRequest) optionError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && attempt === organizationRequest) organizationLoading.value = false
+    }
+  }
+
+  async function searchApplications(keywords = ''): Promise<void> {
+    const attempt = ++applicationRequest
+    const organization = organizationId.value
+    if (disposed || !canIndex.value) return
+    applicationLoading.value = true
+    optionError.value = ''
+    try {
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords,
+        ...(organization === '' ? {} : { organization_id: Number(organization) }) })
+      if (!disposed && canIndex.value && attempt === applicationRequest && organization === organizationId.value) {
+        applications.value = listRows(result).filter(row => organization === '' || String(row.organization_id) === organization)
+      }
+    } catch (error: unknown) {
+      if (!disposed && attempt === applicationRequest) optionError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && attempt === applicationRequest) applicationLoading.value = false
     }
   }
 
@@ -72,22 +107,36 @@
    * 按客户主体或接入应用名称筛选；无权与空数据分开提示。
    */
   async function loadAlerts(): Promise<void> {
-    if (!canIndex.value) return
+    if (disposed || !canIndex.value) return
+    const attempt = ++requestId
     loading.value = true
     requestError.value = null
     try {
-      const params: Record<string, string | number> = {}
+      const params: Record<string, string | number> = { page: currentPage.value, limit: pageSize.value }
       const organization = selectedId(organizationId.value)
       const application = selectedId(applicationId.value)
       if (organization !== null) params.organization_id = organization
       if (application !== null) params.application_id = application
-      alerts.value = parseSecurityAlertRows(await getSandIamAdmin('security-alert/index', params))
+      if (status.value !== '') params.status = status.value
+      if (severity.value !== '') params.severity = severity.value
+      if (ruleCode.value.trim() !== '') params.rule_code = ruleCode.value.trim()
+      const result = await getSandIamAdmin('security-alert/index', params)
+      if (disposed || !canIndex.value || attempt !== requestId) return
+      const page = parseSecurityAlertPage(result)
+      currentPage.value = page.currentPage
+      pageSize.value = page.pageSize
+      alerts.value = page.data
+      total.value = page.total
+      loading.value = false
       viewState.value = alerts.value.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (disposed || !canIndex.value || attempt !== requestId) return
       requestError.value = describeSandIamError(error)
       alerts.value = []
+      total.value = 0
+      if (successHint.value !== '') successHint.value = '告警已处理，但列表刷新失败，请重新加载。'
     } finally {
-      loading.value = false
+      if (!disposed && attempt === requestId) loading.value = false
     }
   }
 
@@ -95,23 +144,56 @@
    * 处理结果只由后端决定；已处理的告警不能再次标记。
    */
   async function resolveAlert(row: SandIamSecurityAlertRow): Promise<void> {
-    loading.value = true
+    if (disposed || loading.value || resolving.value || !canIndex.value || !canResolve.value || row.status === 'resolved' || !alerts.value.includes(row)) return
+    const attempt = requestId
+    resolving.value = true
     requestError.value = null
     successHint.value = ''
     try {
       await postSandIamAction('security-alert/resolve', { id: row.id })
+      if (disposed || !canIndex.value || attempt !== requestId) return
       ElMessage.success('已处理')
       successHint.value = '告警已标记为已处理。'
       await loadAlerts()
     } catch (error: unknown) {
+      if (disposed || !canIndex.value || attempt !== requestId) return
       requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      resolving.value = false
     }
   }
 
+  watch(organizationId, () => {
+    applicationId.value = ''
+    applicationRequest++
+    applications.value = []
+    applicationLoading.value = false
+    void searchApplications()
+  }, { flush: 'sync' })
+
+  watch([organizationId, applicationId, status, severity, ruleCode, canIndex], () => {
+    requestId++
+    currentPage.value = 1
+    alerts.value = []
+    total.value = 0
+    loading.value = false
+    requestError.value = null
+    successHint.value = ''
+    viewState.value = 'idle'
+    if (!canIndex.value) {
+      organizationRequest++; applicationRequest++
+      organizations.value = []; applications.value = []
+      organizationLoading.value = false; applicationLoading.value = false; optionError.value = ''
+    }
+  }, { flush: 'sync' })
+
+  watch([currentPage, pageSize], () => { requestId++; alerts.value = []; loading.value = false; requestError.value = null; successHint.value = '' }, { flush: 'sync' })
+
+  onUnmounted(() => { disposed = true; requestId++; organizationRequest++; applicationRequest++ })
+
   onMounted(() => {
-    void loadOptions()
+    void searchOrganizations()
+    void searchApplications()
     void loadAlerts()
   })
 </script>
@@ -143,7 +225,7 @@
         :description="requestError.detail"
       />
       <ElAlert
-        v-else-if="successHint !== ''"
+        v-if="successHint !== ''"
         class="mb-4"
         type="success"
         :closable="false"
@@ -159,9 +241,11 @@
         description="所选范围内没有安全告警。这与没有权限不同。"
       />
 
+      <ElAlert v-if="optionError" class="mb-4" type="error" :closable="false" :title="optionError" />
+
       <ElForm label-width="160px" class="mb-4" inline>
         <ElFormItem label="客户主体">
-          <ElSelect v-model="organizationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="organizationId" filterable remote :remote-method="searchOrganizations" :loading="organizationLoading" clearable placeholder="按名称选择">
             <ElOption
               v-for="row in organizations"
               :key="String(row.id)"
@@ -171,7 +255,7 @@
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="searchApplications" :loading="applicationLoading" clearable placeholder="按名称选择">
             <ElOption
               v-for="row in applications"
               :key="String(row.id)"
@@ -180,6 +264,17 @@
             />
           </ElSelect>
         </ElFormItem>
+        <ElFormItem label="状态">
+          <ElSelect v-model="status" clearable placeholder="全部状态">
+            <ElOption label="待处理" value="open" /><ElOption label="已确认" value="acknowledged" /><ElOption label="已处理" value="resolved" />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="等级">
+          <ElSelect v-model="severity" clearable placeholder="全部等级">
+            <ElOption v-for="value in ['low', 'medium', 'high', 'critical']" :key="value" :value="value" :label="securityAlertSeverityLabel(value)" />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="规则代码"><ElInput v-model="ruleCode" clearable placeholder="精确规则代码" /></ElFormItem>
         <ElFormItem>
           <ElButton type="primary" :disabled="!canIndex" :loading="loading" @click="loadAlerts">
             加载告警
@@ -217,7 +312,7 @@
             <ElButton
               v-if="scope.row.status !== 'resolved'"
               size="small"
-              :disabled="!canResolve"
+              :disabled="!canIndex || !canResolve || loading || resolving"
               @click="resolveAlert(scope.row)"
             >
               标记已处理
@@ -225,6 +320,16 @@
           </template>
         </ElTableColumn>
       </ElTable>
+      <ElPagination
+        v-if="total > 0"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="[20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        @current-change="loadAlerts"
+        @size-change="currentPage = 1; loadAlerts()"
+      />
     </ElCard>
   </div>
 </template>

@@ -1,11 +1,11 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
   import { ElMessage } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import {
     parseSandIamWebhook,
-    parseSandIamWebhookDeliveries,
+    parseSandIamWebhookDeliveryPage,
     parseSandIamWebhookDelivery,
     webhookDeliveryRetryable,
     webhookDeliveryStatusLabel,
@@ -22,7 +22,21 @@
   const canRead = computed(() => hasAuth('sand_iam:webhook_delivery:read'))
   const canRetry = computed(() => hasAuth('sand_iam:webhook_delivery:retry'))
 
+  const canNames = computed(() => hasAuth('sand_iam:webhook:index'))
   const loading = ref(false)
+  const retrying = ref(false)
+  const detailLoading = ref(false)
+  const applicationLoading = ref(false)
+  const applicationError = ref('')
+  const successHint = ref('')
+  const status = ref('')
+  let applicationRequest = 0
+  let detailRequest = 0
+  const currentPage = ref(1)
+  const pageSize = ref(20)
+  const total = ref(0)
+  let requestId = 0
+  let disposed = false
   const applications = ref<SandIamResourceRow[]>([])
   const deliveries = ref<SandIamWebhookDeliveryRow[]>([])
   const webhookNames = ref<Record<number, string>>({})
@@ -50,7 +64,7 @@
   }
 
   function webhookName(endpointId: number): string {
-    return webhookNames.value[endpointId] ?? '通知已不在当前列表'
+    return webhookNames.value[endpointId] ?? `通知 #${endpointId}`
   }
 
   function retryHint(row: SandIamWebhookDeliveryRow): string {
@@ -67,34 +81,53 @@
     return '请检查接收地址、签名密钥或接收服务后重试。'
   }
 
-  async function loadApplications(): Promise<void> {
+  async function loadApplications(keywords = ''): Promise<void> {
+    const attempt = ++applicationRequest
+    if (disposed || !canIndex.value) return
+    applicationLoading.value = true
+    applicationError.value = ''
     try {
-      applications.value = listRows(
-        await listSandIamResource('application', { page: 1, limit: 100 })
-      )
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      if (!disposed && canIndex.value && attempt === applicationRequest) applications.value = listRows(result)
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && attempt === applicationRequest) applicationError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && attempt === applicationRequest) applicationLoading.value = false
     }
   }
 
-  /**
-   * 投递记录没有通知名称；用同一应用的通知记录做名称回显，不编造字段。
-   */
-  async function loadWebhookNames(application: number): Promise<void> {
-    const result = await getSandIamAdmin('webhook/index', {
-      application_id: application
-    })
-    const names: Record<number, string> = {}
-    for (const item of listRows(result)) {
-      const webhook = parseSandIamWebhook(item)
-      if (webhook !== null) names[webhook.id] = webhook.name
+  async function loadWebhookNames(application: number, attempt: number): Promise<void> {
+    if (!canNames.value) return
+    try {
+      const result = await getSandIamAdmin('webhook/index', { application_id: application, page: 1, limit: 100 })
+      const names: Record<number, string> = {}
+      for (const item of listRows(result)) {
+        const webhook = parseSandIamWebhook(item)
+        if (webhook !== null) names[webhook.id] = webhook.name
+      }
+      if (!disposed && canNames.value && canIndex.value && attempt === requestId) webhookNames.value = names
+    } catch {
+      // Optional display names have a separate permission; delivery IDs remain usable.
     }
-    webhookNames.value = names
+  }
+
+  function clearDetail(): void {
+    detailRequest++
+    detail.value = null
+    detailOpen.value = false
+    payloadOpen.value = false
+    detailLoading.value = false
   }
 
   async function loadDeliveries(): Promise<void> {
+    if (disposed || !canIndex.value) return
+    clearDetail()
+    const attempt = ++requestId
+    const requestedPage = currentPage.value
+    const requestedSize = pageSize.value
     const application = selectedId(applicationId.value)
     if (application === null) {
+      loading.value = false
       requestError.value = describeSandIamError(new Error('请先按名称选择接入应用'))
       return
     }
@@ -102,60 +135,92 @@
     loading.value = true
     requestError.value = null
     try {
-      await loadWebhookNames(application)
+      void loadWebhookNames(application, attempt)
       const result = await getSandIamAdmin('webhook/delivery/index', {
-        application_id: application
+        application_id: application, page: requestedPage, limit: requestedSize,
+        ...(status.value === '' ? {} : { status: Number(status.value) })
       })
-      const rows = parseSandIamWebhookDeliveries(result)
-      deliveries.value = rows
-      viewState.value = rows.length === 0 ? 'empty' : 'ready'
+      if (disposed || !canIndex.value || attempt !== requestId) return
+      const page = parseSandIamWebhookDeliveryPage(result)
+      currentPage.value = page.currentPage
+      pageSize.value = page.pageSize
+      deliveries.value = page.data
+      total.value = page.total
+      loading.value = false
+      viewState.value = page.data.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (disposed || !canIndex.value || attempt !== requestId) return
       requestError.value = describeSandIamError(error)
       deliveries.value = []
+      total.value = 0
+      if (successHint.value !== '') successHint.value = '已重新排队，但列表刷新失败，请重新加载。'
     } finally {
-      loading.value = false
+      if (!disposed && attempt === requestId) loading.value = false
     }
   }
 
   async function openDetail(row: SandIamWebhookDeliveryRow): Promise<void> {
-    if (!canRead.value) {
-      requestError.value = describeSandIamError(
-        new Error('当前账号暂时不能查看投递详情。请联系管理员开通查看投递详情的管理范围。')
-      )
-      return
-    }
-    loading.value = true
+    if (disposed || loading.value || !canIndex.value || !canRead.value || !deliveries.value.includes(row)) return
+    clearDetail()
+    const attempt = detailRequest
+    const list = requestId
+    detailLoading.value = true
+    detailOpen.value = true
     requestError.value = null
     try {
       const result = await getSandIamAdmin('webhook/delivery/read', { id: row.id })
+      if (disposed || !canRead.value || !canIndex.value || attempt !== detailRequest || list !== requestId) return
       const payload = isRecord(result) && isRecord(result.data) ? result.data : result
       const parsed = parseSandIamWebhookDelivery(payload, true)
-      if (parsed === null) {
-        throw new Error('投递详情返回格式不符合已冻结约定')
-      }
+      if (parsed === null || parsed.id !== row.id || parsed.application_id !== row.application_id) throw new Error('投递详情返回格式不符合已冻结约定')
       detail.value = parsed
-      payloadOpen.value = false
-      detailOpen.value = true
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && attempt === detailRequest && list === requestId) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      if (!disposed && attempt === detailRequest) detailLoading.value = false
     }
   }
 
   async function retry(row: SandIamWebhookDeliveryRow): Promise<void> {
-    loading.value = true
+    if (disposed || loading.value || retrying.value || !canIndex.value || !canRetry.value || !deliveries.value.includes(row) || !webhookDeliveryRetryable(row.status)) return
+    const attempt = requestId
+    retrying.value = true
     requestError.value = null
+    successHint.value = ''
     try {
       await postSandIamAction('webhook/delivery/retry', { id: row.id })
-      ElMessage.success('已保存')
+      if (disposed || !canIndex.value || attempt !== requestId) return
+      ElMessage.success('已重新排队')
+      successHint.value = '投递已重新排队，尚未确认送达。'
       await loadDeliveries()
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && attempt === requestId) requestError.value = describeSandIamError(error)
     } finally {
-      loading.value = false
+      retrying.value = false
     }
   }
+
+  watch([applicationId, status, canIndex], () => {
+    requestId++
+    currentPage.value = 1
+    deliveries.value = []
+    total.value = 0
+    webhookNames.value = {}
+    clearDetail()
+    successHint.value = ''
+    if (!canIndex.value) { applicationRequest++; applications.value = []; applicationLoading.value = false; applicationError.value = '' }
+    requestError.value = null
+    loading.value = false
+    viewState.value = 'idle'
+  }, { flush: 'sync' })
+
+  watch([currentPage, pageSize], () => {
+    requestId++; deliveries.value = []; loading.value = false; successHint.value = ''; requestError.value = null; clearDetail()
+  }, { flush: 'sync' })
+  watch(detailOpen, open => { if (!open) clearDetail() }, { flush: 'sync' })
+  watch(canRead, allowed => { if (!allowed) clearDetail() }, { flush: 'sync' })
+  watch(canNames, allowed => { if (!allowed) webhookNames.value = {} }, { flush: 'sync' })
+  onUnmounted(() => { disposed = true; requestId++; applicationRequest++; clearDetail() })
 
   function formatPayload(payload: Readonly<Record<string, unknown>> | null): string {
     if (payload === null) return '详情未包含 payload'
@@ -206,15 +271,22 @@
         description="该接入应用还没有投递记录。这与没有权限不同。"
       />
 
+      <ElAlert v-if="successHint" class="mb-4" type="success" :closable="false" :title="successHint" />
+      <ElAlert v-if="applicationError" class="mb-4" type="error" :closable="false" :title="applicationError" />
       <ElForm label-width="160px" class="mb-4">
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="loadApplications" :loading="applicationLoading" clearable placeholder="按名称选择">
             <ElOption
               v-for="row in applications"
               :key="String(row.id)"
               :label="typeof row.name === 'string' ? row.name : '未命名接入应用'"
               :value="String(row.id)"
             />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="状态">
+          <ElSelect v-model="status" clearable placeholder="全部状态">
+            <ElOption v-for="value in [1, 2, 3, 4]" :key="value" :value="String(value)" :label="webhookDeliveryStatusLabel(value)" />
           </ElSelect>
         </ElFormItem>
         <ElFormItem>
@@ -252,13 +324,13 @@
         </ElTableColumn>
         <ElTableColumn label="操作" min-width="180" fixed="right">
           <template #default="scope">
-            <ElButton size="small" :disabled="!canRead" @click="openDetail(scope.row)">
+            <ElButton size="small" :disabled="!canIndex || !canRead || loading" @click="openDetail(scope.row)">
               详情
             </ElButton>
             <ElButton
               v-if="webhookDeliveryRetryable(scope.row.status)"
               size="small"
-              :disabled="!canRetry"
+              :disabled="!canIndex || !canRetry || loading || retrying"
               @click="retry(scope.row)"
             >
               重试
@@ -266,15 +338,27 @@
           </template>
         </ElTableColumn>
       </ElTable>
+      <ElPagination
+        v-if="total > 0"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="[20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        @current-change="loadDeliveries"
+        @size-change="currentPage = 1; loadDeliveries()"
+      />
     </ElCard>
 
     <ElDrawer v-model="detailOpen" title="投递详情" size="480px">
+      <p v-if="detailLoading">正在加载详情…</p>
       <template v-if="detail">
         <p>事件：{{ webhookEventLabel(detail.event_type) }}</p>
         <p>事件标识：{{ detail.event_id }}</p>
         <p>通知：{{ webhookName(detail.webhook_endpoint_id) }}</p>
         <p>结果：{{ webhookDeliveryStatusLabel(detail.status) }}</p>
         <p>尝试次数：{{ detail.attempt_count }}</p>
+        <p>接收端 HTTP 状态：{{ detail.response_status ?? '无响应' }}</p>
         <p v-if="detail.last_error_code">处理建议：{{ retryHint(detail) }}</p>
         <ElButton class="mb-3" @click="payloadOpen = !payloadOpen">
           {{ payloadOpen ? '收起事件内容' : '查看只读事件内容' }}

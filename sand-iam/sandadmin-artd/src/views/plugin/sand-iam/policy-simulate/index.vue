@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
   import { parsePolicySimulation, type SandIamPolicySimulation } from '../api/governanceContracts'
@@ -27,6 +27,12 @@
   const simulation = ref<SandIamPolicySimulation | null>(null)
   const requestError = ref<SandIamRequestError | null>(null)
   const acting = ref(false)
+  const identityLoading = ref(false)
+  const deciding = ref(false)
+  let identityVersion = 0
+  let simulationVersion = 0
+  let decisionVersion = 0
+  let disposed = false
 
   const accessToken = ref('')
   const organizationCode = ref('')
@@ -41,6 +47,29 @@
   const decision = ref<SandIamAuthorizationDecision | null>(null)
   const decideRequestId = ref('')
   const decideError = ref<SandIamRequestError | null>(null)
+  watch([applicationId, identityId, resourceCode, action, operation, organizationScope,
+    advancedSimulationInput, attributesText], () => {
+    simulationVersion++
+    simulation.value = null
+    requestError.value = null
+  }, { flush: 'sync', deep: true })
+  watch([accessToken, organizationCode, applicationCode, apiCode, apiVersion,
+    decideOrganizationScope, advancedDecisionInput, decideAttributes], () => {
+    decisionVersion++
+    decision.value = null
+    decideRequestId.value = ''
+    decideError.value = null
+  }, { flush: 'sync', deep: true })
+  watch(applicationId, () => { void searchIdentities('') }, { flush: 'sync' })
+  onScopeDispose(() => {
+    disposed = true
+    identityVersion++
+    simulationVersion++
+    decisionVersion++
+    accessToken.value = ''
+    simulation.value = null
+    decision.value = null
+  })
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -60,27 +89,65 @@
         : '未命名'
   }
 
-  async function loadOptions(): Promise<void> {
+  const applicationLoading = ref(false)
+  const applicationError = ref('')
+  const applicationKeywords = ref('')
+  let applicationRequest = 0
+
+  async function loadApplications(keywords = ''): Promise<void> {
+    const attempt = ++applicationRequest
+    if (disposed) return
+    applicationKeywords.value = keywords
+    applicationLoading.value = true
+    applicationError.value = ''
     try {
-      const [appResult, identityResult] = await Promise.all([
-        listSandIamResource('application', { page: 1, limit: 100 }),
-        listSandIamResource('identity', { page: 1, limit: 100 })
-      ])
-      applications.value = listRows(appResult)
-      identities.value = listRows(identityResult)
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      if (disposed || attempt !== applicationRequest) return
+      const selected = applications.value.find(row => String(row.id) === applicationId.value)
+      const rows = listRows(result)
+      applications.value = selected && !rows.some(row => row.id === selected.id) ? [selected, ...rows] : rows
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && attempt === applicationRequest) applicationError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && attempt === applicationRequest) applicationLoading.value = false
+    }
+  }
+
+  async function searchIdentities(keywords: string): Promise<void> {
+    const version = ++identityVersion
+    const application = Number(applicationId.value)
+    identityId.value = ''
+    identities.value = []
+    identityLoading.value = false
+    if (disposed || !canSimulate.value || !hasAuth('sand_iam:identity:index') ||
+      !Number.isInteger(application) || application <= 0) return
+    identityLoading.value = true
+    try {
+      const result = await listSandIamResource('identity', {
+        page: 1, limit: 100, application_id: application, keywords: keywords.trim()
+      })
+      if (!disposed && version === identityVersion) {
+        identities.value = listRows(result).filter(row => row.application_id === application)
+      }
+    } catch (error: unknown) {
+      if (!disposed && version === identityVersion) requestError.value = describeSandIamError(error)
+    } finally {
+      if (!disposed && version === identityVersion) identityLoading.value = false
     }
   }
 
   async function runSimulate(): Promise<void> {
+    if (disposed || acting.value || identityLoading.value || !canSimulate.value) return
+    const version = simulationVersion
     const application = Number(applicationId.value)
     const identity = Number(identityId.value)
     if (
       !Number.isInteger(application) ||
       application <= 0 ||
       !Number.isInteger(identity) ||
-      identity <= 0
+      identity <= 0 ||
+      !identities.value.some(row => row.id === identity && row.application_id === application) ||
+      resourceCode.value.trim() === '' || action.value.trim() === ''
     ) {
       requestError.value = describeSandIamError(new Error('请按名称选择接入应用和应用身份。'))
       return
@@ -104,19 +171,22 @@
         operation: operation.value,
         attributes
       })
+      if (disposed || version !== simulationVersion) return
       const parsed = parsePolicySimulation(result)
       if (parsed === null) {
         throw new Error('模拟结果不完整，页面不会自行推断允许或拒绝。请稍后重试。')
       }
       simulation.value = parsed
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && version === simulationVersion) requestError.value = describeSandIamError(error)
     } finally {
       acting.value = false
     }
   }
 
   async function runDecide(): Promise<void> {
+    if (disposed || deciding.value) return
+    const version = decisionVersion
     let attributes: Record<string, unknown>
     try {
       attributes = decisionAttributes()
@@ -126,6 +196,7 @@
     }
     decideError.value = null
     decision.value = null
+    deciding.value = true
     try {
       const result = await decideSandIamAuthorization(accessToken.value, {
         organization_code: organizationCode.value.trim(),
@@ -134,10 +205,13 @@
         api_version: apiVersion.value.trim() || 'v1',
         attributes
       })
+      if (disposed || version !== decisionVersion) return
       decideRequestId.value = result.requestId
       decision.value = result.data
     } catch (error: unknown) {
-      decideError.value = describeRuntimeDecideError(error)
+      if (!disposed && version === decisionVersion) decideError.value = describeRuntimeDecideError(error)
+    } finally {
+      deciding.value = false
     }
   }
 
@@ -166,7 +240,7 @@
   }
 
   onMounted(() => {
-    void loadOptions()
+    void loadApplications()
   })
 </script>
 
@@ -194,8 +268,12 @@
         :description="requestError.detail"
       />
       <ElForm label-width="160px">
+        <ElFormItem v-if="applicationError" label="应用搜索失败">
+          <span role="alert">{{ applicationError }}</span>
+          <ElButton :loading="applicationLoading" @click="loadApplications(applicationKeywords)">重试搜索</ElButton>
+        </ElFormItem>
         <ElFormItem label="接入应用">
-          <ElSelect v-model="applicationId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="applicationId" filterable remote :remote-method="loadApplications" :loading="applicationLoading" clearable placeholder="按名称选择">
             <ElOption
               v-for="row in applications"
               :key="String(row.id)"
@@ -205,7 +283,8 @@
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="应用身份">
-          <ElSelect v-model="identityId" filterable clearable placeholder="按名称选择">
+          <ElSelect v-model="identityId" filterable remote :remote-method="searchIdentities"
+            :loading="identityLoading" clearable placeholder="输入姓名搜索当前应用用户">
             <ElOption
               v-for="row in identities"
               :key="String(row.id)"
@@ -258,7 +337,7 @@
           </ElCollapseItem>
         </ElCollapse>
         <ElFormItem>
-          <ElButton type="primary" :disabled="!canSimulate" @click="runSimulate">
+          <ElButton type="primary" :disabled="!canSimulate || acting || identityLoading" @click="runSimulate">
             向后端模拟
           </ElButton>
         </ElFormItem>
@@ -338,7 +417,7 @@
           </ElCollapseItem>
         </ElCollapse>
         <ElFormItem>
-          <ElButton type="primary" @click="runDecide">向后端询问决策</ElButton>
+          <ElButton type="primary" :loading="deciding" @click="runDecide">向后端询问决策</ElButton>
         </ElFormItem>
       </ElForm>
       <ElDescriptions v-if="decision !== null" :column="1" border>

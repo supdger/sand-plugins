@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
   import { getSandIamAdmin } from '../api/write'
@@ -18,7 +18,27 @@
   const openApiDocument = ref<unknown>(null)
   const events = ref<CatalogEvent[]>([])
   const eventCatalog = ref<unknown>(null)
-  const requestError = ref<SandIamRequestError | null>(null)
+  const openApiError = ref<SandIamRequestError | null>(null)
+  const eventsError = ref<SandIamRequestError | null>(null)
+  const openApiLoading = ref(false)
+  const eventsLoading = ref(false)
+  let disposed = false
+  let openApiVersion = 0
+  let eventsVersion = 0
+  watch(canOpenApi, () => {
+    openApiVersion++
+    openApiDocument.value = null
+    openApiError.value = null
+    openApiLoading.value = false
+    openApiHint.value = canOpenApi.value ? '尚未加载。' : '当前账号无权查看管理 API 文档。'
+  }, { flush: 'sync' })
+  watch(canEvents, () => {
+    eventsVersion++
+    events.value = []
+    eventCatalog.value = null
+    eventsError.value = null
+    eventsLoading.value = false
+  }, { flush: 'sync' })
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -29,10 +49,20 @@
   }
 
   async function loadCatalogs(): Promise<void> {
-    requestError.value = null
+    await Promise.all([loadOpenApi(), loadEvents()])
+  }
+
+  async function loadOpenApi(): Promise<void> {
+    if (disposed) return
+    const version = ++openApiVersion
+    openApiDocument.value = null
+    openApiError.value = null
     if (canOpenApi.value) {
+      openApiLoading.value = true
       try {
         const openApi = unwrap(await getSandIamAdmin('developer/openapi'))
+        if (disposed || version !== openApiVersion || !canOpenApi.value) return
+        if (!isRecord(openApi) || !isRecord(openApi.paths)) throw new Error('管理 API 文档格式无效。')
         openApiDocument.value = openApi
         const paths =
           isRecord(openApi) && isRecord(openApi.paths) ? Object.keys(openApi.paths).length : 0
@@ -41,17 +71,31 @@
             ? `管理接口说明已加载，约 ${String(paths)} 条路径。完整定义可在下方开发者详情中下载。`
             : '管理 API 文档已返回，但没有可展示的路径摘要。'
       } catch (error: unknown) {
-        requestError.value = describeSandIamError(error)
+        if (disposed || version !== openApiVersion || !canOpenApi.value) return
+        openApiError.value = describeSandIamError(error)
         openApiHint.value = '无法加载管理 API 文档。'
+      } finally {
+        if (!disposed && version === openApiVersion) openApiLoading.value = false
       }
     } else {
       openApiHint.value = '当前账号无权查看管理 API 文档。'
     }
+  }
+
+  async function loadEvents(): Promise<void> {
+    if (disposed) return
+    const version = ++eventsVersion
+    eventCatalog.value = null
+    events.value = []
+    eventsError.value = null
     if (!canEvents.value) {
       return
     }
+    eventsLoading.value = true
     try {
       const catalog = unwrap(await getSandIamAdmin('developer/events'))
+      if (disposed || version !== eventsVersion || !canEvents.value) return
+      if (!isRecord(catalog) || !Array.isArray(catalog.events)) throw new Error('事件目录格式无效。')
       eventCatalog.value = catalog
       const list = isRecord(catalog) && Array.isArray(catalog.events) ? catalog.events : []
       events.value = list
@@ -67,7 +111,9 @@
         })
         .filter((item): item is CatalogEvent => item !== null)
     } catch (error: unknown) {
-      requestError.value = describeSandIamError(error)
+      if (!disposed && version === eventsVersion && canEvents.value) eventsError.value = describeSandIamError(error)
+    } finally {
+      if (!disposed && version === eventsVersion) eventsLoading.value = false
     }
   }
 
@@ -75,7 +121,12 @@
    * 只下载后端已返回的 OpenAPI / 事件目录，不在浏览器编造路径或事件。
    */
   function downloadJson(filename: string, value: unknown): void {
-    if (value === null) return
+    if (disposed || value === null) return
+    if (filename === 'sand-iam-openapi.json') {
+      if (!canOpenApi.value || openApiLoading.value || value !== openApiDocument.value) return
+    } else if (filename === 'sand-iam-events.json') {
+      if (!canEvents.value || eventsLoading.value || value !== eventCatalog.value) return
+    } else return
     const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -88,6 +139,14 @@
   onMounted(() => {
     void loadCatalogs()
   })
+  onScopeDispose(() => {
+    disposed = true
+    openApiVersion++
+    eventsVersion++
+    openApiDocument.value = null
+    eventCatalog.value = null
+    events.value = []
+  })
 </script>
 
 <template>
@@ -98,13 +157,17 @@
         这里提供给应用开发人员：先登记接口和业务动作，再接入登录、授权和审计。普通管理员不需要在此页配置业务系统。
       </p>
       <ElAlert
-        v-if="requestError"
+        v-if="openApiError"
         class="mb-4"
         type="error"
         :closable="false"
-        :title="requestError.title"
-        :description="requestError.detail"
+        :title="openApiError.title"
+        :description="openApiError.detail"
       />
+      <ElAlert v-if="eventsError" class="mb-4" type="error" :closable="false"
+        :title="eventsError.title" :description="eventsError.detail" />
+      <ElButton :disabled="!canOpenApi && !canEvents" :loading="openApiLoading || eventsLoading"
+        @click="loadCatalogs">重新加载目录</ElButton>
       <ElAlert
         class="mb-4"
         :type="canOpenApi ? 'info' : 'warning'"
@@ -114,14 +177,14 @@
       />
       <ElButton
         class="mb-4"
-        :disabled="openApiDocument === null"
+        :disabled="!canOpenApi || openApiLoading || openApiDocument === null"
         @click="downloadJson('sand-iam-openapi.json', openApiDocument)"
       >
         下载接口定义
       </ElButton>
       <ElButton
         class="mb-4"
-        :disabled="eventCatalog === null"
+        :disabled="!canEvents || eventsLoading || eventCatalog === null"
         @click="downloadJson('sand-iam-events.json', eventCatalog)"
       >
         下载事件目录
@@ -180,6 +243,7 @@ Route::post('/api/customer/v1/orders/{id}/archive', [OrderController::class, 'ar
     ->middleware([ApplicationAuthorizationMiddleware::class]);</pre
           >
           <h3 class="text-base font-semibold">TypeScript SDK</h3>
+          <p>先安装对应 SDK 并导入 SandIamClient；session.accessToken / $accessToken 来自当前应用用户会话。授权拒绝或请求异常时停止业务操作，不得捕获异常后继续执行。返回的数据范围仍须用于业务查询。</p>
           <pre class="overflow-auto rounded bg-gray-50 p-3 text-xs">
 const iam = new SandIamClient({
   baseUrl: "https://iam.example.com",
@@ -187,16 +251,21 @@ const iam = new SandIamClient({
   applicationCode: "customer-service",
   accessToken: () => session.accessToken,
 })
-await iam.authorize({ apiCode: "order.detail", attributes: { organization_id: 42 } })</pre
+const decision = await iam.authorize({ apiCode: "order.detail", attributes: { organization_id: 42 } })
+// 仅在 authorize 正常返回后，按 decision.scope 约束业务查询。</pre
           >
           <h3 class="text-base font-semibold">PHP SDK</h3>
           <pre class="overflow-auto rounded bg-gray-50 p-3 text-xs">
-$iam = new SandIamClient([
-  'base_url' => 'https://iam.example.com',
-  'organization_code' => 'sand',
-  'application_code' => 'customer-service',
-]);
-$iam->authorize('order.detail', ['organization_id' => 42]);</pre
+$iam = new \Sand\Iam\Sdk\SandIamClient(
+  baseUrl: 'https://iam.example.com',
+  organizationCode: 'sand',
+  applicationCode: 'customer-service',
+);
+$decision = $iam->decide($accessToken, 'order.detail', ['organization_id' => 42]);
+if ($decision['allowed'] !== true) {
+  throw new \RuntimeException('访问被拒绝');
+}
+// 仅在允许后，按 $decision['scope'] 约束业务查询。</pre
           >
           <h3 class="text-base font-semibold">Dart / Flutter SDK</h3>
           <pre class="overflow-auto rounded bg-gray-50 p-3 text-xs">
@@ -206,7 +275,8 @@ final iam = SandIamClient(
   applicationCode: 'customer-service',
   accessToken: () => session.accessToken,
 );
-await iam.authorize(apiCode: 'order.detail', attributes: {'organization_id': 42});</pre
+final decision = await iam.authorize(apiCode: 'order.detail', attributes: {'organization_id': 42});
+// 仅在 authorize 正常返回后，按 decision.scope 约束业务查询。</pre
           >
           <ElDivider />
           <h3 class="text-base font-semibold">三条接入路径</h3>

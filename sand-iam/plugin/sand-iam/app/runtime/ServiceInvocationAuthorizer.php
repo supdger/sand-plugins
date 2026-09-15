@@ -138,8 +138,13 @@ final class ServiceInvocationAuthorizer
         } catch (ApiException $exception) {
             if (!$committed) {
                 if (isset($operation) && $operation instanceof ServiceInvocationOperation) {
-                    $this->auditWriter->write('workload_client', (string) $operation->workload_client_id, (int) $operation->organization_id, (int) $operation->application_id, 'service.invoke.revalidate', 'service_invocation_operation', (int) $operation->id, 'denied', $requestId, ['code' => $this->errorCode($exception), 'service_code' => $expectedServiceCode, 'action_code' => $requiredAction]);
-                    Db::commit();
+                    try {
+                        $this->auditWriter->write('workload_client', (string) $operation->workload_client_id, (int) $operation->organization_id, (int) $operation->application_id, 'service.invoke.revalidate', 'service_invocation_operation', (int) $operation->id, 'denied', $requestId, ['code' => $this->errorCode($exception), 'service_code' => $expectedServiceCode, 'action_code' => $requiredAction]);
+                        Db::commit();
+                    } catch (\Throwable $auditException) {
+                        Db::rollback();
+                        throw $auditException;
+                    }
                 } else {
                     Db::rollback();
                 }
@@ -217,21 +222,29 @@ final class ServiceInvocationAuthorizer
                 throw $decision;
             }
         } catch (ApiException $decision) {
-            if ($operation !== null || $committed) throw $decision;
-            $this->auditWriter->write(
-                'workload_client',
-                (string) ($claims['workload_client_id'] ?? 0),
-                (int) ($claims['organization_id'] ?? 0),
-                (int) ($claims['application_id'] ?? 0),
-                'service.invoke.authorize',
-                'service_invocation_operation',
-                null,
-                'denied',
-                $requestId,
-                ['code' => $this->errorCode($decision), 'service_code' => (string) ($grant['service_code'] ?? ''), 'action_code' => $requiredAction, 'data_class' => $facts->dataClass],
-            );
-            Db::commit();
-            $committed = true;
+            if ($operation !== null || $committed) {
+                if (!$committed) Db::rollback();
+                throw $decision;
+            }
+            try {
+                $this->auditWriter->write(
+                    'workload_client',
+                    (string) ($claims['workload_client_id'] ?? 0),
+                    (int) ($claims['organization_id'] ?? 0),
+                    (int) ($claims['application_id'] ?? 0),
+                    'service.invoke.authorize',
+                    'service_invocation_operation',
+                    null,
+                    'denied',
+                    $requestId,
+                    ['code' => $this->errorCode($decision), 'service_code' => (string) ($grant['service_code'] ?? ''), 'action_code' => $requiredAction, 'data_class' => $facts->dataClass],
+                );
+                Db::commit();
+                $committed = true;
+            } catch (\Throwable $auditException) {
+                Db::rollback();
+                throw $auditException;
+            }
             throw $decision;
         } catch (\Throwable $exception) {
             if (!$committed) Db::rollback();

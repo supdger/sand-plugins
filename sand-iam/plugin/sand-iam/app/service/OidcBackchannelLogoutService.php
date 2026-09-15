@@ -22,28 +22,32 @@ final class OidcBackchannelLogoutService
         private readonly AuditWriter $audit = new AuditWriter(),
     ) {}
 
-    /** @return array{claimed:int,delivered:int,retried:int,dead:int} */
+    /** @return array{claimed:int,delivered:int,retried:int,dead:int,lease_lost:int} */
     public function deliverBatch(int $limit = 20): array
     {
         $limit = min(max($limit, 1), 100);
         OidcLogoutDelivery::where('state', 'sending')->where('locked_until', '<', date('Y-m-d H:i:s'))->update(['state' => 'pending', 'locked_until' => null]);
-        Db::startTrans();
-        try {
-            $rows = OidcLogoutDelivery::where('state', 'pending')->where('next_attempt_time', '<=', date('Y-m-d H:i:s'))->order('id')->limit($limit)->lock('FOR UPDATE SKIP LOCKED')->select()->all();
-            foreach ($rows as $row) $row->save(['state' => 'sending', 'locked_until' => date('Y-m-d H:i:s', time() + 120)]);
-            Db::commit();
-        } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
-
-        $result = ['claimed' => count($rows), 'delivered' => 0, 'retried' => 0, 'dead' => 0];
-        foreach ($rows as $row) $result[$this->deliver($row)]++;
+        $result = ['claimed' => 0, 'delivered' => 0, 'retried' => 0, 'dead' => 0, 'lease_lost' => 0];
+        for ($index = 0; $index < $limit; $index++) {
+            Db::startTrans();
+            try {
+                $row = OidcLogoutDelivery::where('state', 'pending')->where('next_attempt_time', '<=', date('Y-m-d H:i:s'))->order('id')->lock('FOR UPDATE SKIP LOCKED')->find();
+                if ($row !== null) $row->save(['state' => 'sending', 'locked_until' => date('Y-m-d H:i:s', time() + 120)]);
+                Db::commit();
+            } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
+            if ($row === null) break;
+            $result['claimed']++;
+            $result[$this->deliver($row)]++;
+        }
         return $result;
     }
 
-    /** @return 'delivered'|'retried'|'dead' */
+    /** @return 'delivered'|'retried'|'dead'|'lease_lost' */
     private function deliver(OidcLogoutDelivery $claimed): string
     {
-        $row = OidcLogoutDelivery::where('id', (int) $claimed->id)->where('state', 'sending')->find();
-        if ($row === null) return 'dead';
+        $row = OidcLogoutDelivery::where('id', (int) $claimed->id)->where('state', 'sending')
+            ->where('locked_until', (string) $claimed->locked_until)->where('locked_until', '>', date('Y-m-d H:i:s'))->find();
+        if ($row === null) return 'lease_lost';
         $client = OAuthClient::where('id', (int) $row->oauth_client_id)->where('application_id', (int) $row->application_id)->where('status', 1)->find();
         $attempt = (int) $row->attempt_count + 1;
         if ($client === null) return $this->fail($row, $attempt, 'SAND_IAM_OIDC_BACKCHANNEL_CLIENT_UNAVAILABLE');
@@ -55,7 +59,7 @@ final class OidcBackchannelLogoutService
             $body = http_build_query(['logout_token' => $token], '', '&', PHP_QUERY_RFC3986);
             $response = $this->http->postLogoutToken($targetUri, $body, 10);
             if ($response['status'] < 200 || $response['status'] >= 300) return $this->fail($row, $attempt, 'SAND_IAM_OIDC_BACKCHANNEL_HTTP_' . $response['status'], $response['status'], $response['body']);
-            $row->save(['state' => 'delivered', 'attempt_count' => $attempt, 'delivered_time' => date('Y-m-d H:i:s'), 'locked_until' => null, 'response_status' => $response['status'], 'response_digest' => hash('sha256', $response['body']), 'last_error_code' => null, 'status' => 2]);
+            if (!$this->saveClaimedDelivery($row, ['state' => 'delivered', 'attempt_count' => $attempt, 'delivered_time' => date('Y-m-d H:i:s'), 'locked_until' => null, 'response_status' => $response['status'], 'response_digest' => hash('sha256', $response['body']), 'last_error_code' => null, 'status' => 2])) return 'lease_lost';
             $this->writeAudit($row, 'delivered', ['attempt' => $attempt, 'response_status' => $response['status']]);
             return 'delivered';
         } catch (\Throwable) {
@@ -63,21 +67,28 @@ final class OidcBackchannelLogoutService
         }
     }
 
-    /** @return 'retried'|'dead' */
+    /** @return 'retried'|'dead'|'lease_lost' */
     private function fail(OidcLogoutDelivery $row, int $attempt, string $code, ?int $status = null, string $body = ''): string
     {
         $dead = $attempt >= 5;
         $delay = self::RETRY_DELAYS[min($attempt - 1, 4)];
-        $row->save(['state' => $dead ? 'dead' : 'pending', 'attempt_count' => $attempt, 'next_attempt_time' => $dead ? null : date('Y-m-d H:i:s', time() + $delay), 'locked_until' => null, 'response_status' => $status, 'response_digest' => $body === '' ? null : hash('sha256', $body), 'last_error_code' => $code, 'status' => $dead ? 2 : 1]);
+        if (!$this->saveClaimedDelivery($row, ['state' => $dead ? 'dead' : 'pending', 'attempt_count' => $attempt, 'next_attempt_time' => $dead ? null : date('Y-m-d H:i:s', time() + $delay), 'locked_until' => null, 'response_status' => $status, 'response_digest' => $body === '' ? null : hash('sha256', $body), 'last_error_code' => $code, 'status' => $dead ? 2 : 1])) return 'lease_lost';
         $this->writeAudit($row, $dead ? 'dead' : 'retry_scheduled', ['attempt' => $attempt, 'error_code' => $code]);
         return $dead ? 'dead' : 'retried';
+    }
+
+    /** @param array<string,mixed> $values */
+    private function saveClaimedDelivery(OidcLogoutDelivery $row, array $values): bool
+    {
+        return OidcLogoutDelivery::where('id', (int) $row->id)->where('state', 'sending')
+            ->where('locked_until', (string) $row->locked_until)->update($values) === 1;
     }
 
     /** @param array<string,mixed> $context */
     private function writeAudit(OidcLogoutDelivery $row, string $deliveryState, array $context): void
     {
-        $application = Application::find((int) $row->application_id);
         try {
+            $application = Application::find((int) $row->application_id);
             $attempt = (int) ($context['attempt'] ?? $row->attempt_count);
             $requestId = hash('sha256', "oidc.backchannel_logout_delivery\0" . (string) $row->event_id . "\0" . $attempt);
             $this->audit->write(

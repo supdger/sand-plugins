@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, ref } from 'vue'
+  import { computed, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
@@ -23,6 +23,17 @@
   const applied = ref(false)
   const acting = ref(false)
   const issuedCredential = ref('')
+  let inputVersion = 0
+  let previewVersion = -1
+  let disposed = false
+  watch(manifestText, () => {
+    inputVersion++
+    preview.value = null
+    applied.value = false
+    requestError.value = null
+    lastHint.value = ''
+  }, { flush: 'sync' })
+  onScopeDispose(() => { disposed = true; inputVersion++; issuedCredential.value = '' })
   const previewChanges = computed(() =>
     preview.value === null ? [] : preview.value.changes.map((change) => ({ ...change }))
   )
@@ -55,11 +66,16 @@
 
   function resetApplyState(): void {
     applied.value = false
-    issuedCredential.value = ''
     lastHint.value = ''
   }
 
+  function acknowledgeCredential(): void {
+    if (!acting.value) issuedCredential.value = ''
+  }
+
   async function runPreview(): Promise<void> {
+    if (disposed || acting.value || !canPreview.value || issuedCredential.value !== '') return
+    const version = inputVersion
     const manifest = parseManifestJson()
     if (manifest === null) {
       preview.value = null
@@ -69,17 +85,21 @@
     acting.value = true
     requestError.value = null
     resetApplyState()
+    preview.value = null
     try {
       const result = await postSandIamAction('developer/onboarding/preview', {
         manifest
       })
+      if (disposed || version !== inputVersion) return
       const parsed = parseOnboardingPreview(result)
       if (parsed === null) {
         throw new Error('服务器没有返回可确认的变更预览，请检查清单后重试。')
       }
       preview.value = parsed
+      previewVersion = version
       lastHint.value = '这是保存前的变更预览，尚未写入。有冲突或未关联项时不能继续保存。'
     } catch (error: unknown) {
+      if (disposed || version !== inputVersion) return
       preview.value = null
       requestError.value = describeSandIamError(error)
     } finally {
@@ -88,12 +108,19 @@
   }
 
   async function confirmApply(): Promise<void> {
+    if (disposed || acting.value || !canApply.value || issuedCredential.value !== '' || applied.value) return
     if (preview.value === null || preview.value.dryRun !== true) {
       requestError.value = describeSandIamError(new Error('请先生成变更预览，再确认保存。'))
       return
     }
     const manifest = parseManifestJson()
     if (manifest === null) return
+    const selected = preview.value
+    const version = inputVersion
+    const current = (): boolean => !disposed && version === inputVersion &&
+      previewVersion === version && preview.value === selected
+    if (!current()) return
+    acting.value = true
     try {
       await ElMessageBox.confirm(
         '确认按刚才的变更预览保存吗？修改清单后请重新预览。一次性调用凭证只会显示一次。',
@@ -101,24 +128,31 @@
         { type: 'warning', confirmButtonText: '确认保存', cancelButtonText: '取消' }
       )
     } catch {
+      acting.value = false
       return
     }
-    acting.value = true
+    if (!current() || !canApply.value) {
+      acting.value = false
+      return
+    }
     requestError.value = null
     try {
       const result = await postSandIamAction('developer/onboarding/apply', {
         manifest,
-        preview_hash: preview.value.previewHash,
+        preview_hash: selected.previewHash,
         apply: true
       })
+      if (disposed) return
       const payload = isRecord(result) && isRecord(result.data) ? result.data : result
       if (isRecord(payload) && typeof payload.credential === 'string') {
         issuedCredential.value = payload.credential
       }
+      if (!current()) return
       applied.value = true
-      lastHint.value = '接入已完成。不要把这次成功理解成路由扫描已经覆盖全部宿主路由。'
+      lastHint.value = '清单已保存，请按交接清单继续验证业务接入。'
       ElMessage.success('已保存')
     } catch (error: unknown) {
+      if (!current()) return
       applied.value = false
       requestError.value = describeSandIamError(error)
     } finally {
@@ -199,12 +233,12 @@
             </ElFormItem>
             <ElFormItem>
               <ElSpace>
-                <ElButton type="primary" :disabled="!canPreview" @click="runPreview">
+                <ElButton type="primary" :disabled="!canPreview || acting || issuedCredential !== ''" @click="runPreview">
                   查看变更
                 </ElButton>
                 <ElButton
                   type="warning"
-                  :disabled="!canApply || preview === null"
+                  :disabled="!canApply || preview === null || acting || issuedCredential !== '' || applied"
                   @click="confirmApply"
                 >
                   确认保存
@@ -246,6 +280,7 @@
         <p class="mb-0 mt-1 text-xs text-gray-500">
           关闭或刷新后无法再看。不要写入日志、URL 或截图文件名。
         </p>
+        <ElButton :disabled="acting" @click="acknowledgeCredential">我已安全保存，清除凭证</ElButton>
       </ElFormItem>
     </ElCard>
   </div>

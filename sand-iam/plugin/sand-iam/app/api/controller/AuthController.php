@@ -15,6 +15,15 @@ use support\Response;
 
 final class AuthController extends BaseController
 {
+    public function captchaConfiguration(Request $request): Response
+    {
+        return $this->sensitive((new HumanAuthService())->captchaConfiguration([
+            'organization_code' => $request->get('organization_code'),
+            'application_code' => $request->get('application_code'),
+            'action' => $request->get('action'),
+        ], $this->ip($request)));
+    }
+
     public function register(Request $request): Response { return $this->success((new HumanAuthService())->register($request->post(), $this->ip($request), $this->requestId($request)))->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache'); }
     public function login(Request $request): Response { return $this->success((new HumanAuthService())->login($request->post(), $this->ip($request), $this->requestId($request)))->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache'); }
     public function refresh(Request $request): Response { return $this->success((new HumanAuthService())->refresh((string) $request->post('refresh_token', ''), $this->ip($request), $this->requestId($request)))->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache'); }
@@ -22,7 +31,7 @@ final class AuthController extends BaseController
     public function forgotPassword(Request $request): Response { (new HumanAuthService())->requestVerification(array_merge($request->post(), ['purpose' => 'password_reset', '_password_reset_endpoint' => true, '_ip' => $this->ip($request)]), $this->requestId($request)); return $this->success('如账号存在，重置验证码已发送'); }
     public function resetPassword(Request $request): Response { (new HumanAuthService())->resetPassword(array_merge($request->post(), ['_ip' => $this->ip($request)]), $this->requestId($request)); return $this->success('密码已重置，请重新登录'); }
     public function changePassword(Request $request): Response { (new HumanAuthService())->changePassword($this->bearer($request), (string) $request->post('current_password', ''), (string) $request->post('new_password', ''), $this->ip($request), $this->requestId($request)); return $this->success('密码已修改，所有设备需要重新登录'); }
-    public function requestVerification(Request $request): Response { (new HumanAuthService())->requestVerification(array_merge($request->post(), ['_ip' => $this->ip($request)]), $this->requestId($request)); return $this->success('如账号存在，验证码已发送'); }
+    public function requestVerification(Request $request): Response { (new HumanAuthService())->requestVerification(array_merge($request->post(), ['_password_reset_endpoint' => false, '_ip' => $this->ip($request)]), $this->requestId($request)); return $this->success('如账号存在，验证码已发送'); }
     public function confirmVerification(Request $request): Response { (new HumanAuthService())->confirmVerification(array_merge($request->post(), ['_ip' => $this->ip($request)]), $this->requestId($request)); return $this->success('验证已完成'); }
     public function sessions(Request $request): Response { return $this->success((new HumanAuthService())->sessions($this->bearer($request))); }
     public function revokeSession(Request $request): Response { (new HumanAuthService())->revokeSession($this->bearer($request), (int) $request->post('id', 0), $this->requestId($request)); return $this->success('会话已撤销'); }

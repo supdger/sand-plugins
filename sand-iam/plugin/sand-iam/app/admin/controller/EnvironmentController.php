@@ -19,6 +19,7 @@ final class EnvironmentController extends ApplicationResourceController
     protected array $requiredFields = ['application_id', 'code', 'name'];
     protected string $resourceType = 'environment';
     protected bool $atomicCreateAudit = true;
+    protected bool $atomicMutationAudit = true;
     #[Permission('SandIAM 应用环境列表', 'sand_iam:environment:index')] public function index(Request $request): Response { return parent::index($request); }
     #[Permission('SandIAM 应用环境读取', 'sand_iam:environment:read')] public function read(Request $request): Response { return parent::read($request); }
     #[Permission('SandIAM 应用环境保存', 'sand_iam:environment:save')]
@@ -44,8 +45,23 @@ final class EnvironmentController extends ApplicationResourceController
             $this->throwWriteFailure($exception);
         }
     }
-    #[Permission('SandIAM 应用环境停用', 'sand_iam:environment:disable')] public function disable(Request $request): Response { return parent::disable($request); }
+    #[Permission('SandIAM 应用环境停用', 'sand_iam:environment:disable')]
+    public function disable(Request $request): Response
+    {
+        return parent::disable($request);
+    }
     protected function assertReferences(array $payload, ?object $existing = null): void { if (isset($payload['application_id']) && !Application::where('id', (int) $payload['application_id'])->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所属应用不存在或已停用', 400); }
+
+    protected function normalizePayload(array $payload, ?object $existing = null): array
+    {
+        if (array_key_exists('name', $payload)) {
+            if (!is_string($payload['name']) || trim($payload['name']) === '') {
+                throw new ApiException('SAND_IAM_VALIDATION_ERROR: 环境名称必须是非空文本', 400);
+            }
+            $payload['name'] = trim($payload['name']);
+        }
+        return $payload;
+    }
 
     private function throwWriteFailure(\Throwable $exception): never
     {

@@ -166,11 +166,14 @@ export const grantFields: SandIamFormField[] = [
   field('service_id', 'reference', {
     required: true,
     omitFromPayload: true,
-    referenceEndpoint: 'service'
+    referenceEndpoint: 'service',
+    grantCandidate: 'services',
+    dependency: { sourceKey: 'workload_client_id', targetParam: 'workload_client_id' }
   }),
   field('service_action_id', 'reference', {
     required: true,
     referenceEndpoint: 'action',
+    grantCandidate: 'actions',
     dependency: { sourceKey: 'service_id', targetParam: 'service_id' },
     help: '选择已登记的服务能力，例如“文档解析”；它不是 HTTP 地址。'
   }),
@@ -183,12 +186,16 @@ export const grantFields: SandIamFormField[] = [
     advanced: true,
     help: '高级可选配置：按需要填写，不影响基础服务授权。'
   }),
-  field('data_class', 'text'),
+  field('data_class', 'text', {
+    clearableToNull: true,
+    help: '留空仅允许未指定数据分级的调用，不表示允许任意数据分级。'
+  }),
   field('network_policy', 'json', {
     advanced: true,
     help: '高级可选配置：按需要填写，不影响基础服务授权。'
   }),
   field('expire_time', 'datetime', {
+    clearableToNull: true,
     help: '可选。到期后授权不再生效；留空表示不在这里设置到期限制。'
   }),
   statusField
@@ -315,6 +322,7 @@ export const authPolicyFields: SandIamFormField[] = [
   }),
   field('webauthn_rp_id', 'text', {
     advanced: true,
+    clearableToEmptyString: true,
     defaultValue: '',
     placeholder: 'login.example.com',
     help: '通行密钥 RP ID，必须是小写域名；与允许来源同时填写或同时留空。'
@@ -322,7 +330,8 @@ export const authPolicyFields: SandIamFormField[] = [
   field('webauthn_allowed_origins', 'json', {
     advanced: true,
     jsonArray: true,
-    defaultValue: '[]',
+    allowEmptyArray: true,
+    defaultValue: '',
     help: '逐行填写允许来源，最多 20 项，例如 https://login.example.com。必须是小写 HTTPS 来源且不能带路径。'
   }),
   field('webauthn_user_verification', 'select', {
@@ -434,9 +443,11 @@ export const policyFields: SandIamFormField[] = [
 ]
 
 export const adminGrantFields: SandIamFormField[] = [
-  field('admin_user_id', 'number', {
+  field('admin_user_id', 'reference', {
     required: true,
-    help: '客户主体委派仍未提供管理员名称搜索；只能填写后台管理员编号。应用委派请改用「应用管理员委派」页按名称搜索。'
+    referenceEndpoint: 'admin-organization-grant',
+    organizationAdminCandidate: true,
+    help: '输入至少 2 个字符搜索已有后台管理员。'
   }),
   field('organization_id', 'reference', {
     required: true,
@@ -466,6 +477,7 @@ export const applicationExperienceFields: SandIamFormField[] = [
     help: '登录页标题，取自当前接入应用品牌，不要写死其他产品名。'
   }),
   field('logo_url', 'text', {
+    clearableToEmptyString: true,
     help: '仅 HTTPS。完整地址不进默认列表。'
   }),
   field('primary_color', 'text', {
@@ -485,10 +497,12 @@ export const applicationExperienceFields: SandIamFormField[] = [
     advanced: true
   }),
   field('terms_url', 'text', {
+    clearableToEmptyString: true,
     help: '仅 HTTPS。',
     advanced: true
   }),
   field('privacy_url', 'text', {
+    clearableToEmptyString: true,
     help: '仅 HTTPS。',
     advanced: true
   }),
@@ -585,21 +599,23 @@ export const oauthClientFields: SandIamFormField[] = [
   field('redirect_uris', 'json', {
     required: true,
     jsonArray: true,
-    defaultValue: '["https://app.example.com/callback"]',
+    defaultValue: 'https://app.example.com/callback',
     help: '精确 HTTPS 回调地址列表，最多 50 项。公开客户端可使用 127.0.0.1 或 ::1 的本机 HTTP。完整地址不进入默认列表。'
   }),
   field('allowed_scopes', 'json', {
     jsonArray: true,
-    defaultValue: '["openid","profile"]',
+    defaultValue: 'openid\nprofile',
     help: '协议范围代码，不是 URL。'
   }),
   field('post_logout_redirect_uris', 'json', {
     jsonArray: true,
+    allowEmptyArray: true,
     advanced: true,
-    defaultValue: '[]',
+    defaultValue: '',
     help: '可选。登出后允许回到的精确地址。'
   }),
   field('frontchannel_logout_uri', 'text', {
+    clearableToEmptyString: true,
     advanced: true,
     help: '可选。必须是与某个登录回调同源的精确 HTTPS，不能带账号、片段或通配符。完整地址不进入默认列表。功能开关关闭时，后端不会伪造成功投递。'
   }),
@@ -613,6 +629,7 @@ export const oauthClientFields: SandIamFormField[] = [
     help: '前通道登出是否在地址上携带会话标识。这不是客户端密钥。开关关闭时页面不会显示已投递。'
   }),
   field('backchannel_logout_uri', 'text', {
+    clearableToEmptyString: true,
     advanced: true,
     help: '可选。必须是与某个登录回调同源的精确 HTTPS，不能带账号、片段或通配符。完整地址不进入默认列表。功能开关关闭时，后端不会伪造成功投递。'
   }),
@@ -627,11 +644,13 @@ export const oauthClientFields: SandIamFormField[] = [
   }),
   field('allowed_audiences', 'json', {
     jsonArray: true,
+    allowEmptyArray: true,
     advanced: true,
-    defaultValue: '[]',
+    defaultValue: '',
     help: '可选。机器访问受众，最多 30 项。'
   }),
   field('default_audience', 'text', {
+    clearableToEmptyString: true,
     advanced: true,
     help: '可选。必须已经出现在允许受众中。'
   }),
@@ -656,8 +675,9 @@ export const casServiceFields: SandIamFormField[] = [
   }),
   field('released_attributes', 'json', {
     jsonArray: true,
-    defaultValue: '["display_name"]',
-    help: '最多两项，只能选择 display_name（显示名称）和 email（邮箱）。不要填写其他资料字段。'
+    allowEmptyArray: true,
+    defaultValue: 'display_name',
+    help: '最多两项，只能选择 display_name（显示名称）和 email（邮箱）。留空不返回这两项资料。'
   }),
   statusField
 ]
@@ -669,13 +689,15 @@ export const applicationNetworkPolicyFields: SandIamFormField[] = [
   ...applicationContextFields(),
   field('allow_cidrs', 'json', {
     jsonArray: true,
-    defaultValue: '[]',
-    help: '允许网段，规范 IPv4/IPv6 CIDR，例如 10.20.0.0/24。每类最多 64 项。完整 CIDR 不进入默认列表。'
+    allowEmptyArray: true,
+    defaultValue: '',
+    help: '允许网段，规范 IPv4/IPv6 CIDR，例如 10.20.0.0/24。每类最多 64 项；留空不限制允许网段，仍检查拒绝网段。完整 CIDR 不进入默认列表。'
   }),
   field('deny_cidrs', 'json', {
     jsonArray: true,
-    defaultValue: '[]',
-    help: '拒绝网段优先于允许网段。启用后可能立即挡住当前登录来源。不要把自己的办公网填进拒绝列表后立刻保存。'
+    allowEmptyArray: true,
+    defaultValue: '',
+    help: '拒绝网段优先于允许网段；留空表示没有拒绝网段。启用后可能立即挡住当前登录来源。不要把自己的办公网填进拒绝列表后立刻保存。'
   }),
   statusField
 ]
@@ -810,7 +832,8 @@ export const apiResourceFields: SandIamFormField[] = [
   }),
   field('required_scope', 'text', {
     advanced: true,
-    help: '可选。使用 OAuth 时的最小范围。'
+    clearableToEmptyString: true,
+    help: '可选。使用 OAuth 时的最小范围；清空会移除此接口的最小 Scope 要求，其他授权校验仍然生效。'
   }),
   field('description', 'text', {
     advanced: true,

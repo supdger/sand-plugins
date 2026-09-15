@@ -19,7 +19,12 @@ final class SandIamManagementClient
         private readonly int $timeoutSeconds = 5,
         private readonly ?\Closure $transport = null,
     ) {
-        if ((!str_starts_with($baseUrl, 'https://') && !str_starts_with($baseUrl, 'http://127.0.0.1') && !str_starts_with($baseUrl, 'http://localhost')) || $timeoutSeconds < 1 || $timeoutSeconds > 30) {
+        $url = parse_url($baseUrl);
+        if ($url === false || empty($url['host']) || preg_match('/\s/', $baseUrl) || str_contains($baseUrl, '\\')
+            || isset($url['user']) || isset($url['query']) || isset($url['fragment'])
+            || !(($url['scheme'] ?? '') === 'https' || (($url['scheme'] ?? '') === 'http'
+                && in_array(strtolower($url['host']), ['localhost', '127.0.0.1', '[::1]'], true)))
+            || $timeoutSeconds < 1 || $timeoutSeconds > 30) {
             throw new SandIamException('SAND_IAM_SDK_INVALID_CONFIGURATION', '管理 API 地址必须使用 HTTPS；仅本机开发允许 HTTP', 0);
         }
     }

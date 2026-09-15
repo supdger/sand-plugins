@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onUnmounted, ref } from 'vue'
+  import { computed, onUnmounted, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import {
     describeRuntimeAuthError,
@@ -20,6 +20,20 @@
   const detailOpen = ref(false)
   const detailSession = ref<SandIamRuntimeSession | null>(null)
   const acting = ref(false)
+  let disposed = false
+  let tokenVersion = 0
+  let listVersion = 0
+
+  watch(accessToken, () => {
+    tokenVersion++
+    listVersion++
+    sessions.value = []
+    detailSession.value = null
+    detailOpen.value = false
+    requestError.value = null
+    lastRequestId.value = ''
+    viewState.value = 'idle'
+  }, { flush: 'sync' })
 
   const tokenReady = computed(() => accessToken.value.trim() !== '')
 
@@ -39,6 +53,12 @@
   }
 
   async function loadSessions(): Promise<void> {
+    if (disposed) return
+    const token = accessToken.value
+    const version = ++listVersion
+    const current = () => !disposed && version === listVersion && token === accessToken.value
+    detailSession.value = null
+    detailOpen.value = false
     if (!tokenReady.value) {
       viewState.value = 'error'
       requestError.value = describeRuntimeAuthError(
@@ -49,11 +69,13 @@
     viewState.value = 'loading'
     requestError.value = null
     try {
-      const result = await listSandIamRuntimeSessions(accessToken.value)
+      const result = await listSandIamRuntimeSessions(token)
+      if (!current()) return
       lastRequestId.value = result.requestId
       sessions.value = result.data
       viewState.value = result.data.length === 0 ? 'empty' : 'ready'
     } catch (error: unknown) {
+      if (!current()) return
       const described = describeRuntimeAuthError(error)
       requestError.value = described
       sessions.value = []
@@ -66,11 +88,20 @@
   }
 
   function openDetail(session: SandIamRuntimeSession): void {
+    if (disposed || viewState.value === 'loading' || !sessions.value.includes(session)) return
     detailSession.value = session
     detailOpen.value = true
   }
 
   async function revoke(session: SandIamRuntimeSession): Promise<void> {
+    if (disposed || acting.value || !tokenReady.value || viewState.value === 'loading' ||
+      !sessions.value.includes(session)) return
+    const token = accessToken.value
+    const version = tokenVersion
+    const query = listVersion
+    const current = () => !disposed && version === tokenVersion && token === accessToken.value
+    const validRow = () => current() && query === listVersion && sessions.value.includes(session)
+    acting.value = true
     const impact = session.current
       ? '这是当前访问凭据对应的会话。撤销后本页凭据立即失效，需要重新取得新的访问凭据。'
       : '撤销后该设备需要重新登录；当前令牌仍可用于继续查看其余会话。'
@@ -81,22 +112,28 @@
         cancelButtonText: '取消'
       })
     } catch {
+      acting.value = false
       return
     }
-    acting.value = true
+    if (!validRow()) {
+      acting.value = false
+      return
+    }
     requestError.value = null
     try {
-      const result = await revokeSandIamRuntimeSession(accessToken.value, session.id)
+      const result = await revokeSandIamRuntimeSession(token, session.id)
+      if (!current()) return
+      if (!session.current && !validRow()) return
       lastRequestId.value = result.requestId
       ElMessage.success('已撤销')
       if (session.current) {
-        sessions.value = []
-        viewState.value = 'empty'
         clearToken()
+        viewState.value = 'empty'
         return
       }
-      await loadSessions()
+      if (validRow()) await loadSessions()
     } catch (error: unknown) {
+      if (!validRow()) return
       const described = describeRuntimeAuthError(error)
       requestError.value = described
       if (described.http === 403) viewState.value = 'forbidden'
@@ -107,6 +144,8 @@
   }
 
   onUnmounted(() => {
+    disposed = true
+    listVersion++
     clearToken()
   })
 </script>
@@ -223,7 +262,7 @@
           <template #default="scope">
             <ElSpace>
               <ElButton size="small" @click="openDetail(scope.row)">详情</ElButton>
-              <ElButton size="small" type="warning" @click="revoke(scope.row)">撤销</ElButton>
+              <ElButton size="small" type="warning" :disabled="acting" @click="revoke(scope.row)">撤销</ElButton>
             </ElSpace>
           </template>
         </ElTableColumn>

@@ -87,36 +87,36 @@ $executorInstance = new PostgresLifecycleSqlExecutor();
 $success = new Release071RecordingPdo();
 $executorInstance->executeFile($update, $success);
 release071Assert(
-    '0.7.1 update executes through the real executor with one explicit transaction and no nesting',
+    '0.7.1 to 0.7.2 update executes through the real executor with one explicit transaction and no nesting',
     release071TransactionCommands($success->executed) === ['BEGIN', 'COMMIT']
 );
 
 $preflightFailure = new Release071RecordingPdo(
-    static fn (string $statement): bool => str_contains($statement, 'requires exact 001-037 ledger identities before executing 038')
+    static fn (string $statement): bool => str_contains($statement, 'requires exact 001-038 ledger identities before executing 039')
 );
 try {
     $executorInstance->executeFile($update, $preflightFailure);
     throw new RuntimeException('preflight failure was accepted');
 } catch (RuntimeException) {
     release071Assert(
-        'preflight failure rolls back before any 038 body statement executes',
+        'preflight failure rolls back before any 039 body statement executes',
         release071TransactionCommands($preflightFailure->executed) === ['BEGIN', 'ROLLBACK']
-        && !release071Contains($preflightFailure->executed, static fn (string $statement): bool => str_contains($statement, 'idx_sand_iam_auth_rate_limit_retention'))
+        && !release071Contains($preflightFailure->executed, static fn (string $statement): bool => str_contains($statement, 'ALTER COLUMN data_class'))
     );
 }
 
 $migrationFailure = new Release071RecordingPdo(
-    static fn (string $statement): bool => str_contains($statement, 'CREATE INDEX IF NOT EXISTS idx_sand_iam_auth_rate_limit_retention')
+    static fn (string $statement): bool => str_contains($statement, 'ALTER COLUMN data_class')
 );
 try {
     $executorInstance->executeFile($update, $migrationFailure);
-    throw new RuntimeException('038 failure was accepted');
+    throw new RuntimeException('039 failure was accepted');
 } catch (RuntimeException) {
     release071Assert(
-        '038 body failure rolls back the shared preflight and migration transaction',
+        '039 body failure rolls back the shared preflight and migration transaction',
         release071TransactionCommands($migrationFailure->executed) === ['BEGIN', 'ROLLBACK']
-        && release071Contains($migrationFailure->executed, static fn (string $statement): bool => str_contains($statement, 'requires exact 001-037 ledger identities before executing 038'))
+        && release071Contains($migrationFailure->executed, static fn (string $statement): bool => str_contains($statement, 'requires exact 001-038 ledger identities before executing 039'))
     );
 }
 
-echo "SandIAM 0.7.1 update transaction non-PG contract passed\n";
+echo "SandIAM 0.7.1 to 0.7.2 update transaction non-PG contract passed\n";

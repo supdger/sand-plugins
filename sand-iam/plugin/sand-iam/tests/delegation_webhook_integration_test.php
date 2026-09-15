@@ -168,13 +168,13 @@ t06Assert(WebhookDelivery::where('webhook_endpoint_id', (int) $endpoint->id)->wh
 t06Expect(static fn () => $service->enqueue((int) $applicationA->id, 'identity.updated', ['access_token' => 'must-not-leak'], 'evt_t06_sensitive_payload'), 'SAND_IAM_WEBHOOK_PAYLOAD_SENSITIVE');
 
 $first = $service->deliverBatch(10);
-t06Assert($first === ['claimed' => 1, 'delivered' => 0, 'retried' => 1, 'dead' => 0], 'temporary failure did not schedule a retry');
+t06Assert($first === ['claimed' => 1, 'delivered' => 0, 'retried' => 1, 'dead' => 0, 'lease_lost' => 0], 'temporary failure did not schedule a retry');
 $delivery = WebhookDelivery::where('event_id', $eventId)->find();
 t06Assert($delivery !== null && (int) $delivery->status === 1 && (int) $delivery->attempt_count === 1 && $delivery->response_digest === hash('sha256', 'temporary upstream failure'), 'retry state or response digest is incorrect');
 WebhookDelivery::where('id', (int) $delivery->id)->update(['next_attempt_time' => date('Y-m-d H:i:s', time() - 1)]);
 
 $second = $service->deliverBatch(10);
-t06Assert($second === ['claimed' => 1, 'delivered' => 1, 'retried' => 0, 'dead' => 0], 'retry did not deliver successfully');
+t06Assert($second === ['claimed' => 1, 'delivered' => 1, 'retried' => 0, 'dead' => 0, 'lease_lost' => 0], 'retry did not deliver successfully');
 t06Assert(count($fake->requests) === 2, 'fake receiver did not observe both attempts');
 $request = $fake->requests[1];
 $timestamp = $request['headers']['X-SandIAM-Timestamp'] ?? '';

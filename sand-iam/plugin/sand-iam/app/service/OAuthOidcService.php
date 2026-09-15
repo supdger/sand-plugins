@@ -290,8 +290,15 @@ final class OAuthOidcService
         $token = (string) ($payload['token'] ?? '');
         $record = $token === '' ? null : OAuthToken::where('token_hash', $this->hash('token:' . $token))->find();
         if ($record !== null && (int) $record->client_id === (int) $client->id && (int) $record->application_id === (int) $client->application_id) {
-            $this->revokeGrant((int) $record->grant_id);
-            $this->auditClient($client, 'oauth.revoke', 'succeeded', $requestId, ['known_token' => true]);
+            Db::startTrans();
+            try {
+                $this->revokeGrant((int) $record->grant_id);
+                $this->auditClient($client, 'oauth.revoke', 'succeeded', $requestId, ['known_token' => true]);
+                Db::commit();
+            } catch (\Throwable $exception) {
+                Db::rollback();
+                throw $exception;
+            }
             return;
         }
         // RFC 7009 intentionally returns success for an unknown token.
@@ -312,6 +319,8 @@ final class OAuthOidcService
             $this->auditClient($client, 'oauth.logout', 'denied', $requestId, ['reason' => 'post_logout_redirect_uri']);
             throw new ApiException('SAND_IAM_OIDC_POST_LOGOUT_REDIRECT_URI_INVALID', 400);
         }
+        $state = (string) ($payload['state'] ?? '');
+        if ($state !== '' && (strlen($state) > 1024 || preg_match('/[\x00-\x1f\x7f]/', $state))) throw new ApiException('SAND_IAM_OIDC_LOGOUT_STATE_INVALID', 400);
         $idRecord = OAuthToken::where('token_hash', $this->hash('token:' . $hint))->where('token_type', 'id')->where('token_id', (string) ($claims['jti'] ?? ''))->where('client_id', (int) $client->id)->where('status', 1)->find();
         $grant = $idRecord === null ? null : OAuthGrant::where('id', (int) $idRecord->grant_id)->where('application_id', (int) $client->application_id)->where('client_id', (int) $client->id)->find();
         $session = $grant === null ? null : AuthSession::where('id', (int) $grant->auth_session_id)->where('application_id', (int) $client->application_id)->where('identity_id', (int) $grant->identity_id)->find();
@@ -332,14 +341,14 @@ final class OAuthOidcService
                     $session->save(['status' => 2, 'revoked_time' => $this->now()]);
                     AuthRefreshToken::where('session_id', (int) $session->id)->where('status', 1)->update(['status' => 2, 'revoked_time' => $this->now()]);
                 }
+                $this->auditClient($client, 'oauth.logout', 'succeeded', $requestId, ['frontchannel_count' => count($frontchannelUris), 'backchannel_count' => $backchannelCount]);
                 Db::commit();
             } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
+        } else {
+            $this->auditClient($client, 'oauth.logout', 'succeeded', $requestId, ['frontchannel_count' => 0, 'backchannel_count' => 0]);
         }
-        $this->auditClient($client, 'oauth.logout', 'succeeded', $requestId, ['frontchannel_count' => count($frontchannelUris), 'backchannel_count' => $backchannelCount]);
         $frontchannelUris = array_values(array_unique($frontchannelUris));
         if ($postLogout === '' && $frontchannelUris === []) return null;
-        $state = (string) ($payload['state'] ?? '');
-        if ($state !== '' && (strlen($state) > 1024 || preg_match('/[\x00-\x1f\x7f]/', $state))) throw new ApiException('SAND_IAM_OIDC_LOGOUT_STATE_INVALID', 400);
         $redirectUri = $postLogout === '' ? null : ($state === '' ? $postLogout : $this->appendQuery($postLogout, ['state' => $state]));
         return ['redirect_uri' => $redirectUri, 'frontchannel_uris' => $frontchannelUris];
     }
@@ -457,12 +466,12 @@ final class OAuthOidcService
             $grant = OAuthGrant::create(['application_id' => (int) $client->application_id, 'client_id' => (int) $client->id, 'identity_id' => (int) $identity->id, 'auth_session_id' => (int) $session->id, 'grant_type' => 'authorization_code', 'scope' => (string) $code->scope, 'auth_time' => (string) $code->auth_time, 'status' => 1]);
             $response = $this->issueUserTokens($client, $grant, $identity, $session, $code->encrypted_nonce === null ? null : $this->decryptNonce((string) $code->encrypted_nonce));
             $code->save(['consumed_time' => $this->now(), 'status' => 2]);
+            $this->auditClient($client, 'oauth.token_exchange', 'succeeded', $requestId, ['grant_type' => 'authorization_code']);
             Db::commit();
         } catch (\Throwable $exception) {
             Db::rollback();
             throw $exception;
         }
-        $this->auditClient($client, 'oauth.token_exchange', 'succeeded', $requestId, ['grant_type' => 'authorization_code']);
         return $response;
     }
 
@@ -474,9 +483,14 @@ final class OAuthOidcService
         if ($value === '') throw new ApiException('SAND_IAM_OAUTH_INVALID_GRANT', 400);
         Db::startTrans();
         try {
-            $token = OAuthToken::where('token_hash', $this->hash('token:' . $value))->where('application_id', (int) $client->application_id)->where('client_id', (int) $client->id)->where('token_type', 'refresh')->lock(true)->find();
+            $token = OAuthToken::where('token_hash', $this->hash('token:' . $value))->where('application_id', (int) $client->application_id)->where('client_id', (int) $client->id)->where('token_type', 'refresh')->find();
             if ($token === null) throw new ApiException('SAND_IAM_OAUTH_INVALID_GRANT', 400);
+            // Revocation locks the grant before its tokens; refresh must match.
             $grant = OAuthGrant::where('id', (int) $token->grant_id)->where('application_id', (int) $client->application_id)->lock(true)->find();
+            $token = OAuthToken::where('id', (int) $token->id)->where('grant_id', (int) $token->grant_id)
+                ->where('token_hash', $this->hash('token:' . $value))->where('application_id', (int) $client->application_id)
+                ->where('client_id', (int) $client->id)->where('token_type', 'refresh')->lock(true)->find();
+            if ($token === null) throw new ApiException('SAND_IAM_OAUTH_INVALID_GRANT', 400);
             if ($grant === null || (int) $token->status !== 1 || $token->used_time !== null || $token->revoked_time !== null || $this->expired($token->expire_time) || (int) $grant->status !== 1 || $grant->revoked_time !== null) {
                 if ($grant !== null) $this->revokeGrant((int) $grant->id);
                 Db::commit();
@@ -488,6 +502,7 @@ final class OAuthOidcService
             if ($identity === null || $session === null || $session->revoked_time !== null) throw new ApiException('SAND_IAM_OAUTH_INVALID_GRANT', 400);
             $token->save(['used_time' => $this->now(), 'status' => 2]);
             $response = $this->issueUserTokens($client, $grant, $identity, $session, null);
+            $this->auditClient($client, 'oauth.refresh', 'succeeded', $requestId, []);
             Db::commit();
         } catch (ApiException $exception) {
             if ($exception->getMessage() === 'SAND_IAM_OAUTH_REFRESH_REPLAY_DETECTED') throw $exception;
@@ -497,7 +512,6 @@ final class OAuthOidcService
             Db::rollback();
             throw $exception;
         }
-        $this->auditClient($client, 'oauth.refresh', 'succeeded', $requestId, []);
         return $response;
     }
 
@@ -508,12 +522,19 @@ final class OAuthOidcService
         if ((string) $client->client_type !== 'confidential') throw new ApiException('SAND_IAM_OAUTH_UNAUTHORIZED_CLIENT', 400);
         $scopes = $this->scopes((string) ($payload['scope'] ?? ''), $client, false);
         if (in_array('openid', $scopes, true) || in_array('offline_access', $scopes, true)) throw new ApiException('SAND_IAM_OAUTH_INVALID_SCOPE', 400);
-        $grant = OAuthGrant::create(['application_id' => (int) $client->application_id, 'client_id' => (int) $client->id, 'grant_type' => 'client_credentials', 'scope' => implode(' ', $scopes), 'status' => 1]);
         $audience = $this->clientCredentialsAudience($client, (string) ($payload['audience'] ?? ''));
-        $claims = array_merge($this->baseClaims($client, $grant, null, self::CLIENT_ACCESS_TTL, 'access_token', $audience), ['sub' => 'client:' . $client->code]);
-        $access = $this->jwt($claims, 'at+jwt');
-        $this->recordToken($client, $grant, null, 'access', $access, (string) $claims['jti'], (string) $claims['scope'], (int) $claims['exp']);
-        $this->auditClient($client, 'oauth.client_credentials', 'succeeded', $requestId, ['scope' => $scopes]);
+        Db::startTrans();
+        try {
+            $grant = OAuthGrant::create(['application_id' => (int) $client->application_id, 'client_id' => (int) $client->id, 'grant_type' => 'client_credentials', 'scope' => implode(' ', $scopes), 'status' => 1]);
+            $claims = array_merge($this->baseClaims($client, $grant, null, self::CLIENT_ACCESS_TTL, 'access_token', $audience), ['sub' => 'client:' . $client->code]);
+            $access = $this->jwt($claims, 'at+jwt');
+            $this->recordToken($client, $grant, null, 'access', $access, (string) $claims['jti'], (string) $claims['scope'], (int) $claims['exp']);
+            $this->auditClient($client, 'oauth.client_credentials', 'succeeded', $requestId, ['scope' => $scopes]);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
         return ['access_token' => $access, 'token_type' => 'Bearer', 'expires_in' => self::CLIENT_ACCESS_TTL, 'scope' => implode(' ', $scopes)];
     }
 
@@ -573,6 +594,10 @@ final class OAuthOidcService
             if (($claims['sub'] ?? '') !== 'client:' . (string) $client->code || ($claims['identity_id'] ?? null) !== null) throw new ApiException('SAND_IAM_OAUTH_TOKEN_INVALID', 401);
         } else {
             if ((int) ($claims['identity_id'] ?? 0) !== (int) $grant->identity_id || ($claims['sub'] ?? '') !== $this->subject((int) $client->application_id, (int) $grant->identity_id)) throw new ApiException('SAND_IAM_OAUTH_TOKEN_INVALID', 401);
+            $identity = Identity::where('id', (int) $grant->identity_id)->where('application_id', (int) $client->application_id)->where('status', 1)->find();
+            $session = AuthSession::where('id', (int) $grant->auth_session_id)->where('application_id', (int) $client->application_id)
+                ->where('identity_id', (int) $grant->identity_id)->where('status', 1)->whereNull('revoked_time')->find();
+            if ($identity === null || $session === null) throw new ApiException('SAND_IAM_OAUTH_TOKEN_INVALID', 401);
         }
         return $claims;
     }

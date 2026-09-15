@@ -120,9 +120,9 @@ Endurance v2 已按 `write-gate begin --replace` 归档 checkpoint：v1 审计 *
 
 ### 6.1 当前阻断与独立待办
 
-- **静态复验：** 当前 0.7.1 未提交实现已获 Astra ACCEPT；through037 精确 preflight→原038，`001–038` 不变、无039，normal 包不含旧 recovery descriptor；safe **114**、PHP lint **507**、包内 **24/24**、发布卫生 **11/14**。interim ZIP 的 `38392c9a…`/634 entries/`07b932…` 仅为文档审阅前摘要。
+- **静态复验：** 当前 0.7.2 未提交源码已完成 `0.7.1 → 0.7.2` 精确 preflight→039，既有 `001–038` 不变；PHP 非数据库测试 **177/177**、Dart **62/62**、发布卫生 **16/16**、包完整性 **25/26**。唯一包失败项是工作树尚未形成 clean tracked HEAD，不能据此生成正式来源候选；历史 interim ZIP 继续仅作历史摘要。
 - **动态 PostgreSQL：** 当前只读状态为 86 tables、迁移账本 38 rows、max revision 37、无038；runtime `state=1/stage=completed` 使 C 不适用。尚未完成隔离安装、升级、卸载或正常 SandPackage 生命周期，不能声称当前生命周期通过。
-- **产品端：** 当前 0.7.1 仅有静态包证据；演示宿主尚未重新 apply，旧实现记录和旧浏览器截图都不是当前宿主验收。这里不再把旧调度开关、监视进程或登录页观察写成当前状态。
+- **产品端：** 当前演示宿主仍是 0.7.1 插件载荷；SandAdmin 后台前端依赖已修复并可启动，但 0.7.2 尚未受控同步或安装，因此该运行状态不能作为 0.7.2 宿主验收。旧实现记录和旧浏览器截图同样不计当前候选证据。
 - **宿主恢复：** runtime `state=1/stage=completed`，C 失败升级 recovery 不适用；只读 DB 为 86 tables、迁移账本 38 rows、max revision 37、无 038。D/E/H–L 未执行，候选替换、重试、数据库生命周期、浏览器、七链和部署均未通过，G 未授权。
 
 卡密签发、商业许可和设备激活继续归独立 SandLicense，边界见[终极产品目标](../product/sand-iam-terminal-product-goal.md)。

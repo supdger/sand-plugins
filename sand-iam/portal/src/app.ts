@@ -8,6 +8,7 @@ import {
   type SandIamPublicExperience,
 } from "./experienceContracts";
 import { connectionAvailable } from "./meContracts";
+import { CaptchaWidget, type CaptchaStatus } from "./captchaWidget";
 import { casRequestLooksValid } from "./casContracts";
 import type { SandIamCasInteraction } from "./casContracts";
 import { oauthRequestLooksValid, type SandIamOAuthBoundInteraction, type SandIamOAuthInteraction } from "./oauthContracts";
@@ -30,6 +31,8 @@ import {
   loadPortalSessions,
   loadOAuthInteraction,
   loadPublicExperience,
+  logoutPortalSession,
+  loadPortalCaptchaConfiguration,
   portalAcceptInvitation,
   portalForgotPassword,
   portalLogin,
@@ -88,6 +91,184 @@ interface PortalState {
 
 const params = new URLSearchParams(window.location.search);
 
+interface RecoveryDraft {
+  organization: string;
+  application: string;
+  identifier: string;
+  channel: "email" | "phone";
+  busy: boolean;
+}
+let recovery: RecoveryDraft | null = null;
+interface SecurityOperation { token: string; submission: number }
+let securityOperation: SecurityOperation | null = null;
+let pendingTotp: (SecurityOperation & { factorId: number }) | null = null;
+
+function securityCurrent(operation: SecurityOperation): boolean {
+  return operation.token === state.accessToken && operation.submission === authSubmission;
+}
+
+function beginSecurityOperation(): SecurityOperation | null {
+  if (state.accessToken === "" || (securityOperation !== null && securityCurrent(securityOperation))) return null;
+  securityOperation = { token: state.accessToken, submission: authSubmission };
+  updateDecisionButtons();
+  return securityOperation;
+}
+
+function updateDecisionButtons(): void {
+  const busy = securityOperation !== null && securityCurrent(securityOperation);
+  for (const id of ["confirm-cas", "reject-cas", "approve-oauth", "deny-oauth", "logout-btn"]) {
+    const button = document.getElementById(id);
+    if (button instanceof HTMLButtonElement) button.disabled = busy;
+  }
+}
+
+function finishSecurityOperation(operation: SecurityOperation): void {
+  if (securityOperation === operation) securityOperation = null;
+  if (securityCurrent(operation)) render();
+}
+
+function recoveryDraft(): RecoveryDraft {
+  if (recovery === null || recovery.organization !== state.organizationCode
+    || recovery.application !== state.applicationCode) {
+    recovery = { organization: state.organizationCode, application: state.applicationCode,
+      identifier: "", channel: "email", busy: false };
+  }
+  return recovery;
+}
+
+type CaptchaAction = "login" | "register";
+interface PortalCaptcha {
+  widget: CaptchaWidget | null;
+  ready: boolean;
+  optional: boolean;
+  attempt: number;
+  organization: string;
+  application: string;
+}
+const captchas: Record<CaptchaAction, PortalCaptcha> = {
+  login: { widget: null, ready: false, optional: false, attempt: 0, organization: "", application: "" },
+  register: { widget: null, ready: false, optional: false, attempt: 0, organization: "", application: "" },
+};
+let captchaGeneration = 0;
+let authBusy = false;
+let authSubmission = 0;
+interface LoginAttempt { organization: string; application: string; submission: number }
+
+function loginCurrent(attempt: LoginAttempt): boolean {
+  return attempt.submission === authSubmission && attempt.organization === state.organizationCode
+    && attempt.application === state.applicationCode;
+}
+
+function beginAlternativeLogin(): LoginAttempt | null {
+  if (authBusy) return null;
+  authBusy = true;
+  const attempt = { organization: state.organizationCode, application: state.applicationCode,
+    submission: ++authSubmission };
+  updateCaptchaButton("login");
+  updateCaptchaButton("register");
+  return attempt;
+}
+
+function finishAlternativeLogin(attempt: LoginAttempt): void {
+  if (attempt.submission !== authSubmission) return;
+  authBusy = false;
+  updateCaptchaButton("login");
+  updateCaptchaButton("register");
+  if (loginCurrent(attempt)) render();
+}
+
+function updateCaptchaButton(action: CaptchaAction): void {
+  const button = document.getElementById(`${action}-btn`);
+  if (button instanceof HTMLButtonElement) button.disabled = authBusy || !captchas[action].ready;
+  const retry = document.getElementById(`${action}-captcha-retry`);
+  if (retry instanceof HTMLButtonElement) retry.disabled = authBusy;
+  if (action === "login") {
+    for (const id of ["passkey-login-btn", "mfa-login-btn", "mfa-passkey-btn"]) {
+      const button = document.getElementById(id);
+      if (button instanceof HTMLButtonElement) button.disabled = authBusy;
+    }
+  }
+}
+
+function clearCaptchas(): void {
+  captchaGeneration += 1;
+  for (const action of ["login", "register"] as const) {
+    captchas[action].widget?.destroy();
+    captchas[action] = { widget: null, ready: false, optional: false, attempt: 0, organization: "", application: "" };
+  }
+}
+
+function renderCaptcha(action: CaptchaAction): string {
+  return `<div id="${action}-captcha-widget"></div>
+    <p id="${action}-captcha-status" role="status" aria-live="polite">正在读取人机验证配置…</p>
+    <button type="button" id="${action}-captcha-retry" hidden>重新验证</button>`;
+}
+
+async function mountCaptcha(action: CaptchaAction): Promise<void> {
+  const container = document.getElementById(`${action}-captcha-widget`);
+  const status = document.getElementById(`${action}-captcha-status`);
+  const retry = document.getElementById(`${action}-captcha-retry`);
+  if (container === null || status === null || !(retry instanceof HTMLButtonElement)) return;
+  const generation = captchaGeneration;
+  const attempt = ++captchas[action].attempt;
+  const organization = state.organizationCode;
+  const application = state.applicationCode;
+  const current = (): boolean => generation === captchaGeneration
+    && attempt === captchas[action].attempt
+    && organization === state.organizationCode && application === state.applicationCode;
+  const show = (text: string, ready: boolean, retryable: boolean): void => {
+    if (!current()) return;
+    status.textContent = text;
+    captchas[action].ready = ready;
+    retry.hidden = !retryable;
+    retry.disabled = authBusy;
+    updateCaptchaButton(action);
+  };
+  const messages: Record<CaptchaStatus, string> = {
+    loading: "正在加载人机验证…", waiting: "请完成人机验证", verified: "人机验证已完成",
+    expired: "验证已过期，请重新验证。", error: "人机验证失败，请重试。",
+    destroyed: "请重新完成人机验证。",
+  };
+  captchas[action].widget?.destroy();
+  captchas[action] = { widget: null, ready: false, optional: false, attempt, organization, application };
+  show("正在读取人机验证配置…", false, false);
+  retry.onclick = () => { if (!authBusy) void mountCaptcha(action); };
+  try {
+    const result = await loadPortalCaptchaConfiguration(organization, application, action);
+    if (!current()) return;
+    if (!result.data.required) {
+      captchas[action].optional = true;
+      show("当前无需人机验证。", true, false);
+    } else if (!result.data.available) {
+      show("人机验证服务暂不可用，请稍后重试或联系管理员。", false, true);
+    } else {
+      const widget = new CaptchaWidget(container, (value) => {
+        show(messages[value], value === "verified", value === "expired" || value === "error" || value === "destroyed");
+      });
+      captchas[action].widget = widget;
+      await widget.mount(result.data.widget);
+    }
+  } catch (error: unknown) {
+    show(error instanceof Error ? error.message : "人机验证配置加载失败，请重试。", false, true);
+  }
+}
+
+function takeCaptcha(action: CaptchaAction): string | null {
+  if (authBusy || !captchas[action].ready) return null;
+  if (captchas[action].organization !== state.organizationCode
+    || captchas[action].application !== state.applicationCode) return null;
+  authBusy = true;
+  updateCaptchaButton("login");
+  updateCaptchaButton("register");
+  if (captchas[action].optional) return "";
+  const token = captchas[action].widget?.takeToken() ?? "";
+  if (token !== "") return token;
+  authBusy = false;
+  updateCaptchaButton("login");
+  updateCaptchaButton("register");
+  return null;
+}
+
 /**
  * 邀请 token 只留内存。从 URL 读出后立刻去掉 query，避免进入历史和后续日志。
  */
@@ -123,6 +304,14 @@ function takeSensitiveQuery(name: string): string {
 const federationCallback = takeFederationCallback();
 let invitationToken = takeInvitationToken();
 let invitationAcceptedName = "";
+let invitationUsername = "";
+let invitationDisplayName = "";
+interface InvitationAttempt extends LoginAttempt { token: string; accessToken: string }
+let acceptingInvitation: InvitationAttempt | null = null;
+
+function invitationCurrent(attempt: InvitationAttempt): boolean {
+  return loginCurrent(attempt) && attempt.token === invitationToken && attempt.accessToken === state.accessToken;
+}
 let casRequest = takeSensitiveQuery("cas_request") || takeSensitiveQuery("request");
 let oauthRequest = takeSensitiveQuery("oauth_request");
 
@@ -150,6 +339,7 @@ const state: PortalState = {
 
 interface FederationReturnContext {
   readonly providerCode: string;
+  readonly organizationCode: string;
   readonly applicationCode: string;
   readonly returnUri: string;
   readonly verifier: string;
@@ -229,6 +419,7 @@ function takeFederationContext(stateKey: string): FederationReturnContext | null
     }
     return {
       providerCode: parsed.providerCode,
+      organizationCode: typeof parsed.organizationCode === "string" ? parsed.organizationCode : "",
       applicationCode: parsed.applicationCode,
       returnUri: parsed.returnUri,
       verifier: parsed.verifier,
@@ -285,7 +476,10 @@ function rememberRequest(requestId: string): void {
 /**
  * 先读后端 interaction，再允许确认。管理端登录不能代替应用用户 Bearer。
  */
-async function loadCas(): Promise<void> {
+async function loadCas(attempt?: LoginAttempt): Promise<void> {
+  const submission = authSubmission;
+  const request = casRequest;
+  const current = (): boolean => submission === authSubmission && request === casRequest;
   if (!casRequestLooksValid(casRequest)) {
     state.errorTitle = "CAS 请求未被接受";
     state.errorDetail = "缺少有效确认请求。请从应用重新发起，不要手填 request。";
@@ -295,17 +489,25 @@ async function loadCas(): Promise<void> {
   }
   clearError();
   try {
-    const result = await loadCasInteraction(casRequest);
+    const result = await loadCasInteraction(request);
+    if (!current()) return;
+    if (attempt !== undefined && (attempt.application !== result.data.applicationCode
+      || (attempt.organization !== "" && attempt.organization !== result.data.organizationCode))) {
+      throw new Error("应用登录请求与本次外部登录不匹配。");
+    }
     rememberRequest(result.requestId);
     state.cas = result.data;
     state.organizationCode = result.data.organizationCode;
     state.applicationCode = result.data.applicationCode;
+    if (attempt !== undefined) attempt.organization = result.data.organizationCode;
     try {
       const experience = await loadPublicExperience(state.organizationCode, state.applicationCode);
+      if (!current()) return;
       rememberRequest(experience.requestId);
       state.experience = experience.data;
       clearDefaultExperience();
     } catch (experienceError: unknown) {
+      if (!current()) return;
       if (isInteractionExperienceUnavailable(experienceError)) {
         useDefaultExperience();
       } else {
@@ -315,6 +517,7 @@ async function loadCas(): Promise<void> {
       }
     }
   } catch (error: unknown) {
+    if (!current()) return;
     setError(error);
     state.cas = null;
   }
@@ -337,14 +540,23 @@ async function submitCasConfirm(): Promise<void> {
     render();
     return;
   }
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
+  const request = casRequest;
+  const current = (): boolean => securityCurrent(operation) && request === casRequest;
+  let redirected = false;
   clearError();
   try {
-    const result = await confirmCasInteraction(state.accessToken, casRequest);
+    const result = await confirmCasInteraction(operation.token, request);
+    if (!current()) return;
     rememberRequest(result.requestId);
     window.location.assign(result.data.redirectUri);
+    redirected = true;
   } catch (error: unknown) {
+    if (!current()) return;
     setError(error);
-    render();
+  } finally {
+    if (!redirected) finishSecurityOperation(operation);
   }
 }
 
@@ -355,35 +567,55 @@ async function submitCasReject(): Promise<void> {
     render();
     return;
   }
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
+  const request = casRequest;
+  const current = (): boolean => securityCurrent(operation) && request === casRequest;
+  let redirected = false;
   clearError();
   try {
-    const result = await rejectCasInteraction(state.accessToken, casRequest);
+    const result = await rejectCasInteraction(operation.token, request);
+    if (!current()) return;
     rememberRequest(result.requestId);
     window.location.assign(result.data.redirectUri);
+    redirected = true;
   } catch (error: unknown) {
+    if (!current()) return;
     setError(error);
-    render();
+  } finally {
+    if (!redirected) finishSecurityOperation(operation);
   }
 }
 
-async function loadOAuth(): Promise<void> {
+async function loadOAuth(attempt?: LoginAttempt): Promise<void> {
+  const submission = authSubmission;
+  const request = oauthRequest;
+  const current = (): boolean => submission === authSubmission && request === oauthRequest;
   if (!oauthRequestLooksValid(oauthRequest)) {
     state.oauth = null;
     return;
   }
   clearError();
   try {
-    const result = await loadOAuthInteraction(oauthRequest);
+    const result = await loadOAuthInteraction(request);
+    if (!current()) return;
+    if (attempt !== undefined && (attempt.application !== result.data.applicationCode
+      || (attempt.organization !== "" && attempt.organization !== result.data.organizationCode))) {
+      throw new Error("应用授权请求与本次外部登录不匹配。");
+    }
     rememberRequest(result.requestId);
     state.oauth = result.data;
     state.organizationCode = result.data.organizationCode;
     state.applicationCode = result.data.applicationCode;
+    if (attempt !== undefined) attempt.organization = result.data.organizationCode;
     try {
       const experience = await loadPublicExperience(state.organizationCode, state.applicationCode);
+      if (!current()) return;
       rememberRequest(experience.requestId);
       state.experience = experience.data;
       clearDefaultExperience();
     } catch (experienceError: unknown) {
+      if (!current()) return;
       if (isInteractionExperienceUnavailable(experienceError)) {
         useDefaultExperience();
       } else {
@@ -393,6 +625,7 @@ async function loadOAuth(): Promise<void> {
       }
     }
   } catch (error: unknown) {
+    if (!current()) return;
     setError(error);
     state.oauth = null;
   }
@@ -400,12 +633,16 @@ async function loadOAuth(): Promise<void> {
 }
 
 async function bindOAuthAfterLogin(): Promise<void> {
+  const submission = authSubmission;
+  const accessToken = state.accessToken;
   if (state.accessToken === "" || !oauthRequestLooksValid(oauthRequest)) return;
   try {
     const result = await bindOAuthInteraction(state.accessToken, oauthRequest);
+    if (submission !== authSubmission || accessToken !== state.accessToken) return;
     rememberRequest(result.requestId);
     state.oauthBound = result.data;
   } catch (error: unknown) {
+    if (submission !== authSubmission || accessToken !== state.accessToken) return;
     setError(error);
     state.oauthBound = null;
   }
@@ -418,36 +655,66 @@ async function submitOAuthDecision(decision: "approve" | "deny"): Promise<void> 
     render();
     return;
   }
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
+  const request = oauthRequest;
+  const bound = state.oauthBound;
+  const current = (): boolean => securityCurrent(operation) && request === oauthRequest && bound === state.oauthBound;
+  let redirected = false;
   clearError();
   try {
     const result = await decideOAuthInteraction(
-      state.accessToken,
-      oauthRequest,
-      state.oauthBound.csrfToken,
+      operation.token,
+      request,
+      bound.csrfToken,
       decision,
     );
+    if (!current()) return;
     rememberRequest(result.requestId);
     window.location.assign(result.data.redirectUri);
+    redirected = true;
   } catch (error: unknown) {
+    if (!current()) return;
     setError(error);
-    render();
+  } finally {
+    if (!redirected) finishSecurityOperation(operation);
   }
 }
 
 async function loadExperience(): Promise<void> {
+  pendingTotp = null;
+  securityOperation = null;
+  recovery = null;
+  authSubmission += 1;
+  authBusy = false;
+  clearCaptchas();
   state.verification = null;
   state.organizationCode = inputValue("organization-code") || state.organizationCode;
   state.applicationCode = inputValue("application-code") || state.applicationCode;
+  state.accessToken = "";
+  state.profile = null;
+  state.security = null;
+  state.sessions = [];
+  state.factors = [];
+  state.connections = [];
+  state.pendingMfa = null;
+  state.oauthBound = null;
+  state.recoveryCodes = [];
+  const submission = authSubmission;
+  state.experience = null;
   clearError();
+  render();
   try {
     const result = await loadPublicExperience(
       state.organizationCode,
       state.applicationCode,
     );
+    if (submission !== authSubmission) return;
     rememberRequest(result.requestId);
     state.experience = result.data;
     clearDefaultExperience();
   } catch (error: unknown) {
+    if (submission !== authSubmission) return;
     setError(error);
     state.experience = null;
     clearDefaultExperience();
@@ -456,12 +723,16 @@ async function loadExperience(): Promise<void> {
 }
 
 async function submitLogin(): Promise<void> {
+  if (authBusy) return;
   if (state.experience === null || !experienceAllowsPassword(state.experience)) {
     state.errorTitle = "该登录方式已关闭";
     state.errorDetail = "当前外观未启用密码登录，页面不会提交。";
     render();
     return;
   }
+  const captcha = takeCaptcha("login");
+  if (captcha === null) return;
+  const submission = ++authSubmission;
   clearError();
   const identifier = inputValue("login-identifier");
   const organization = state.organizationCode;
@@ -472,8 +743,9 @@ async function submitLogin(): Promise<void> {
       state.applicationCode,
       identifier,
       inputValue("login-password"),
-      inputValue("login-captcha"),
+      captcha,
     );
+    if (submission !== authSubmission || organization !== state.organizationCode || application !== state.applicationCode) return;
     rememberRequest(result.requestId);
     if (result.data.verificationRequired) {
       openVerification(identifier, organization, application);
@@ -489,21 +761,33 @@ async function submitLogin(): Promise<void> {
     }
     state.accessToken = result.data.accessToken;
     await loadAll();
+    if (submission !== authSubmission) return;
     await bindOAuthAfterLogin();
+    if (submission !== authSubmission) return;
     render();
   } catch (error: unknown) {
+    if (submission !== authSubmission || organization !== state.organizationCode || application !== state.applicationCode) return;
     if (error instanceof Error && error.message.includes("SAND_IAM_AUTH_VERIFICATION_REQUIRED")) {
       openVerification(identifier, organization, application);
     } else {
       setError(error);
     }
     render();
+  } finally {
+    if (submission === authSubmission) {
+      authBusy = false;
+      updateCaptchaButton("login");
+      updateCaptchaButton("register");
+    }
   }
 }
 
 async function completePrimaryLogin(
   outcome: Awaited<ReturnType<typeof finishPortalPasskeyLogin>>["data"],
+  attempt: LoginAttempt = { organization: state.organizationCode, application: state.applicationCode,
+    submission: authSubmission },
 ): Promise<void> {
+  if (!loginCurrent(attempt)) return;
   if (outcome.verificationRequired) {
     state.errorTitle = "还需要完成验证";
     state.errorDetail = "账号已识别，但还不能签发会话。请先完成邮箱或手机验证。";
@@ -515,76 +799,108 @@ async function completePrimaryLogin(
     state.errorDetail = "请选择已经设置的验证方式后继续。";
     return;
   }
+  state.pendingMfa = null;
   state.accessToken = outcome.accessToken;
   await loadAll();
+  if (!loginCurrent(attempt)) return;
   await bindOAuthAfterLogin();
+  if (!loginCurrent(attempt)) return;
 }
 
 async function submitPasskeyLogin(): Promise<void> {
+  if (authBusy) return;
   if (state.experience === null || !experienceAllowsPasskey(state.experience)) {
     state.errorTitle = "该登录方式已关闭";
     state.errorDetail = "当前应用没有启用通行密钥登录。";
     render();
     return;
   }
+  const attempt = beginAlternativeLogin();
+  if (attempt === null) return;
   clearError();
   try {
-    const started = await startPortalPasskeyLogin(state.organizationCode, state.applicationCode);
+    const started = await startPortalPasskeyLogin(attempt.organization, attempt.application);
+    if (!loginCurrent(attempt)) return;
     rememberRequest(started.requestId);
     const options = parsePasskeyAssertionOptions(started.data.publicKey);
     if (options === null) throw new Error("通行密钥登录信息不完整。");
     const assertion = await getPasskeyAssertion(options);
+    if (!loginCurrent(attempt)) return;
     const completed = await finishPortalPasskeyLogin(
-      state.organizationCode,
-      state.applicationCode,
+      attempt.organization,
+      attempt.application,
       started.data.challengeToken,
       assertion,
     );
+    if (!loginCurrent(attempt)) return;
     rememberRequest(completed.requestId);
-    await completePrimaryLogin(completed.data);
+    await completePrimaryLogin(completed.data, attempt);
   } catch (error: unknown) {
+    if (!loginCurrent(attempt)) return;
     setError(error);
+  } finally {
+    finishAlternativeLogin(attempt);
   }
-  render();
 }
 
 async function startExternalLogin(
   protocol: "oidc" | "oauth2" | "saml",
   providerCode: string,
 ): Promise<void> {
-  if (state.experience === null) return;
+  if (state.experience === null || authBusy) return;
+  const attempt = beginAlternativeLogin();
+  if (attempt === null) return;
+  const originalOAuthRequest = oauthRequest;
+  const originalCasRequest = casRequest;
+  let storedKey: string | null = null;
+  let redirected = false;
   clearError();
   try {
     const returnUri = currentPortalReturnUri();
     const stateKey = `fhr_${randomBase64Url(32)}`;
     const verifier = randomBase64Url(32);
     const challenge = await handoffChallenge(verifier);
+    if (!loginCurrent(attempt)) return;
     saveFederationContext(stateKey, {
       providerCode,
-      applicationCode: state.applicationCode,
+      organizationCode: attempt.organization,
+      applicationCode: attempt.application,
       returnUri,
       verifier,
-      oauthRequest,
-      casRequest,
+      oauthRequest: originalOAuthRequest,
+      casRequest: originalCasRequest,
     });
+    storedKey = stateKey;
     const started = await startPortalFederationLogin(
       protocol,
       providerCode,
-      state.applicationCode,
+      attempt.application,
       returnUri,
       stateKey,
       challenge,
     );
+    if (!loginCurrent(attempt)) return;
     rememberRequest(started.requestId);
     window.location.assign(started.data.redirectUri);
+    redirected = true;
   } catch (error: unknown) {
+    if (!loginCurrent(attempt)) return;
     setError(error);
-    render();
+  } finally {
+    if (!redirected) {
+      if (storedKey !== null) {
+        try { sessionStorage.removeItem(`${federationStoragePrefix}${storedKey}`); }
+        catch {
+          if (loginCurrent(attempt)) setError(new Error("浏览器未能清除本次外部登录确认信息，请关闭当前标签页后重试。"));
+        }
+      }
+      finishAlternativeLogin(attempt);
+    }
   }
 }
 
 async function completeFederationCallback(): Promise<void> {
-  if (federationCallback === null) return;
+  if (federationCallback === null || authBusy) return;
   const context = takeFederationContext(federationCallback.state);
   if (context === null) {
     state.errorTitle = "外部登录未完成";
@@ -592,6 +908,10 @@ async function completeFederationCallback(): Promise<void> {
     render();
     return;
   }
+  state.organizationCode = context.organizationCode;
+  state.applicationCode = context.applicationCode;
+  const attempt = beginAlternativeLogin();
+  if (attempt === null) return;
   clearError();
   try {
     const completed = await exchangePortalFederationHandoff(
@@ -601,26 +921,40 @@ async function completeFederationCallback(): Promise<void> {
       context.returnUri,
       context.verifier,
     );
+    if (!loginCurrent(attempt)) return;
     rememberRequest(completed.requestId);
     oauthRequest = context.oauthRequest;
     casRequest = context.casRequest;
-    state.applicationCode = context.applicationCode;
-    if (oauthRequestLooksValid(oauthRequest)) await loadOAuth();
-    if (casRequestLooksValid(casRequest)) await loadCas();
-    await completePrimaryLogin(completed.data);
+    if (oauthRequestLooksValid(oauthRequest)) {
+      await loadOAuth(attempt);
+      if (!loginCurrent(attempt)) return;
+      if (state.oauth === null) throw new Error("应用授权请求无法恢复，请从应用重新发起登录。");
+    }
+    if (casRequestLooksValid(casRequest)) {
+      await loadCas(attempt);
+      if (!loginCurrent(attempt)) return;
+      if (state.cas === null) throw new Error("应用登录请求无法恢复，请从应用重新发起登录。");
+    }
+    await completePrimaryLogin(completed.data, attempt);
   } catch (error: unknown) {
+    if (!loginCurrent(attempt)) return;
     setError(error);
+  } finally {
+    finishAlternativeLogin(attempt);
   }
-  render();
 }
 
 async function submitRegister(): Promise<void> {
+  if (authBusy) return;
   if (state.experience === null || !experienceAllowsRegister(state.experience)) {
     state.errorTitle = "注册已关闭";
     state.errorDetail = "当前外观未开放注册。邀请注册请走邀请链接。";
     render();
     return;
   }
+  const captcha = takeCaptcha("register");
+  if (captcha === null) return;
+  const submission = ++authSubmission;
   clearError();
   const fields: Record<string, string> = {
     username: inputValue("register-username"),
@@ -629,7 +963,6 @@ async function submitRegister(): Promise<void> {
   for (const field of state.experience.registrationFields) {
     if (field !== "username") fields[field] = inputValue(`register-${field}`);
   }
-  const captcha = inputValue("register-captcha");
   if (captcha !== "") fields.captcha_token = captcha;
   const organization = state.organizationCode;
   const application = state.applicationCode;
@@ -639,6 +972,7 @@ async function submitRegister(): Promise<void> {
       state.applicationCode,
       fields,
     );
+    if (submission !== authSubmission || organization !== state.organizationCode || application !== state.applicationCode) return;
     rememberRequest(result.requestId);
     if (result.data.verificationRequired) {
       openVerification(fields.username, organization, application);
@@ -654,11 +988,20 @@ async function submitRegister(): Promise<void> {
     }
     state.accessToken = result.data.accessToken;
     await loadAll();
+    if (submission !== authSubmission) return;
     await bindOAuthAfterLogin();
+    if (submission !== authSubmission) return;
     render();
   } catch (error: unknown) {
+    if (submission !== authSubmission || organization !== state.organizationCode || application !== state.applicationCode) return;
     setError(error);
     render();
+  } finally {
+    if (submission === authSubmission) {
+      authBusy = false;
+      updateCaptchaButton("login");
+      updateCaptchaButton("register");
+    }
   }
 }
 
@@ -712,135 +1055,193 @@ async function submitVerification(channel?: "email" | "phone"): Promise<void> {
 }
 
 async function submitMfaLogin(): Promise<void> {
-  if (state.pendingMfa === null) return;
-  const method = inputValue("mfa-login-method") === "recovery_code" ? "recovery_code" : "totp";
-  if (!state.pendingMfa.methods.includes(method)) {
+  if (authBusy || state.pendingMfa === null) return;
+  const pending = state.pendingMfa;
+  const methodInput = document.getElementById("mfa-login-method");
+  const method = methodInput instanceof HTMLSelectElement ? methodInput.value : "";
+  if ((method !== "totp" && method !== "recovery_code") || !pending.methods.includes(method)) {
     state.errorTitle = "该验证方式不可用";
     state.errorDetail = "请选择本账号已经设置的验证方式。";
     render();
     return;
   }
+  const attempt = beginAlternativeLogin();
+  if (attempt === null) return;
+  const current = (): boolean => loginCurrent(attempt) && state.pendingMfa === pending;
   clearError();
   try {
     const result = await verifyPortalMfaChallenge(
-      state.organizationCode,
-      state.applicationCode,
-      state.pendingMfa.challengeToken,
+      attempt.organization,
+      attempt.application,
+      pending.challengeToken,
       method,
       inputValue("mfa-login-code"),
     );
+    if (!current()) return;
     rememberRequest(result.requestId);
     state.pendingMfa = null;
-    state.accessToken = result.data.accessToken;
-    await loadAll();
-    await bindOAuthAfterLogin();
-    render();
+    await completePrimaryLogin(result.data, attempt);
   } catch (error: unknown) {
+    if (!current()) return;
     setError(error);
-    render();
+  } finally {
+    finishAlternativeLogin(attempt);
   }
 }
 
 async function submitPasskeyMfaLogin(): Promise<void> {
+  if (authBusy) return;
   if (state.pendingMfa === null || !state.pendingMfa.methods.includes("passkey") || state.pendingMfa.passkeyOptions === null) {
     state.errorTitle = "通行密钥不可用";
     state.errorDetail = "请改用身份验证器或恢复码，或重新发起登录。";
     render();
     return;
   }
+  const pending = state.pendingMfa;
+  const attempt = beginAlternativeLogin();
+  if (attempt === null) return;
+  const current = (): boolean => loginCurrent(attempt) && state.pendingMfa === pending;
   clearError();
   try {
-    const options = parsePasskeyAssertionOptions(state.pendingMfa.passkeyOptions);
+    const options = parsePasskeyAssertionOptions(pending.passkeyOptions);
     if (options === null) throw new Error("通行密钥登录信息不完整。");
     const assertion = await getPasskeyAssertion(options);
+    if (!current()) return;
     const result = await verifyPortalPasskeyChallenge(
-      state.organizationCode,
-      state.applicationCode,
-      state.pendingMfa.challengeToken,
-      state.pendingMfa.passkeyOptions,
+      attempt.organization,
+      attempt.application,
+      pending.challengeToken,
+      pending.passkeyOptions,
       assertion,
     );
+    if (!current()) return;
     rememberRequest(result.requestId);
     state.pendingMfa = null;
-    state.accessToken = result.data.accessToken;
-    await loadAll();
-    await bindOAuthAfterLogin();
-    render();
+    await completePrimaryLogin(result.data, attempt);
   } catch (error: unknown) {
+    if (!current()) return;
     setError(error);
-    render();
+  } finally {
+    finishAlternativeLogin(attempt);
   }
 }
 
 async function submitAcceptInvitation(): Promise<void> {
+  if (acceptingInvitation !== null && invitationCurrent(acceptingInvitation)) return;
   if (!invitationTokenLooksValid(invitationToken)) {
     state.errorTitle = "邀请无效";
     state.errorDetail = "缺少有效邀请令牌。请使用邮件或短信中的链接，不要手填 token。";
     render();
     return;
   }
+  const attempt: InvitationAttempt = { token: invitationToken, accessToken: state.accessToken,
+    organization: state.organizationCode, application: state.applicationCode, submission: authSubmission };
+  acceptingInvitation = attempt;
+  invitationUsername = inputValue("invite-username");
+  invitationDisplayName = inputValue("invite-display-name");
+  const password = inputValue("invite-password");
   clearError();
+  render();
   try {
     const result = await portalAcceptInvitation(
-      invitationToken,
-      inputValue("invite-username"),
-      inputValue("invite-display-name"),
-      inputValue("invite-password"),
+      attempt.token,
+      invitationUsername,
+      invitationDisplayName,
+      password,
     );
+    if (!invitationCurrent(attempt)) return;
     rememberRequest(result.requestId);
     invitationToken = "";
+    acceptingInvitation = null;
+    invitationUsername = "";
+    invitationDisplayName = "";
     invitationAcceptedName = result.data.displayName;
     state.accessToken = "";
+    state.profile = null;
+    state.security = null;
+    state.sessions = [];
+    state.factors = [];
+    state.connections = [];
+    state.recoveryCodes = [];
+    state.pendingMfa = null;
+    state.oauthBound = null;
+    pendingTotp = null;
+    securityOperation = null;
+    recovery = null;
+    authSubmission += 1;
+    authBusy = false;
     state.errorTitle = "已保存";
     state.errorDetail = "邀请已接受，请使用新账号登录。本页不会自动取得后台或应用会话。";
+    render();
   } catch (error: unknown) {
+    if (!invitationCurrent(attempt)) return;
     setError(error);
+  } finally {
+    if (acceptingInvitation === attempt) {
+      acceptingInvitation = null;
+      if (invitationCurrent(attempt)) render();
+      else {
+        const button = document.getElementById("accept-invite-btn");
+        if (button instanceof HTMLButtonElement) button.disabled = false;
+      }
+    }
   }
-  render();
 }
 
 async function submitForgot(): Promise<void> {
-  clearError();
-  try {
-    const result = await portalForgotPassword(
-      state.organizationCode,
-      state.applicationCode,
-      inputValue("reset-identifier"),
-      inputValue("reset-channel") === "phone" ? "phone" : "email",
-    );
-    rememberRequest(result.requestId);
-    state.errorTitle = "已保存";
-    state.errorDetail = "如账号存在，重置验证码已发送。";
-  } catch (error: unknown) {
-    setError(error);
-  }
-  render();
+  await submitRecovery(false);
 }
 
 async function submitReset(): Promise<void> {
-  clearError();
-  try {
-    const result = await portalResetPassword(
-      state.organizationCode,
-      state.applicationCode,
-      inputValue("reset-identifier"),
-      inputValue("reset-channel") === "phone" ? "phone" : "email",
-      inputValue("reset-code"),
-      inputValue("reset-password"),
-    );
-    rememberRequest(result.requestId);
-    state.errorTitle = "已保存";
-    state.errorDetail = "密码已重置，请使用新密码登录。";
-  } catch (error: unknown) {
-    setError(error);
+  await submitRecovery(true);
+}
+
+async function submitRecovery(resetPassword: boolean): Promise<void> {
+  const draft = recoveryDraft();
+  if (draft.busy) return;
+  const channelInput = document.getElementById("reset-channel");
+  const channel = channelInput instanceof HTMLSelectElement ? channelInput.value : "";
+  draft.identifier = inputValue("reset-identifier").trim();
+  if (draft.identifier === "" || (channel !== "email" && channel !== "phone")) {
+    state.errorTitle = "请检查找回信息";
+    state.errorDetail = "请输入账号，并选择邮箱或手机接收验证码。";
+    render();
+    return;
   }
+  draft.channel = channel;
+  const code = inputValue("reset-code");
+  const password = inputValue("reset-password");
+  const current = (): boolean => recovery === draft && draft.organization === state.organizationCode
+    && draft.application === state.applicationCode;
+  draft.busy = true;
+  clearError();
   render();
+  try {
+    const result = resetPassword
+      ? await portalResetPassword(draft.organization, draft.application, draft.identifier, draft.channel, code, password)
+      : await portalForgotPassword(draft.organization, draft.application, draft.identifier, draft.channel);
+    if (!current()) return;
+    rememberRequest(result.requestId);
+    state.errorTitle = resetPassword ? "密码已重置" : "请查看验证码";
+    state.errorDetail = resetPassword ? "所有设备需要重新登录，请使用新密码登录。"
+      : "如账号存在，重置验证码已发送。";
+  } catch (error: unknown) {
+    if (!current()) return;
+    setError(error);
+  } finally {
+    if (current()) {
+      draft.busy = false;
+      render();
+    }
+  }
 }
 
 /**
  * 登录凭据只留在内存；登录成功后加载账户安全页。
  */
 async function loadAll(): Promise<void> {
+  const submission = authSubmission;
+  const accessToken = state.accessToken;
   if (state.accessToken === "") {
     state.errorTitle = "请先登录";
     state.errorDetail = "登录成功后会自动打开账户安全设置。";
@@ -856,6 +1257,7 @@ async function loadAll(): Promise<void> {
       loadPortalFactors(state.accessToken),
       loadPortalConnections(state.accessToken),
     ]);
+    if (submission !== authSubmission || accessToken !== state.accessToken) return;
     rememberRequest(profile.requestId);
     state.profile = profile.data;
     state.security = security.data;
@@ -863,6 +1265,7 @@ async function loadAll(): Promise<void> {
     state.factors = factors.data;
     state.connections = connections.data;
   } catch (error: unknown) {
+    if (submission !== authSubmission || accessToken !== state.accessToken) return;
     setError(error);
     state.profile = null;
     state.security = null;
@@ -874,144 +1277,234 @@ async function loadAll(): Promise<void> {
 }
 
 async function startTotp(): Promise<void> {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
     const result = await startPortalTotp(
-      state.accessToken,
+      operation.token,
       inputValue("totp-name"),
       inputValue("totp-password"),
     );
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
     state.errorTitle = "请完成验证器绑定";
     state.errorDetail = `请在验证器中添加密钥 ${result.data.secret}，再输入六位验证码完成确认。`;
-    root().dataset.totpFactorId = String(result.data.factorId);
+    pendingTotp = { ...operation, factorId: result.data.factorId };
   } catch (error: unknown) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 
 async function confirmTotp(): Promise<void> {
-  const factorId = Number(root().dataset.totpFactorId);
-  if (!Number.isInteger(factorId) || factorId <= 0) {
+  if (pendingTotp === null || !securityCurrent(pendingTotp)) {
     state.errorTitle = "请先开始绑定";
     state.errorDetail = "请先生成验证器密钥，再输入验证码。";
     render();
     return;
   }
+  const factorId = pendingTotp.factorId;
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
-    const result = await confirmPortalTotp(state.accessToken, factorId, inputValue("totp-code"));
+    const result = await confirmPortalTotp(operation.token, factorId, inputValue("totp-code"));
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
     state.recoveryCodes = result.data;
-    delete root().dataset.totpFactorId;
-    state.factors = (await loadPortalFactors(state.accessToken)).data;
+    pendingTotp = null;
+    const factors = await loadPortalFactors(operation.token);
+    if (!securityCurrent(operation)) return;
+    state.factors = factors.data;
   } catch (error: unknown) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 
 async function regenerateRecoveryCodes(): Promise<void> {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
-    const result = await regeneratePortalRecoveryCodes(state.accessToken, inputValue("recovery-password"));
+    const result = await regeneratePortalRecoveryCodes(operation.token, inputValue("recovery-password"));
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
     state.recoveryCodes = result.data;
   } catch (error: unknown) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 
 async function registerPasskey(): Promise<void> {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
     const started = await startPortalPasskey(
-      state.accessToken,
+      operation.token,
       inputValue("passkey-name"),
       inputValue("passkey-password"),
     );
+    if (!securityCurrent(operation)) return;
     rememberRequest(started.requestId);
     const credential = await createPasskeyCredential(started.data.options);
-    const result = await finishPortalPasskey(state.accessToken, {
+    if (!securityCurrent(operation)) return;
+    const result = await finishPortalPasskey(operation.token, {
       ...credential,
       challenge_token: started.data.challengeToken,
     });
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
-    state.factors = (await loadPortalFactors(state.accessToken)).data;
+    const factors = await loadPortalFactors(operation.token);
+    if (!securityCurrent(operation)) return;
+    state.factors = factors.data;
     state.errorTitle = "通行密钥已添加";
     state.errorDetail = "下次可以在支持的设备上使用它登录。";
   } catch (error: unknown) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 
 async function saveDisplayName(): Promise<void> {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
-    const result = await updatePortalProfile(state.accessToken, inputValue("display-name"));
+    const result = await updatePortalProfile(operation.token, inputValue("display-name"));
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
     state.profile = result.data;
   } catch (error: unknown) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 
 async function revokeSession(sessionId: number): Promise<void> {
+  const currentSession = state.sessions.some((session) => session.id === sessionId && session.current);
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
-    const result = await revokePortalSession(state.accessToken, sessionId);
+    const result = await revokePortalSession(operation.token, sessionId);
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
-    const sessions = await loadPortalSessions(state.accessToken);
+    if (currentSession) {
+      clearLocalSession();
+      state.errorTitle = "当前会话已撤销";
+      state.errorDetail = "请重新登录后继续。";
+      render();
+      return;
+    }
+    const sessions = await loadPortalSessions(operation.token);
+    if (!securityCurrent(operation)) return;
     state.sessions = sessions.data;
   } catch (error: unknown) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 
 async function revokeFactor(factor: SandIamPortalFactor): Promise<void> {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
     const result = await revokePortalFactor(
-      state.accessToken,
+      operation.token,
       factor.id,
       factor.type,
       inputValue("factor-password"),
     );
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
-    const factors = await loadPortalFactors(state.accessToken);
+    const factors = await loadPortalFactors(operation.token);
+    if (!securityCurrent(operation)) return;
     state.factors = factors.data;
   } catch (error: unknown) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
 }
 
 async function changePassword(): Promise<void> {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
   clearError();
   try {
     const result = await changePortalPassword(
-      state.accessToken,
+      operation.token,
       inputValue("current-password"),
       inputValue("new-password"),
     );
+    if (!securityCurrent(operation)) return;
     rememberRequest(result.requestId);
-    state.accessToken = "";
-    state.profile = null;
-    state.security = null;
-    state.sessions = [];
-    state.factors = [];
-    state.connections = [];
+    clearLocalSession();
     state.errorTitle = "已保存";
     state.errorDetail = "密码已修改，所有设备需要重新登录。当前登录状态已失效。";
+    render();
   } catch (error: unknown) {
+    if (!securityCurrent(operation)) return;
     setError(error);
+  } finally {
+    finishSecurityOperation(operation);
   }
-  render();
+}
+
+function clearLocalSession(): void {
+  state.accessToken = "";
+  state.profile = null;
+  state.security = null;
+  state.sessions = [];
+  state.factors = [];
+  state.connections = [];
+  state.pendingMfa = null;
+  state.oauthBound = null;
+  state.recoveryCodes = [];
+  state.verification = null;
+  pendingTotp = null;
+  securityOperation = null;
+  recovery = null;
+  authSubmission += 1;
+  authBusy = false;
+}
+
+async function submitLogout(): Promise<void> {
+  const operation = beginSecurityOperation();
+  if (operation === null) return;
+  clearError();
+  try {
+    const result = await logoutPortalSession(operation.token);
+    if (!securityCurrent(operation)) return;
+    rememberRequest(result.requestId);
+    clearLocalSession();
+    state.errorTitle = "已退出登录";
+    state.errorDetail = "当前会话已结束。";
+    render();
+  } catch (error: unknown) {
+    if (!securityCurrent(operation)) return;
+    setError(error);
+  } finally {
+    finishSecurityOperation(operation);
+  }
 }
 
 function escapeHtml(value: string): string {
@@ -1023,6 +1516,7 @@ function escapeHtml(value: string): string {
 }
 
 function render(): void {
+  clearCaptchas();
   const brand =
     state.experience?.brandName ?? state.profile?.applicationName ?? "当前应用";
   if (state.experience !== null) {
@@ -1047,6 +1541,7 @@ function render(): void {
         <h1>${escapeHtml(brand)}</h1>
       </header>
       <p class="hint">这是您的账户与登录安全设置。访问令牌只在本次页面使用，不会进入 SandAdmin 后台，也不会保存在浏览器中；外部登录仅在当前标签页临时保留一次确认信息。</p>
+      ${state.accessToken === "" ? "" : '<button type="button" id="logout-btn">退出登录</button>'}
       ${state.usingDefaultExperience ? '<p class="hint">该应用尚未设置登录外观，正在使用基础密码登录。注册默认关闭。</p>' : ""}
       ${state.errorTitle === "" ? "" : `<section class="alert"><strong>${escapeHtml(state.errorTitle)}</strong><p>${escapeHtml(state.errorDetail)}</p></section>`}
       ${renderOAuth()}
@@ -1064,6 +1559,10 @@ function render(): void {
       ${termsUrl === "" && privacyUrl === "" ? "" : `<footer class="portal-links">${termsUrl === "" ? "" : `<a href="${escapeHtml(termsUrl)}" target="_blank" rel="noreferrer">服务协议</a>`}${termsUrl !== "" && privacyUrl !== "" ? " · " : ""}${privacyUrl === "" ? "" : `<a href="${escapeHtml(privacyUrl)}" target="_blank" rel="noreferrer">隐私政策</a>`}</footer>`}
     </main>
   `;
+  updateDecisionButtons();
+  document.getElementById("logout-btn")?.addEventListener("click", () => { void submitLogout(); });
+  void mountCaptcha("login");
+  void mountCaptcha("register");
   document.getElementById("load-cas")?.addEventListener("click", () => {
     void loadCas();
   });
@@ -1226,19 +1725,20 @@ function renderCas(): string {
 
 function renderInvitation(): string {
   if (invitationAcceptedName !== "") {
-    return `<section><h2>接受邀请</h2><p>账号「${escapeHtml(invitationAcceptedName)}」已激活。请在下方登录，不要期待自动进入管理后台。</p></section>`;
+    return `<section><h2>接受邀请</h2><p>账号「${escapeHtml(invitationAcceptedName)}」已激活。邀请已接受，请使用新账号登录。</p></section>`;
   }
   if (invitationToken === "") {
     return `<section><h2>接受邀请</h2><p class="empty">没有邀请令牌。请使用邮件或短信中的链接；撤销、过期和已接受的链接不能重放。</p></section>`;
   }
+  const disabled = acceptingInvitation !== null && invitationCurrent(acceptingInvitation) ? "disabled" : "";
   return `
     <section>
       <h2>接受邀请</h2>
       <p class="hint">已从邀请链接读取令牌，页面不会回显或缓存 token。</p>
-      <label>用户名<input id="invite-username" autocomplete="username" /></label>
-      <label>显示名称<input id="invite-display-name" /></label>
-      <label>密码<input id="invite-password" type="password" autocomplete="new-password" /></label>
-      <button type="button" id="accept-invite-btn">接受邀请并去登录</button>
+      <label>用户名<input id="invite-username" value="${escapeHtml(invitationUsername)}" autocomplete="username" ${disabled} /></label>
+      <label>显示名称<input id="invite-display-name" value="${escapeHtml(invitationDisplayName)}" ${disabled} /></label>
+      <label>密码<input id="invite-password" type="password" autocomplete="new-password" ${disabled} /></label>
+      <button type="button" id="accept-invite-btn" ${disabled}>接受邀请并去登录</button>
     </section>
   `;
 }
@@ -1281,6 +1781,8 @@ function renderLogin(): string {
   const passkeyEnabled = experienceAllowsPasskey(state.experience);
   const externalMethods = externalLoginMethods(state.experience);
   const registerEnabled = experienceAllowsRegister(state.experience);
+  const recoveryForm = recoveryDraft();
+  const recoveryDisabled = recoveryForm.busy ? "disabled" : "";
   const extraFields = state.experience.registrationFields
     .filter((field) => field !== "username")
     .map(
@@ -1295,8 +1797,8 @@ function renderLogin(): string {
         passwordEnabled
           ? `<label>用户名/邮箱/手机<input id="login-identifier" /></label>
              <label>密码<input id="login-password" type="password" autocomplete="current-password" /></label>
-             <label>人机验证令牌（若策略要求）<input id="login-captcha" autocomplete="off" /></label>
-             <button type="button" id="login-btn">登录</button>`
+             ${renderCaptcha("login")}
+             <button type="button" id="login-btn" disabled>登录</button>`
           : `<p class="empty">密码登录已关闭，本页不展示登录表单。</p>`
       }
       ${passkeyEnabled ? '<button type="button" id="passkey-login-btn">使用通行密钥登录</button>' : ""}
@@ -1309,8 +1811,8 @@ function renderLogin(): string {
           ? `<label>用户名<input id="register-username" /></label>
              <label>密码<input id="register-password" type="password" autocomplete="new-password" /></label>
              ${extraFields}
-             <label>人机验证令牌（若策略要求）<input id="register-captcha" autocomplete="off" /></label>
-             <button type="button" id="register-btn">注册</button>`
+             ${renderCaptcha("register")}
+             <button type="button" id="register-btn" disabled>注册</button>`
           : `<p class="empty">${state.experience.registrationMode === "invite" ? "当前仅邀请注册，请使用邀请链接。" : "注册已关闭。"}</p>`
       }
     </section>
@@ -1318,12 +1820,15 @@ function renderLogin(): string {
       passwordEnabled
         ? `<section>
              <h2>找回密码</h2>
-             <label>账号标识<input id="reset-identifier" /></label>
-             <label>通道<input id="reset-channel" value="email" /></label>
-             <button type="button" id="forgot-btn">发送重置验证码</button>
-             <label>验证码<input id="reset-code" autocomplete="off" /></label>
-             <label>新密码<input id="reset-password" type="password" autocomplete="new-password" /></label>
-             <button type="button" id="reset-btn">重置密码</button>
+             <label>账号标识<input id="reset-identifier" value="${escapeHtml(recoveryForm.identifier)}" ${recoveryDisabled} /></label>
+             <label>接收方式<select id="reset-channel" ${recoveryDisabled}>
+               <option value="email" ${recoveryForm.channel === "email" ? "selected" : ""}>邮箱</option>
+               <option value="phone" ${recoveryForm.channel === "phone" ? "selected" : ""}>手机</option>
+             </select></label>
+             <button type="button" id="forgot-btn" ${recoveryDisabled}>发送重置验证码</button>
+             <label>验证码<input id="reset-code" autocomplete="one-time-code" ${recoveryDisabled} /></label>
+             <label>新密码<input id="reset-password" type="password" autocomplete="new-password" ${recoveryDisabled} /></label>
+             <button type="button" id="reset-btn" ${recoveryDisabled}>重置密码</button>
            </section>`
         : ""
     }
@@ -1467,10 +1972,10 @@ render();
 if (federationCallback !== null) {
   void completeFederationCallback();
 }
-if (oauthRequestLooksValid(oauthRequest)) {
+if (federationCallback === null && oauthRequestLooksValid(oauthRequest)) {
   void loadOAuth();
 }
-if (casRequestLooksValid(casRequest)) {
+if (federationCallback === null && casRequestLooksValid(casRequest)) {
   void loadCas();
 }
 if (federationCallback === null && oauthRequest === "" && casRequest === "" && state.organizationCode !== "" && state.applicationCode !== "") {

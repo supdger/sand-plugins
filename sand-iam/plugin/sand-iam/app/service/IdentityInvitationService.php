@@ -38,7 +38,7 @@ final class IdentityInvitationService
         Db::startTrans();
         try {
             $invitation = IdentityInvitation::where('id', $id)->where('application_id', $applicationId)->lock(true)->find();
-            if ($invitation === null || !in_array((string) $invitation->state, ['pending', 'delivery_failed'], true) || strtotime((string) $invitation->expire_time) <= time()) throw new ApiException('SAND_IAM_INVITATION_NOT_RESENDABLE', 409);
+            if ($invitation === null || (int) $invitation->status !== 1 || !in_array((string) $invitation->state, ['pending', 'delivery_failed'], true) || strtotime((string) $invitation->expire_time) <= time()) throw new ApiException('SAND_IAM_INVITATION_NOT_RESENDABLE', 409);
             $invitation->save(['token_hash' => $this->hash('token:' . $token), 'encrypted_delivery_token' => $this->cipher->encrypt($token), 'state' => 'sending', 'delivery_error_code' => null]);
             Db::commit();
         } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
@@ -50,10 +50,14 @@ final class IdentityInvitationService
     public function revoke(int $id, int $applicationId, string $actor, string $requestId): void
     {
         $this->enabled(); $application = $this->application($applicationId);
-        $invitation = IdentityInvitation::where('id', $id)->where('application_id', $applicationId)->whereIn('state', ['pending', 'delivery_failed', 'sending'])->find();
-        if ($invitation === null) throw new ApiException('SAND_IAM_INVITATION_NOT_REVOCABLE', 409);
-        $invitation->save(['state' => 'revoked', 'encrypted_delivery_token' => null, 'status' => 2]);
-        $this->writeAudit($application, 'identity_invitation.revoke', $id, $actor, $requestId, 'succeeded');
+        Db::startTrans();
+        try {
+            $invitation = IdentityInvitation::where('id', $id)->where('application_id', $applicationId)->lock(true)->find();
+            if ($invitation === null || (int) $invitation->status !== 1 || !in_array((string) $invitation->state, ['pending', 'delivery_failed', 'sending'], true)) throw new ApiException('SAND_IAM_INVITATION_NOT_REVOCABLE', 409);
+            $invitation->save(['state' => 'revoked', 'encrypted_delivery_token' => null, 'status' => 2]);
+            $this->writeAudit($application, 'identity_invitation.revoke', $id, $actor, $requestId, 'succeeded');
+            Db::commit();
+        } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
     }
 
     /** @param array<string,mixed> $payload @return array{id:int,display_name:string} */
@@ -72,14 +76,15 @@ final class IdentityInvitationService
             foreach ($this->groups(is_array($invitation->initial_group_ids ?? null) ? $invitation->initial_group_ids : [], (int) $application->id) as $groupId) { $member = IdentityGroupMember::where('identity_group_id', $groupId)->where('identity_id', (int) $identity->id)->lock(true)->find(); if ($member === null) IdentityGroupMember::create(['identity_group_id' => $groupId, 'application_id' => (int) $application->id, 'identity_id' => (int) $identity->id, 'status' => 1]); elseif ((int) $member->status !== 1) $member->save(['status' => 1]); }
             $invitation->save(['state' => 'accepted', 'identity_id' => (int) $identity->id, 'consumed_time' => date('Y-m-d H:i:s'), 'encrypted_target' => null, 'encrypted_delivery_token' => null, 'status' => 2]);
             IdentityInvitation::where('application_id', (int) $application->id)->where('target_hash', (string) $invitation->target_hash)->where('id', '<>', (int) $invitation->id)->whereIn('state', ['pending', 'delivery_failed', 'sending'])->update(['state' => 'revoked', 'encrypted_delivery_token' => null, 'status' => 2]);
+            $this->writeAudit($application, 'identity_invitation.accept', (int) $invitation->id, (string) $identity->id, $requestId, 'succeeded', 'application_user');
             Db::commit(); $transactionOpen = false;
         } catch (\Throwable $exception) { if ($transactionOpen) Db::rollback(); throw $exception; }
-        $this->writeAudit($application, 'identity_invitation.accept', (int) $invitation->id, (string) $identity->id, $requestId, 'succeeded', 'application_user');
         return ['id' => (int) $identity->id, 'display_name' => (string) $identity->display_name];
     }
 
     private function deliver(IdentityInvitation $invitation, Application $application, string $requestId): void
     {
+        $tokenHash = (string) $invitation->token_hash;
         try {
             $target = $this->cipher->decrypt((string) $invitation->encrypted_target); $token = $this->cipher->decrypt((string) $invitation->encrypted_delivery_token);
             $base = (string) config('plugin.sand-iam.app.invitation_accept_url', '');
@@ -87,14 +92,36 @@ final class IdentityInvitationService
             $separator = str_contains($base, '?') ? '&' : '?'; $url = $base . $separator . 'token=' . rawurlencode($token);
             $sent = (new MessageProviderService())->sendMessage((int) $application->id, (string) $invitation->target_type === 'phone' ? 'sms' : 'email', 'invitation', $target, $url, ['purpose' => 'invitation', 'expire_time' => $invitation->expire_time, 'request_id' => $requestId]);
             if (!$sent) throw new ApiException('SAND_IAM_INVITATION_DELIVERY_UNAVAILABLE', 503);
-            $invitation->save(['state' => 'pending', 'encrypted_delivery_token' => null, 'delivered_time' => date('Y-m-d H:i:s'), 'delivery_error_code' => null]);
+            $this->recordDeliveryResult($invitation, $tokenHash, ['state' => 'pending', 'encrypted_delivery_token' => null, 'delivered_time' => date('Y-m-d H:i:s'), 'delivery_error_code' => null]);
         } catch (\Throwable $exception) {
-            $invitation->save(['state' => 'delivery_failed', 'delivery_error_code' => $exception instanceof ApiException && preg_match('/^SAND_IAM_[A-Z0-9_]+$/', $exception->getMessage()) ? $exception->getMessage() : 'SAND_IAM_INVITATION_DELIVERY_FAILED']);
+            $this->recordDeliveryResult($invitation, $tokenHash, ['state' => 'delivery_failed', 'delivery_error_code' => $exception instanceof ApiException && preg_match('/^SAND_IAM_[A-Z0-9_]+$/', $exception->getMessage()) ? $exception->getMessage() : 'SAND_IAM_INVITATION_DELIVERY_FAILED']);
             throw $exception;
         }
     }
 
-    /** @param list<int> $ids @return list<int> */ private function groups(array $ids, int $applicationId): array { $ids = array_values(array_unique(array_map('intval', $ids))); if (count($ids) > 50) throw new ApiException('SAND_IAM_INVITATION_GROUPS_INVALID', 400); foreach ($ids as $id) if (!IdentityGroup::where('id', $id)->where('application_id', $applicationId)->where('status', 1)->find()) throw new ApiException('SAND_IAM_INVITATION_GROUPS_INVALID', 400); return $ids; }
+    /** @param array<string,mixed> $values */
+    private function recordDeliveryResult(IdentityInvitation $invitation, string $tokenHash, array $values): void
+    {
+        IdentityInvitation::where('id', (int) $invitation->id)
+            ->where('application_id', (int) $invitation->application_id)
+            ->where('state', 'sending')->where('status', 1)->where('token_hash', $tokenHash)
+            ->update($values);
+    }
+
+    /** @param list<int|string> $ids @return list<int> */
+    private function groups(array $ids, int $applicationId): array
+    {
+        foreach ($ids as &$id) {
+            if (!is_int($id) && !(is_string($id) && preg_match('/^[0-9]+$/D', $id) === 1)) throw new ApiException('SAND_IAM_INVITATION_GROUPS_INVALID', 400);
+            $id = filter_var(is_string($id) ? ltrim($id, '0') : $id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+            if ($id === false) throw new ApiException('SAND_IAM_INVITATION_GROUPS_INVALID', 400);
+        }
+        unset($id);
+        $ids = array_values(array_unique($ids));
+        if (count($ids) > 50) throw new ApiException('SAND_IAM_INVITATION_GROUPS_INVALID', 400);
+        foreach ($ids as $id) if (!IdentityGroup::where('id', $id)->where('application_id', $applicationId)->where('status', 1)->find()) throw new ApiException('SAND_IAM_INVITATION_GROUPS_INVALID', 400);
+        return $ids;
+    }
     private function application(int $id): Application { $app = Application::where('id', $id)->where('status', 1)->find(); if ($app === null) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所属接入应用不存在或已停用', 404); return $app; }
     private function target(string $type, string $value): string { $value = trim($value); if ($type === 'email') { $value = strtolower($value); if (!filter_var($value, FILTER_VALIDATE_EMAIL)) throw new ApiException('SAND_IAM_INVITATION_TARGET_INVALID', 400); return $value; } if ($type === 'phone') { $value = '+' . preg_replace('/[^0-9]/', '', ltrim($value, '+')); if (!preg_match('/^\+[1-9][0-9]{7,14}$/', $value)) throw new ApiException('SAND_IAM_INVITATION_TARGET_INVALID', 400); return $value; } throw new ApiException('SAND_IAM_INVITATION_TARGET_INVALID', 400); }
     private function mask(string $type, string $value): string { if ($type === 'email') { [$name, $domain] = explode('@', $value, 2); return mb_substr($name, 0, min(2, mb_strlen($name))) . '***@' . $domain; } return mb_substr($value, 0, 3) . '****' . mb_substr($value, -4); }

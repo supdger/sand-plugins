@@ -119,7 +119,6 @@ final class AuditLogController extends BaseController
     {
         $organizationId = (int) $request->input('organization_id', 0);
         if ($organizationId > 0) {
-            $this->access($request)->assertOrganization($organizationId);
             $query->where('organization_id', $organizationId);
         }
         $applicationId = (int) $request->input('application_id', 0);

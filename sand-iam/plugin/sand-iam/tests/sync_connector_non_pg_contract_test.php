@@ -25,7 +25,7 @@ $checks = [
         'SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID',
         'sync.outbox_retry',
         "array_diff(\$accepted, \$sentIds)",
-        'count($accepted) < count($rows)',
+        'count($accepted) < $rowCount',
         'SAND_IAM_SYNC_DISABLE_THRESHOLD_EXCEEDED',
         'SAND_IAM_SYNC_FIELD_CONFLICT',
         'SAND_IAM_SYNC_GROUP_MAPPING_REQUIRED',

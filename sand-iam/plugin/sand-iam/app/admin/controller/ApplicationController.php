@@ -11,6 +11,7 @@ use plugin\sandadmin\exception\ApiException;
 use plugin\sandadmin\service\Permission;
 use support\Request;
 use support\Response;
+use think\facade\Db;
 
 final class ApplicationController extends AdminResourceController
 {
@@ -19,6 +20,7 @@ final class ApplicationController extends AdminResourceController
     protected array $requiredFields = ['organization_id', 'code', 'name'];
     protected string $resourceType = 'application';
     protected bool $atomicCreateAudit = true;
+    protected bool $atomicMutationAudit = true;
     #[Permission('SandIAM 接入应用列表', 'sand_iam:application:index')]
     public function index(Request $request): Response
     {
@@ -83,12 +85,34 @@ final class ApplicationController extends AdminResourceController
         // Keep the post-normalization check on the same recovery path. A
         // recovery must never fall back to the ordinary active-app guard.
         $this->assertUpdatePayloadAccess($payload, $model, $recovering);
-        $model->save($payload);
-        $this->audit('update', (int) $model->id, $request);
+        Db::startTrans();
+        try {
+            $model->save($payload);
+            $this->audit('update', (int) $model->id, $request);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            throw $exception;
+        }
         return $this->success('更新成功');
     }
-    #[Permission('SandIAM 接入应用停用', 'sand_iam:application:disable')] public function disable(Request $request): Response { return parent::disable($request); }
+    #[Permission('SandIAM 接入应用停用', 'sand_iam:application:disable')]
+    public function disable(Request $request): Response
+    {
+        return parent::disable($request);
+    }
     protected function assertReferences(array $payload, ?object $existing = null): void { if (isset($payload['organization_id']) && !Organization::where('id', (int) $payload['organization_id'])->where('status', 1)->find()) throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 所属客户主体不存在或已停用', 400); }
+
+    protected function normalizePayload(array $payload, ?object $existing = null): array
+    {
+        if (array_key_exists('name', $payload)) {
+            if (!is_string($payload['name']) || trim($payload['name']) === '') {
+                throw new ApiException('SAND_IAM_VALIDATION_ERROR: 接入应用名称必须是非空文本', 400);
+            }
+            $payload['name'] = trim($payload['name']);
+        }
+        return $payload;
+    }
 
     protected function scopeIndexToOrganizations(object $query): void
     {

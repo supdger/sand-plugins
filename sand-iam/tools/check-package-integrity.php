@@ -268,7 +268,7 @@ $assert('root and plugin lifecycle payloads have matching hashes', static functi
     return true;
 });
 
-$assert('normal 0.7.1 payload excludes historical failed-upgrade recovery descriptors', static function () use ($releaseArtifactFiles): bool {
+$assert('normal 0.7.2 payload excludes historical failed-upgrade recovery descriptors', static function () use ($releaseArtifactFiles): bool {
     $files = $releaseArtifactFiles();
     foreach (sandIamGeneratedDescriptorPaths() as $descriptor) {
         if (isset($files[$descriptor])) {
@@ -278,7 +278,7 @@ $assert('normal 0.7.1 payload excludes historical failed-upgrade recovery descri
     return true;
 });
 
-$assert('generated lifecycle separates full install from guarded 0.7.0 to 0.7.1 update and safe cleanup payload', static function () use ($root, $manifestMigrationNames, $updateMigrationNames): bool {
+$assert('generated lifecycle separates full install from guarded 0.7.1 to 0.7.2 update and safe cleanup payload', static function () use ($root, $manifestMigrationNames, $updateMigrationNames): bool {
     $install = file_get_contents($root . '/install.sql');
     $update = file_get_contents($root . '/update.sql');
     $uninstall = file_get_contents($root . '/uninstall.sql');
@@ -328,23 +328,23 @@ $assert('generated lifecycle separates full install from guarded 0.7.0 to 0.7.1 
             throw new RuntimeException('update replays historical migration ' . $name);
         }
     }
-    if ($updateMigrationNames !== ['038_auth_rate_limit_retention.pgsql']) {
-        throw new RuntimeException('0.7.1 update manifest must contain only immutable 038');
+    if ($updateMigrationNames !== ['039_service_grant_nullable_data_class.pgsql']) {
+        throw new RuntimeException('0.7.2 update manifest must contain only 039');
     }
-    $preflight = file_get_contents($root . '/lifecycle/update-070-to-071-preflight.pgsql');
-    if (!is_string($preflight) || !str_contains($update, '-- lifecycle source: lifecycle/update-070-to-071-preflight.pgsql')
+    $preflight = file_get_contents($root . '/lifecycle/update-071-to-072-preflight.pgsql');
+    if (!is_string($preflight) || !str_contains($update, '-- lifecycle source: lifecycle/update-071-to-072-preflight.pgsql')
         || !str_contains($update, $collapse($preflight))
-        || strpos($update, $collapse($preflight)) > strpos($update, '-- lifecycle source: migrations/038_auth_rate_limit_retention.pgsql')) {
-        throw new RuntimeException('0.7.1 update must admit exact 001-037 before immutable 038');
+        || strpos($update, $collapse($preflight)) > strpos($update, '-- lifecycle source: migrations/039_service_grant_nullable_data_class.pgsql')) {
+        throw new RuntimeException('0.7.2 update must admit exact 001-038 before 039');
     }
     foreach ($updateMigrationNames as $name) {
         $source = file_get_contents($root . '/migrations/' . $name);
         $payload = is_string($source) ? $collapse($source) : '';
-        if ($name === '038_auth_rate_limit_retention.pgsql') {
+        if ($name === '039_service_grant_nullable_data_class.pgsql') {
             $beginOffset = strpos($payload, "\nBEGIN;");
             $commitOffset = strrpos($payload, "\nCOMMIT;");
             if ($beginOffset === false || $commitOffset === false || $beginOffset >= $commitOffset) {
-                throw new RuntimeException('published 038 has no composable outer transaction');
+                throw new RuntimeException('039 has no composable outer transaction');
             }
             $payload = rtrim(
                 substr($payload, 0, $beginOffset + 1)
@@ -355,9 +355,9 @@ $assert('generated lifecycle separates full install from guarded 0.7.0 to 0.7.1 
             throw new RuntimeException('update is missing release migration payload ' . $name);
         }
     }
-    if (!str_contains($update, "\nBEGIN;\n-- lifecycle source: lifecycle/update-070-to-071-preflight.pgsql")
+    if (!str_contains($update, "\nBEGIN;\n-- lifecycle source: lifecycle/update-071-to-072-preflight.pgsql")
         || !str_ends_with($update, "COMMIT;\n")) {
-        throw new RuntimeException('0.7.1 update must compose preflight and 038 under one explicit transaction');
+        throw new RuntimeException('0.7.2 update must compose preflight and 039 under one explicit transaction');
     }
     if (!str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_security_operation')
         || !str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_application_business_action')) {
@@ -469,7 +469,7 @@ $assert('published 0.6.0 migration 021 remains byte-immutable in root and packag
     return true;
 });
 
-$assert('migration ledger catalogs every shipped migration and registers the 037/038 checksums', static function () use ($root, $manifestMigrationNames): bool {
+$assert('migration ledger catalogs the published baseline and 037/038/039 self-register with exact checksums', static function () use ($root, $manifestMigrationNames): bool {
     $ledger = (string) file_get_contents($root . '/migrations/035_schema_migration_ledger.pgsql');
     if ($ledger === '' || !str_contains($ledger, 'CREATE TABLE IF NOT EXISTS sand_iam_schema_migration')
         || !str_contains($ledger, 'migration_file varchar(160) PRIMARY KEY')
@@ -486,6 +486,9 @@ $assert('migration ledger catalogs every shipped migration and registers the 037
         return false;
     }
     foreach ($manifestMigrationNames as $name) {
+        if ($name === '039_service_grant_nullable_data_class.pgsql') {
+            continue;
+        }
         if (!str_contains($ledger, "'{$name}'")) {
             return false;
         }
@@ -511,6 +514,16 @@ $assert('migration ledger catalogs every shipped migration and registers the 037
         || !str_contains($retention, "SELECT '038_auth_rate_limit_retention.pgsql', 38")
         || !str_contains($retention, '(SELECT count(*) FROM sand_iam_schema_migration) <> 39')
         || !str_contains($retention, 'idx_sand_iam_auth_rate_limit_retention')) {
+        return false;
+    }
+    $nullableDataClass = (string) file_get_contents($root . '/migrations/039_service_grant_nullable_data_class.pgsql');
+    if ($nullableDataClass === ''
+        || preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $nullableDataClass, $nullableChecksum) !== 1
+        || hash('sha256', str_replace($nullableChecksum[1], '__SELF_SHA256__', $nullableDataClass)) !== $nullableChecksum[1]
+        || !str_contains($nullableDataClass, "SELECT '039_service_grant_nullable_data_class.pgsql', 39")
+        || !str_contains($nullableDataClass, '(SELECT count(*) FROM sand_iam_schema_migration) <> 40')
+        || !str_contains($nullableDataClass, 'ALTER COLUMN data_class DROP NOT NULL')
+        || !str_contains($nullableDataClass, "package_version <> '0.7.2'")) {
         return false;
     }
     return str_contains($ledger, 'migration ledger checksum or package-version conflict; refusing to continue')
@@ -763,8 +776,20 @@ $assert('release build contract locks toolchain and reviewed runtime payloads', 
     }
     $composer = $contract['composer'] ?? null;
     $typescript = $contract['typescript'] ?? null;
+    $installedComposer = (string) file_get_contents($root . '/plugin/sand-iam/vendor/composer/installed.php');
     if (!is_array($composer) || !is_array($typescript)
         || ($composer['lock_sha256'] ?? null) !== hash_file('sha256', $root . '/plugin/sand-iam/composer.lock')
+        || ($composer['environment'] ?? null) !== [
+            'COMPOSER_DISABLE_NETWORK' => '1',
+            'COMPOSER_ROOT_VERSION' => '0.7.2',
+        ]
+        || ($composer['arguments'] ?? null) !== [
+            'install', '--no-dev', '--prefer-dist', '--optimize-autoloader', '--classmap-authoritative',
+            '--no-interaction', '--no-plugins', '--no-scripts',
+        ]
+        || substr_count($installedComposer, "'pretty_version' => '0.7.2'") !== 2
+        || substr_count($installedComposer, "'version' => '0.7.2.0'") !== 2
+        || str_contains($installedComposer, "'pretty_version' => '0.7.1'")
         || ($typescript['lock_sha256'] ?? null) !== hash_file('sha256', $root . '/sdk/typescript/pnpm-lock.yaml')
         || ($typescript['package_integrity'] ?? null) !== 'sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==') {
         return false;

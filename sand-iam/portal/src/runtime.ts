@@ -1,3 +1,4 @@
+import { parseCaptchaConfiguration, type CaptchaConfiguration } from "./captchaWidget";
 import {
   parsePublicExperience,
   type SandIamPortalAuthOutcome,
@@ -44,6 +45,11 @@ import {
   type SandIamPortalSecurity,
   type SandIamPortalSession,
 } from "./meContracts";
+
+export type SandIamPortalCaptchaConfiguration =
+  | { readonly required: false }
+  | { readonly required: true; readonly available: false }
+  | { readonly required: true; readonly available: true; readonly widget: CaptchaConfiguration };
 
 export const SAND_IAM_PORTAL_AUTH_PREFIX = "/api/sand-iam/v1/auth";
 export const SAND_IAM_PORTAL_ME_PREFIX = "/api/sand-iam/v1/me";
@@ -132,6 +138,50 @@ async function portalRequest(
     );
   }
   return { requestId, data: record !== null && "data" in record ? record.data : parsed };
+}
+
+export async function loadPortalCaptchaConfiguration(
+  organizationCode: string,
+  applicationCode: string,
+  action: "login" | "register",
+): Promise<SandIamPortalResult<SandIamPortalCaptchaConfiguration>> {
+  const requestId = createRequestId();
+  const query = new URLSearchParams({
+    organization_code: organizationCode, application_code: applicationCode, action,
+  });
+  let response: Response;
+  try {
+    response = await fetch(`${SAND_IAM_PORTAL_AUTH_PREFIX}/captcha/config?${query.toString()}`, {
+      method: "GET", credentials: "omit", cache: "no-store",
+      headers: { Accept: "application/json", "X-Request-Id": requestId },
+    });
+  } catch {
+    throw new SandIamPortalTransportError("人机验证配置加载失败，请检查连接后重试。", null);
+  }
+  let parsed: unknown = null;
+  try { parsed = await response.json(); } catch { parsed = null; }
+  const record = isRecord(parsed) ? parsed : null;
+  if (!response.ok) {
+    throw new SandIamPortalTransportError(
+      readMessage(record) || `人机验证配置不可用（HTTP ${String(response.status)}）`, response.status,
+    );
+  }
+  const payload = record !== null && "data" in record ? record.data : parsed;
+  if (isRecord(payload)) {
+    if (payload.required === false && payload.available === undefined && payload.widget === undefined) {
+      return { requestId, data: { required: false } };
+    }
+    if (payload.required === true && payload.available === false && payload.widget === undefined) {
+      return { requestId, data: { required: true, available: false } };
+    }
+    if (payload.required === true && payload.available === true) {
+      const widget = parseCaptchaConfiguration(payload.widget);
+      if (widget !== null && widget.action === action) {
+        return { requestId, data: { required: true, available: true, widget } };
+      }
+    }
+  }
+  throw new SandIamPortalTransportError("人机验证配置返回格式不符合已冻结约定", null);
 }
 
 /**
@@ -550,6 +600,11 @@ export async function loadPortalProfile(
     throw new SandIamPortalTransportError("资料返回格式不符合已冻结约定", null);
   }
   return { requestId: result.requestId, data: profile };
+}
+
+export async function logoutPortalSession(accessToken: string): Promise<SandIamPortalResult<null>> {
+  const result = await portalRequest("POST", `${SAND_IAM_PORTAL_AUTH_PREFIX}/logout`, accessToken);
+  return { requestId: result.requestId, data: null };
 }
 
 export async function updatePortalProfile(

@@ -52,6 +52,23 @@ $entra = ProviderPresetCatalog::draft('microsoft_entra_oidc', [
 ]);
 presetAssert(($entra['config']['discovery_url'] ?? null) === 'https://login.microsoftonline.com/contoso.onmicrosoft.com/v2.0/.well-known/openid-configuration', 'Entra tenant discovery draft is invalid');
 
+// Exercise the real, side-effect-free configuration validators: a generated
+// draft must fit the same contract as the configuration editor's save payload.
+require_once $plugin . '/app/service/FederationService.php';
+$serviceClass = new ReflectionClass(\plugin\SandIam\app\service\FederationService::class);
+$service = $serviceClass->newInstanceWithoutConstructor();
+foreach ($compatibleCodes as $code) {
+    $draft = ProviderPresetCatalog::draft($code, [
+        'tenant_id' => 'contoso.onmicrosoft.com',
+        'client_id' => 'example-client',
+        'redirect_uri' => 'https://iam.example.test/federation/callback',
+        'handoff_return_uris' => ['https://app.example.test/login/complete'],
+    ]);
+    $serviceClass->getMethod('validateConfig')->invoke($service, $draft['provider_type'], $draft['config']);
+    $serviceClass->getMethod('validateMapping')->invoke($service, $draft['attribute_mapping']);
+    presetAssert(!array_key_exists('client_secret', $draft['config']), "{$code} generated a secret");
+}
+
 foreach ([['dingtalk_login', 'SAND_IAM_IDP_PRESET_MANUAL_REQUIRED'], ['feishu_user_authorization', 'SAND_IAM_IDP_PRESET_MANUAL_REQUIRED']] as [$code, $expected]) {
     try {
         ProviderPresetCatalog::draft($code, []);

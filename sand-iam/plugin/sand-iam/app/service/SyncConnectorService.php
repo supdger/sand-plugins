@@ -19,6 +19,7 @@ use plugin\SandIam\app\sync\GoogleWorkspaceDirectorySyncDriver;
 use plugin\SandIam\app\sync\KeycloakDirectorySyncDriver;
 use plugin\sandadmin\exception\ApiException;
 use think\facade\Db;
+use support\Log;
 
 final class SyncConnectorService
 {
@@ -31,8 +32,23 @@ final class SyncConnectorService
         $driver = $this->driver((string) $connector->driver_code); if (method_exists($driver, 'validateConfig')) $driver::validateConfig($config); $this->assertDirection($driver, (string) $connector->direction);
         foreach ($authorityMap as $field => $authority) if (!in_array($field, ['display_name', 'email', 'phone', 'group'], true) || !in_array($authority, ['source', 'local'], true)) throw new ApiException('SAND_IAM_SYNC_AUTHORITY_MAP_INVALID', 400);
         if ((string) $connector->direction === 'bidirectional' && !isset($authorityMap['display_name'])) throw new ApiException('SAND_IAM_SYNC_AUTHORITY_MAP_REQUIRED', 400);
-        $connector->save(['encrypted_config' => $this->cipher->encryptArray($config), 'authority_map' => $authorityMap, 'config_version' => (int) $connector->config_version + 1]);
-        $this->writeAudit($connector, 'sync_connector.configure', (int) $connector->id, $actor, $requestId, 'succeeded', ['config_version' => (int) $connector->config_version]);
+        $current = null;
+        Db::startTrans();
+        try {
+            $current = SyncConnector::where('id', (int) $connector->id)->lock(true)->find();
+            if ($current === null) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404);
+            if ((int) $current->application_id !== (int) $connector->application_id
+                || (int) $current->organization_id !== (int) $connector->organization_id) {
+                throw new ApiException('SAND_IAM_SYNC_CONNECTOR_SCOPE_CHANGED: 同步连接范围已改变，请刷新后重试', 409);
+            }
+            $connector->save(['encrypted_config' => $this->cipher->encryptArray($config), 'authority_map' => $authorityMap, 'config_version' => (int) $current->config_version + 1]);
+            $this->writeAudit($connector, 'sync_connector.configure', (int) $connector->id, $actor, $requestId, 'succeeded', ['config_version' => (int) $connector->config_version]);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            if ($current !== null) $connector->refresh();
+            throw $exception;
+        }
     }
 
     public function test(SyncConnector $connector, string $actor, string $requestId): void
@@ -46,52 +62,110 @@ final class SyncConnectorService
     public function run(int $connectorId, int $applicationId, string $actor, string $requestId): array
     {
         $this->enabled();
-        Db::startTrans();
+        $ownership = SyncRunOwnership::acquire($connectorId, $applicationId);
         try {
-            $connector = SyncConnector::where('id', $connectorId)->where('application_id', $applicationId)->where('status', 1)->lock(true)->find();
-            if ($connector === null) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404);
-            $this->application($applicationId);
-            $driver = $this->driver((string) $connector->driver_code); $this->assertDirection($driver, (string) $connector->direction); $config = $this->cipher->decryptArray((string) $connector->encrypted_config);
-            $run = SyncRun::create(['sync_connector_id' => $connectorId, 'application_id' => $applicationId, 'connector_config_version' => (int) $connector->config_version, 'state' => 'running', 'cursor_before_hash' => $this->cursorHash($connector->encrypted_cursor), 'start_time' => $this->now(), 'status' => 1]);
-            Db::commit();
-        } catch (\Throwable $exception) {
-            Db::rollback();
-            if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SYNC_ALREADY_RUNNING', 409);
-            throw $exception;
+            return $this->runOwned($ownership, $connectorId, $applicationId, $actor, $requestId);
+        } finally {
+            $ownership->release();
         }
+    }
+
+    private function runOwned(SyncRunOwnership $ownership, int $connectorId, int $applicationId, string $actor, string $requestId): array
+    {
+        [$connector, $run, $driver, $config] = $ownership->transaction(null, function (SyncConnector $connector) use ($connectorId, $applicationId, $actor, $requestId): array {
+            if ((int) $connector->status !== 1) throw new ApiException('SAND_IAM_SYNC_CONNECTOR_NOT_FOUND', 404);
+            $this->application($applicationId);
+            $driver = $this->driver((string) $connector->driver_code);
+            $this->assertDirection($driver, (string) $connector->direction);
+            $config = $this->cipher->decryptArray((string) $connector->encrypted_config);
+            $abandoned = SyncRun::where('sync_connector_id', $connectorId)->where('state', 'running')->lock(true)->select();
+            foreach ($abandoned as $previous) {
+                if (!(bool) config('plugin.sand-iam.app.sync_recover_abandoned_runs', false)) {
+                    throw new ApiException('SAND_IAM_SYNC_ALREADY_RUNNING', 409);
+                }
+                if ((int) $previous->application_id !== $applicationId) throw new ApiException('SAND_IAM_SYNC_RUN_OWNERSHIP_LOST', 409);
+                if ($previous->save(['state' => 'failed', 'error_code' => 'SAND_IAM_SYNC_RUN_ABANDONED', 'finish_time' => $this->now(), 'status' => 2]) === false) {
+                    throw new ApiException('SAND_IAM_SYNC_RUN_FAILED', 503);
+                }
+                $this->writeAudit($connector, 'sync.run_recover', (int) $previous->id, $actor, $requestId, 'succeeded', ['error_code' => 'SAND_IAM_SYNC_RUN_ABANDONED']);
+            }
+            $run = SyncRun::create(['sync_connector_id' => $connectorId, 'application_id' => $applicationId, 'connector_config_version' => (int) $connector->config_version, 'state' => 'running', 'cursor_before_hash' => $this->cursorHash($connector->encrypted_cursor), 'start_time' => $this->now(), 'status' => 1]);
+            return [$connector, $run, $driver, $config];
+        });
         $counts = ['pulled' => 0, 'pushed' => 0, 'created' => 0, 'updated' => 0, 'missing' => 0, 'disabled' => 0, 'conflict' => 0];
         try {
             $direction = (string) $connector->direction;
-            if (in_array($direction, ['inbound', 'bidirectional'], true)) $this->pull($connector, $run, $driver, $config, $counts);
-            if (in_array($direction, ['outbound', 'bidirectional'], true)) $this->push($connector, $run, $driver, $config, $counts);
-            $disabled = $this->finalizeMissing($connector, $run, $actor, $requestId); $counts['disabled'] += $disabled;
-            $run->save($counts + ['state' => 'succeeded', 'cursor_after_hash' => $this->cursorHash($connector->encrypted_cursor), 'finish_time' => $this->now(), 'status' => 2]);
-            $this->writeAudit($connector, 'sync.run', (int) $run->id, $actor, $requestId, 'succeeded', $counts);
+            if (in_array($direction, ['inbound', 'bidirectional'], true)) $this->pull($connector, $run, $driver, $config, $counts, $ownership);
+            if (in_array($direction, ['outbound', 'bidirectional'], true)) $this->push($connector, $run, $driver, $config, $counts, $ownership);
+            $counts['disabled'] += $this->finalizeMissing($connector, $run, $actor, $requestId, $ownership);
+            $ownership->transaction((int) $run->id, function (SyncConnector $current, SyncRun $currentRun) use ($connector, $counts, $actor, $requestId): void {
+                $this->assertRunConfiguration($connector, $current, $currentRun);
+                if ($currentRun->save($counts + ['state' => 'succeeded', 'cursor_after_hash' => $this->cursorHash($current->encrypted_cursor), 'finish_time' => $this->now(), 'status' => 2]) === false) {
+                    throw new ApiException('SAND_IAM_SYNC_RUN_FAILED', 503);
+                }
+                $this->writeAudit($current, 'sync.run', (int) $currentRun->id, $actor, $requestId, 'succeeded', $counts);
+            });
         } catch (\Throwable $exception) {
-            preg_match('/^(SAND_IAM_[A-Z0-9_]+)/', $exception->getMessage(), $matches); $run->save($counts + ['state' => 'failed', 'error_code' => $matches[1] ?? 'SAND_IAM_SYNC_RUN_FAILED', 'finish_time' => $this->now(), 'status' => 2]);
-            $this->writeAudit($connector, 'sync.run', (int) $run->id, $actor, $requestId, 'failed', ['error_code' => $matches[1] ?? 'SAND_IAM_SYNC_RUN_FAILED'] + $counts); throw $exception;
+            $errorCode = $this->errorCode($exception, 'SAND_IAM_SYNC_RUN_FAILED');
+            // Failure remains durable if audit storage is unavailable, but an old
+            // runner must never record it using a replacement database session.
+            $ownership->transaction((int) $run->id, function (SyncConnector $current, SyncRun $currentRun) use ($counts, $errorCode): void {
+                if ($currentRun->save($counts + ['state' => 'failed', 'error_code' => $errorCode, 'finish_time' => $this->now(), 'status' => 2]) === false) {
+                    throw new ApiException('SAND_IAM_SYNC_RUN_FAILED', 503);
+                }
+            });
+            try {
+                $ownership->transaction((int) $run->id, function (SyncConnector $current, SyncRun $currentRun) use ($actor, $requestId, $errorCode, $counts): void {
+                    $this->writeAudit($current, 'sync.run', (int) $currentRun->id, $actor, $requestId, 'failed', ['error_code' => $errorCode] + $counts);
+                }, ['failed']);
+            } catch (\Throwable $failureException) {
+                try {
+                    Log::error('SandIAM sync failure audit unavailable', ['run_id' => (int) $run->id, 'exception_type' => $failureException::class]);
+                } catch (\Throwable) {
+                    // Keep the original sync error.
+                }
+            }
+            throw $exception;
         }
-        return ['id' => (int) $run->id, 'state' => (string) $run->state] + $counts;
+        return ['id' => (int) $run->id, 'state' => 'succeeded'] + $counts;
     }
 
     /** @param class-string<SyncDriverInterface> $driver @param array<string,mixed> $config @param array<string,int> $counts */
-    private function pull(SyncConnector $connector, SyncRun $run, string $driver, array $config, array &$counts): void
+    private function pull(SyncConnector $connector, SyncRun $run, string $driver, array $config, array &$counts, SyncRunOwnership $ownership): void
     {
         $cursor = $connector->encrypted_cursor ? $this->cipher->decrypt((string) $connector->encrypted_cursor) : null; $pages = 0; $fullSnapshot = false;
         do {
             if (++$pages > 100) throw new ApiException('SAND_IAM_SYNC_PAGE_LIMIT_EXCEEDED', 409);
+            $ownership->check();
             $page = $driver::pullPage($config, $cursor, 500); $this->assertPage($page); if ($pages === 1) $fullSnapshot = ($page['full_snapshot'] ?? false) === true;
-            $pageCounts = $this->applyPage($connector, $run, $config, $page['records']); foreach ($pageCounts as $key => $value) $counts[$key] += $value;
-            $cursor = $page['next_cursor']; $encryptedCursor = $cursor === null || $cursor === '' ? null : $this->cipher->encrypt($cursor);
-            $connector->save(['encrypted_cursor' => $encryptedCursor, 'last_sync_time' => $this->now()]); $counts['pulled'] += count($page['records']); $run->save($counts + ['cursor_after_hash' => $this->cursorHash($encryptedCursor)]);
+            $nextCursor = $page['next_cursor'];
+            $encryptedCursor = $nextCursor === null || $nextCursor === '' ? null : $this->cipher->encrypt($nextCursor);
+            $nextCounts = $counts;
+            $ownership->transaction((int) $run->id, function (SyncConnector $current, SyncRun $currentRun) use ($connector, $config, $page, $encryptedCursor, &$nextCounts): void {
+                $this->assertRunConfiguration($connector, $current, $currentRun);
+                $pageCounts = $this->applyPage($current, $currentRun, $config, $page['records']);
+                foreach ($pageCounts as $key => $value) $nextCounts[$key] += $value;
+                $nextCounts['pulled'] += count($page['records']);
+                if ($current->save(['encrypted_cursor' => $encryptedCursor, 'last_sync_time' => $this->now()]) === false
+                    || $currentRun->save($nextCounts + ['cursor_after_hash' => $this->cursorHash($encryptedCursor)]) === false) {
+                    throw new ApiException('SAND_IAM_SYNC_RUN_FAILED', 503);
+                }
+            });
+            $cursor = $nextCursor;
+            $counts = $nextCounts;
         } while ($page['has_more'] === true);
-        if ($fullSnapshot) { $now = $this->now(); SyncResource::where('sync_connector_id', (int) $connector->id)->where('application_id', (int) $connector->application_id)->where('status', 1)->where('source_state', 'active')->where(function ($query) use ($run): void { $query->whereNull('last_seen_run_id')->whereOr('last_seen_run_id', '<>', (int) $run->id); })->update(['source_state' => 'missing', 'missing_since' => $now]); }
+        if ($fullSnapshot) {
+            $ownership->transaction((int) $run->id, function (SyncConnector $current, SyncRun $currentRun) use ($connector): void {
+                $this->assertRunConfiguration($connector, $current, $currentRun);
+                SyncResource::where('sync_connector_id', (int) $current->id)->where('application_id', (int) $current->application_id)->where('status', 1)->where('source_state', 'active')->where(function ($query) use ($currentRun): void { $query->whereNull('last_seen_run_id')->whereOr('last_seen_run_id', '<>', (int) $currentRun->id); })->update(['source_state' => 'missing', 'missing_since' => $this->now()]);
+            });
+        }
     }
 
     /** @param array<string,mixed> $config @param list<array<string,mixed>> $records @return array{created:int,updated:int,missing:int,conflict:int} */
     private function applyPage(SyncConnector $connector, SyncRun $run, array $config, array $records): array
     {
-        $counts = ['created' => 0, 'updated' => 0, 'missing' => 0, 'conflict' => 0]; Db::startTrans();
+        $counts = ['created' => 0, 'updated' => 0, 'missing' => 0, 'conflict' => 0];
         try {
             foreach ($records as $record) {
                 $record = $this->record($record); $keyHash = $this->referenceHash((int) $connector->id, $record['source_id']); $snapshot = $this->cipher->encryptArray($record); $snapshotHash = hash('sha256', json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '');
@@ -117,46 +191,66 @@ final class SyncConnectorService
                 $this->applyGroups($connector, $identity, $record, $config);
                 $resource->save(['source_version' => $record['version'], 'encrypted_snapshot' => $snapshot, 'snapshot_hash' => $snapshotHash, 'source_state' => 'active', 'missing_since' => null, 'last_seen_run_id' => (int) $run->id]); $counts['updated']++;
             }
-            Db::commit();
-        } catch (\Throwable $exception) { Db::rollback(); if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SYNC_RESOURCE_CONFLICT', 409); throw $exception; }
+        } catch (\Throwable $exception) { if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SYNC_RESOURCE_CONFLICT', 409); throw $exception; }
         return $counts;
     }
 
     /** @param class-string<SyncDriverInterface> $driver @param array<string,mixed> $config @param array<string,int> $counts */
-    private function push(SyncConnector $connector, SyncRun $run, string $driver, array $config, array &$counts): void
+    private function push(SyncConnector $connector, SyncRun $run, string $driver, array $config, array &$counts, SyncRunOwnership $ownership): void
     {
         $attemptPolicy = new SyncOutboxAttemptPolicy();
         for ($batch = 0; $batch < 100; $batch++) {
-            $rows = SyncOutbox::where('sync_connector_id', (int) $connector->id)->where('application_id', (int) $connector->application_id)->where('state', 'pending')->order('id', 'asc')->limit(100)->select(); if (count($rows) === 0) return;
-            $events = []; $dispatchRows = []; $payloadFailure = false;
-            foreach ($rows as $row) {
-                try {
-                    $events[] = $this->cipher->decryptArray((string) $row->encrypted_payload) + ['event_id' => (string) $row->event_id];
-                    $dispatchRows[] = $row;
-                } catch (\Throwable) {
-                    $row->save($attemptPolicy->failure((int) $row->attempt_count, 'SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID'));
-                    $payloadFailure = true;
+            [$events, $dispatchRows, $payloadFailure, $rowCount] = $ownership->transaction((int) $run->id, function (SyncConnector $current, SyncRun $currentRun) use ($connector, $attemptPolicy): array {
+                $this->assertRunConfiguration($connector, $current, $currentRun);
+                $rows = SyncOutbox::where('sync_connector_id', (int) $current->id)->where('application_id', (int) $current->application_id)->where('state', 'pending')->order('id', 'asc')->limit(100)->lock(true)->select();
+                $events = []; $dispatchRows = []; $payloadFailure = false;
+                foreach ($rows as $row) {
+                    try {
+                        $payload = $this->cipher->decryptArray((string) $row->encrypted_payload);
+                    } catch (\Throwable) {
+                        $row->save($attemptPolicy->failure((int) $row->attempt_count, 'SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID'));
+                        $payloadFailure = true;
+                        continue;
+                    }
+                    $events[] = $payload + ['event_id' => (string) $row->event_id];
+                    $dispatchRows[] = ['id' => (int) $row->id, 'event_id' => (string) $row->event_id];
                 }
-            }
+                return [$events, $dispatchRows, $payloadFailure, count($rows)];
+            });
+            if ($rowCount === 0) return;
             if ($events === []) throw new ApiException('SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID', 503);
+            $ownership->check();
             try {
                 $accepted = $driver::pushBatch($config, $events); if (!is_array($accepted) || array_filter($accepted, static fn (mixed $id): bool => !is_string($id)) !== []) throw new ApiException('SAND_IAM_SYNC_DRIVER_RESPONSE_INVALID', 503);
-                $sentIds = array_map(static fn (SyncOutbox $row): string => (string) $row->event_id, $dispatchRows); $accepted = array_values(array_unique($accepted)); if (array_diff($accepted, $sentIds) !== []) throw new ApiException('SAND_IAM_SYNC_DRIVER_RESPONSE_INVALID', 503);
+                $sentIds = array_column($dispatchRows, 'event_id'); $accepted = array_values(array_unique($accepted)); if (array_diff($accepted, $sentIds) !== []) throw new ApiException('SAND_IAM_SYNC_DRIVER_RESPONSE_INVALID', 503);
             } catch (\Throwable $exception) {
                 $errorCode = $this->errorCode($exception, 'SAND_IAM_SYNC_OUTBOUND_FAILED');
-                foreach ($dispatchRows as $row) $row->save($attemptPolicy->failure((int) $row->attempt_count, $errorCode));
+                $ownership->transaction((int) $run->id, function (SyncConnector $current, SyncRun $currentRun) use ($connector, $dispatchRows, $attemptPolicy, $errorCode): void {
+                    $this->assertRunConfiguration($connector, $current, $currentRun);
+                    foreach ($dispatchRows as $dispatch) {
+                        $row = $this->pendingOutbox($current, $dispatch);
+                        $row->save($attemptPolicy->failure((int) $row->attempt_count, $errorCode));
+                    }
+                });
                 throw $exception;
             }
-            foreach ($dispatchRows as $row) {
-                if (in_array((string) $row->event_id, $accepted, true)) {
-                    $row->save(['state' => 'succeeded', 'error_code' => null, 'delivered_time' => $this->now(), 'status' => 2]); $counts['pushed']++;
-                } else {
-                    $row->save($attemptPolicy->failure((int) $row->attempt_count, 'SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED'));
+            $nextCounts = $counts;
+            $ownership->transaction((int) $run->id, function (SyncConnector $current, SyncRun $currentRun) use ($connector, $dispatchRows, $accepted, $attemptPolicy, &$nextCounts): void {
+                $this->assertRunConfiguration($connector, $current, $currentRun);
+                foreach ($dispatchRows as $dispatch) {
+                    $row = $this->pendingOutbox($current, $dispatch);
+                    if (in_array((string) $row->event_id, $accepted, true)) {
+                        $row->save(['state' => 'succeeded', 'error_code' => null, 'delivered_time' => $this->now(), 'status' => 2]);
+                        $nextCounts['pushed']++;
+                    } else {
+                        $row->save($attemptPolicy->failure((int) $row->attempt_count, 'SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED'));
+                    }
                 }
-            }
-            $run->save($counts);
+                $currentRun->save($nextCounts);
+            });
+            $counts = $nextCounts;
             if ($payloadFailure) throw new ApiException('SAND_IAM_SYNC_OUTBOUND_PAYLOAD_INVALID', 503);
-            if (count($accepted) < count($rows)) throw new ApiException('SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED', 503);
+            if (count($accepted) < $rowCount) throw new ApiException('SAND_IAM_SYNC_OUTBOUND_NOT_ACCEPTED', 503);
         }
         throw new ApiException('SAND_IAM_SYNC_OUTBOUND_BATCH_LIMIT_EXCEEDED', 409);
     }
@@ -196,13 +290,44 @@ final class SyncConnectorService
         }
     }
 
-    private function finalizeMissing(SyncConnector $connector, SyncRun $run, string $actor, string $requestId): int
+    private function finalizeMissing(SyncConnector $connector, SyncRun $run, string $actor, string $requestId, SyncRunOwnership $ownership): int
     {
-        if (!in_array((string) $connector->direction, ['inbound', 'bidirectional'], true)) return 0; $cutoff = date('Y-m-d H:i:s', time() - (int) $connector->missing_protection_hours * 3600);
-        $candidates = SyncResource::where('sync_connector_id', (int) $connector->id)->where('application_id', (int) $connector->application_id)->where('source_state', 'missing')->where('missing_since', '<=', $cutoff)->where('status', 1)->select(); if (count($candidates) === 0) return 0;
-        $active = SyncResource::where('sync_connector_id', (int) $connector->id)->where('application_id', (int) $connector->application_id)->where('status', 1)->count(); if ((count($candidates) * 100 / max(1, $active)) > (int) $connector->disable_threshold_percent) throw new ApiException('SAND_IAM_SYNC_DISABLE_THRESHOLD_EXCEEDED', 409);
-        Db::startTrans(); try { foreach ($candidates as $resource) { $identity = Identity::where('id', (int) $resource->identity_id)->where('application_id', (int) $connector->application_id)->lock(true)->find(); if ($identity !== null && (string) ($identity->lifecycle_state ?? '') !== 'deleted') (new IdentityLifecycleService())->disable((int) $identity->id, (int) $connector->application_id, $actor, $requestId, false, false); $resource->save(['source_state' => 'disabled']); } Db::commit(); } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
-        return count($candidates);
+        if (!in_array((string) $connector->direction, ['inbound', 'bidirectional'], true)) return 0;
+        return $ownership->transaction((int) $run->id, function (SyncConnector $current, SyncRun $currentRun) use ($connector, $actor, $requestId): int {
+            $this->assertRunConfiguration($connector, $current, $currentRun);
+            $cutoff = date('Y-m-d H:i:s', time() - (int) $current->missing_protection_hours * 3600);
+            $candidates = SyncResource::where('sync_connector_id', (int) $current->id)->where('application_id', (int) $current->application_id)->where('source_state', 'missing')->where('missing_since', '<=', $cutoff)->where('status', 1)->lock(true)->select();
+            if (count($candidates) === 0) return 0;
+            $active = SyncResource::where('sync_connector_id', (int) $current->id)->where('application_id', (int) $current->application_id)->where('status', 1)->count();
+            if ((count($candidates) * 100 / max(1, $active)) > (int) $current->disable_threshold_percent) throw new ApiException('SAND_IAM_SYNC_DISABLE_THRESHOLD_EXCEEDED', 409);
+            foreach ($candidates as $resource) {
+                $identity = Identity::where('id', (int) $resource->identity_id)->where('application_id', (int) $current->application_id)->lock(true)->find();
+                if ($identity !== null && (string) ($identity->lifecycle_state ?? '') !== 'deleted') {
+                    (new IdentityLifecycleService())->disable((int) $identity->id, (int) $current->application_id, $actor, $requestId, false, false);
+                }
+                $resource->save(['source_state' => 'disabled']);
+            }
+            return count($candidates);
+        });
+    }
+
+    private function assertRunConfiguration(SyncConnector $original, SyncConnector $current, SyncRun $run): void
+    {
+        if ((int) $current->status !== 1 || (int) $current->organization_id !== (int) $original->organization_id
+            || (int) $current->config_version !== (int) $run->connector_config_version) {
+            throw new ApiException('SAND_IAM_SYNC_CONNECTOR_CHANGED', 409);
+        }
+        $this->application((int) $current->application_id);
+    }
+
+    /** @param array{id:int,event_id:string} $dispatch */
+    private function pendingOutbox(SyncConnector $connector, array $dispatch): SyncOutbox
+    {
+        $row = SyncOutbox::where('id', $dispatch['id'])->where('sync_connector_id', (int) $connector->id)
+            ->where('application_id', (int) $connector->application_id)->where('event_id', $dispatch['event_id'])
+            ->where('state', 'pending')->lock(true)->find();
+        if ($row === null) throw new ApiException('SAND_IAM_SYNC_RUN_OWNERSHIP_LOST', 409);
+        return $row;
     }
 
     /** @param array{attributes:array<string,mixed>} $record @param array<string,mixed> $config */

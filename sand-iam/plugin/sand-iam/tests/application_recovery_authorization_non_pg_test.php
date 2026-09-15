@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+// behavior-test-gate: static-rule
+
 namespace plugin\sandadmin\exception {
     final class ApiException extends \RuntimeException {}
 }
@@ -36,9 +38,27 @@ namespace plugin\SandIam\app\service {
     final class AuditWriter
     {
         /** @var list<array{action:string,outcome:string,resource_id:?int}> */ public static array $writes = [];
+        public static bool $fail = false;
         public function write(string $actorType, string $actorRef, ?int $organizationId, ?int $applicationId, string $action, string $resourceType, ?int $resourceId, string $outcome, string $requestId): void
         {
             self::$writes[] = compact('action', 'outcome', 'resourceId') + ['resource_id' => $resourceId];
+            if (self::$fail) throw new \RuntimeException('audit unavailable');
+        }
+    }
+}
+
+namespace think\facade {
+    final class Db
+    {
+        private static array $snapshots = [];
+        public static function startTrans(): void
+        {
+            self::$snapshots[] = serialize([\plugin\SandIam\app\model\Application::$rows, \plugin\SandIam\app\model\Organization::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]);
+        }
+        public static function commit(): void { array_pop(self::$snapshots); }
+        public static function rollback(): void
+        {
+            [\plugin\SandIam\app\model\Application::$rows, \plugin\SandIam\app\model\Organization::$rows, \plugin\SandIam\app\service\AuditWriter::$writes] = unserialize(array_pop(self::$snapshots), ['allowed_classes' => true]);
         }
     }
 }
@@ -77,6 +97,8 @@ namespace plugin\SandIam\app\model {
     final class Organization
     {
         /** @var array<int,Record> */ public static array $rows = [];
+        public static function find(int $id): ?Record { return self::$rows[$id] ?? null; }
+        public static function findOrEmpty(int $id): Record { return self::find($id) ?? new Record([], true); }
         public static function where(string $field, mixed $value): Query { return new Query(self::$rows, $field, $value); }
         /** @param list<mixed> $values */ public static function whereIn(string $field, array $values): Query { return (new Query(self::$rows))->whereIn($field, $values); }
     }
@@ -113,6 +135,7 @@ namespace {
     require dirname(__DIR__) . '/app/admin/support/AdminOrganizationAccess.php';
     require dirname(__DIR__) . '/app/admin/support/AdminResourceController.php';
     require dirname(__DIR__) . '/app/admin/controller/ApplicationController.php';
+    require dirname(__DIR__) . '/app/admin/controller/OrganizationController.php';
 
     Organization::$rows = [
         10 => new Record(['id' => 10, 'status' => 1]),
@@ -160,6 +183,19 @@ namespace {
     applicationRecoveryAssert((int) Application::$rows[101]->status === 2 && Application::$rows[101]->name === 'Recoverable' && (int) Application::$rows[101]->organization_id === 10, 'rejected recovery code mutation must leave application unchanged');
     applicationRecoveryExpect(static fn () => $controller->update(applicationRecoveryRequest(1, ['id' => 101, 'status' => 0])), 400, 'recovery must reject illegal target status');
 
+    $before = serialize([Application::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]);
+    \plugin\SandIam\app\service\AuditWriter::$fail = true;
+    try {
+        $controller->update(applicationRecoveryRequest(1, ['id' => 101, 'status' => 1]));
+        throw new RuntimeException('recovery hid audit failure');
+    } catch (RuntimeException $exception) {
+        if ($exception->getMessage() !== 'audit unavailable') throw $exception;
+    } finally {
+        \plugin\SandIam\app\service\AuditWriter::$fail = false;
+    }
+    applicationRecoveryAssert(serialize([Application::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]) === $before, 'failed audit must not restore the application or retain a success audit');
+    applicationRecoveryExpect(static fn () => $super->assertApplication(101), 403, 'failed recovery must keep ordinary access denied');
+
     $result = $controller->update(applicationRecoveryRequest(1, ['id' => 101, 'status' => 1]));
     applicationRecoveryAssert($result->data === '更新成功' && (int) Application::$rows[101]->status === 1, 'super administrator recovery must enable the application');
     $super->assertApplication(101);
@@ -168,6 +204,72 @@ namespace {
     $result = $controller->update(applicationRecoveryRequest(2, ['id' => 101, 'status' => 1]));
     applicationRecoveryAssert($result->data === '更新成功' && (int) Application::$rows[101]->status === 1, 'effective organization administrator recovery must enable the application');
     $organizationAdmin->assertApplication(101);
+
+    $before = serialize([Application::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]);
+    \plugin\SandIam\app\service\AuditWriter::$fail = true;
+    try {
+        $controller->update(applicationRecoveryRequest(2, ['id' => 101, 'name' => 'Uncommitted rename']));
+        throw new RuntimeException('ordinary update hid audit failure');
+    } catch (RuntimeException $exception) {
+        if ($exception->getMessage() !== 'audit unavailable') throw $exception;
+    } finally {
+        \plugin\SandIam\app\service\AuditWriter::$fail = false;
+    }
+    applicationRecoveryAssert(serialize([Application::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]) === $before, 'failed ordinary update must preserve the application and audit');
+
+    Organization::$rows[10]->name = '客户主体';
+    foreach ([
+        [$controller, Application::$rows[101], 101],
+        [new \plugin\SandIam\app\admin\controller\OrganizationController(), Organization::$rows[10], 10],
+    ] as [$nameController, $record, $id]) {
+        foreach (['', '  ', "\t\r\n", null, 123, []] as $invalidName) {
+            $before = serialize([$record, \plugin\SandIam\app\service\AuditWriter::$writes]);
+            applicationRecoveryExpect(static fn () => $nameController->update(applicationRecoveryRequest(1, ['id' => $id, 'name' => $invalidName])), 400, 'invalid application or organization name must be rejected');
+            applicationRecoveryAssert(serialize([$record, \plugin\SandIam\app\service\AuditWriter::$writes]) === $before, 'invalid name must preserve record and audit');
+        }
+        $nameController->update(applicationRecoveryRequest(1, ['id' => $id, 'name' => '  正式名称  ']));
+        applicationRecoveryAssert($record->name === '正式名称', 'valid name must be trimmed');
+    }
+
+    $before = serialize([Application::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]);
+    \plugin\SandIam\app\service\AuditWriter::$fail = true;
+    try {
+        $controller->disable(applicationRecoveryRequest(2, ['id' => 101]));
+        throw new RuntimeException('disable hid audit failure');
+    } catch (RuntimeException $exception) {
+        if ($exception->getMessage() !== 'audit unavailable') throw $exception;
+    } finally {
+        \plugin\SandIam\app\service\AuditWriter::$fail = false;
+    }
+    applicationRecoveryAssert(serialize([Application::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]) === $before, 'failed disable must preserve application and audit');
+    $organizationAdmin->assertApplication(101);
+    $auditCount = count(\plugin\SandIam\app\service\AuditWriter::$writes);
+    applicationRecoveryExpect(static fn () => $controller->disable(applicationRecoveryRequest(3, ['id' => 101])), 403, 'foreign organization must not disable application');
+    $denial = end(\plugin\SandIam\app\service\AuditWriter::$writes);
+    applicationRecoveryAssert((int) Application::$rows[101]->status === 1
+        && count(\plugin\SandIam\app\service\AuditWriter::$writes) === $auditCount + 1
+        && $denial['action'] === 'application.access' && $denial['outcome'] === 'denied', 'denied application disable must retain denial audit');
+    $controller->disable(applicationRecoveryRequest(2, ['id' => 101]));
+    applicationRecoveryAssert((int) Application::$rows[101]->status === 2, 'successful disable must change status');
+    applicationRecoveryExpect(static fn () => $organizationAdmin->assertApplication(101), 403, 'successful disable must deny ordinary access');
+
+    $organizationController = new \plugin\SandIam\app\admin\controller\OrganizationController();
+    foreach ([['name' => '不应保存'], ['status' => 1]] as $payload) {
+        Organization::$rows[10]->status = 2;
+        $before = serialize([Organization::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]);
+        \plugin\SandIam\app\service\AuditWriter::$fail = true;
+        try {
+            $organizationController->update(applicationRecoveryRequest(1, ['id' => 10] + $payload));
+            throw new RuntimeException('organization update hid audit failure');
+        } catch (RuntimeException $exception) {
+            if ($exception->getMessage() !== 'audit unavailable') throw $exception;
+        } finally {
+            \plugin\SandIam\app\service\AuditWriter::$fail = false;
+        }
+        applicationRecoveryAssert(serialize([Organization::$rows, \plugin\SandIam\app\service\AuditWriter::$writes]) === $before, 'failed organization update must preserve record and audit');
+    }
+    $organizationController->update(applicationRecoveryRequest(1, ['id' => 10, 'status' => 1]));
+    applicationRecoveryAssert((int) Organization::$rows[10]->status === 1 && Organization::$rows[10]->name === '正式名称', 'organization recovery retry must succeed without a failed rename');
 
     echo "application recovery authorization non-PG behavior checks passed\n";
 }

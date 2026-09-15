@@ -67,10 +67,14 @@ final class ManagementApiCatalog
         'POST /grant/disable' => 'sand_iam:grant:revoke',
         'POST /policy/simulate' => 'sand_iam:policy:read',
         'POST /policy/rollback' => 'sand_iam:policy:publish',
+        'GET /policy/versions' => 'sand_iam:policy:read',
+        'GET /grant/actions' => 'sand_iam:grant:index',
+        'GET /grant/services' => 'sand_iam:grant:index',
         'GET /webhook/delivery/index' => 'sand_iam:webhook_delivery:index',
         'GET /webhook/delivery/read' => 'sand_iam:webhook_delivery:read',
         'POST /webhook/delivery/retry' => 'sand_iam:webhook_delivery:retry',
         'GET /admin-application-grant/admin-options' => 'sand_iam:admin_application_grant:save',
+        'GET /admin-organization-grant/admin-options' => 'sand_iam:admin_organization_grant:save',
         'GET /message-provider/options' => 'sand_iam:message_provider:index',
         'GET /message-provider/mounts' => 'sand_iam:message_provider_mount:index',
         'POST /message-provider/mount' => 'sand_iam:message_provider_mount:save',
@@ -155,6 +159,14 @@ final class ManagementApiCatalog
                     'content' => ['application/json' => ['schema' => ['$ref' => '#/components/schemas/ManagementInput']]],
                 ];
             }
+            if ($route['path'] === '/policy/versions') {
+                $operation['parameters'] = array_merge($operation['parameters'], [
+                    self::queryParameter('id', true, ['type' => 'integer', 'minimum' => 1], '已获应用管理授权的策略主键；不支持全局版本查询。'),
+                    self::queryParameter('page', false, ['type' => 'integer', 'minimum' => 1, 'default' => 1], '页码。'),
+                    self::queryParameter('limit', false, ['type' => 'integer', 'minimum' => 1, 'maximum' => 100, 'default' => 20], '每页记录数。'),
+                ]);
+                $operation['responses']['200'] = self::jsonResponse('策略历史版本，按版本号倒序', '#/components/schemas/PolicyVersionListEnvelope');
+            }
             if ($route['path'] === '/oauth-client/logout-delivery/index') {
                 $operation['parameters'] = array_merge($operation['parameters'], [
                     self::queryParameter('id', true, ['type' => 'integer', 'minimum' => 1], 'OAuth 客户端主键。'),
@@ -201,6 +213,34 @@ final class ManagementApiCatalog
                     'SandAdminSession' => ['type' => 'apiKey', 'in' => 'header', 'name' => 'Authorization', 'description' => '由 SandAdmin 登录态提供，不得写入代码或文档。'],
                 ],
                 'schemas' => [
+                    'PolicyVersionListEnvelope' => [
+                        'type' => 'object',
+                        'required' => ['code', 'msg', 'data'],
+                        'properties' => [
+                            'code' => ['type' => 'integer'], 'msg' => ['type' => 'string'],
+                            'data' => [
+                                'type' => 'object',
+                                'required' => ['data', 'total', 'current_page', 'per_page', 'published_version_id'],
+                                'properties' => [
+                                    'total' => ['type' => 'integer', 'minimum' => 0],
+                                    'current_page' => ['type' => 'integer', 'minimum' => 1],
+                                    'per_page' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100],
+                                    'published_version_id' => ['type' => ['integer', 'null'], 'description' => '策略主记录指向的已发布快照；不表示策略当前启用。草稿和撤销状态不会改写此标识。'],
+                                    'data' => ['type' => 'array', 'items' => [
+                                        'type' => 'object', 'additionalProperties' => false,
+                                        'required' => ['id', 'version_no', 'operation', 'rollback_of_version_id', 'create_time'],
+                                        'properties' => [
+                                            'id' => ['type' => 'integer', 'minimum' => 1],
+                                            'version_no' => ['type' => 'integer', 'minimum' => 1],
+                                            'operation' => ['type' => 'string', 'enum' => ['publish', 'rollback']],
+                                            'rollback_of_version_id' => ['type' => ['integer', 'null']],
+                                            'create_time' => ['type' => 'string'],
+                                        ],
+                                    ]],
+                                ],
+                            ],
+                        ],
+                    ],
                     'ManagementInput' => ['type' => 'object', 'additionalProperties' => true, 'description' => '控制器按白名单字段校验；密钥只允许发送到敏感输入接口。'],
                     'OidcLogoutDeliveryListItem' => [
                         'type' => 'object',
@@ -302,12 +342,15 @@ final class ManagementApiCatalog
             '/scim/token/index' => '查看 SCIM 令牌', '/webhook/index' => '查看事件回调', '/webhook/read' => '查看事件回调详情',
             '/webhook/delivery/index' => '查看事件投递', '/webhook/delivery/read' => '查看事件投递详情',
             '/admin-application-grant/admin-options' => '选择可委派管理员',
+            '/admin-organization-grant/admin-options' => '选择客户主体可委派管理员',
             '/message-provider/index' => '查看消息服务', '/message-provider/read' => '查看消息服务详情',
             '/message-provider/options' => '选择消息服务', '/message-provider/mounts' => '查看应用消息服务',
             '/identity-group/index' => '查看用户组', '/identity-group/read' => '查看用户组详情', '/identity-group/members' => '查看用户组成员',
             '/identity-group-role/index' => '查看用户组已授予的角色', '/identity-group-role/role-index' => '查看角色已授予的用户组',
             '/identity-invitation/index' => '查看用户邀请', '/identity-invitation/read' => '查看邀请详情',
             '/identity-import/index' => '查看用户导入任务', '/identity-import/rows' => '查看导入明细',
+            '/policy/versions' => '查看策略历史版本',
+            '/grant/actions' => '查看服务授权动作候选', '/grant/services' => '查看服务授权服务候选',
             '/identity-export/masked' => '导出脱敏用户', '/identity-export/sensitive' => '导出敏感用户信息',
             '/oauth-registration-token/index' => '查看动态注册令牌',
             '/oauth-client/logout-delivery/index' => '查看 OIDC 后通道登出投递',

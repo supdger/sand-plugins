@@ -45,9 +45,17 @@ GET 参数 `consent=approve` 不存在也不起作用。`prompt=consent` 永远�
 - 授权码绑定 client、应用、identity、live session、redirect、S256 verifier、auth_time 与 nonce；单次消费与 token 签发在同一事务。
 - access token 为 RS256 JWT，header `typ=at+jwt`，包含 `iss/sub/aud/exp/iat/jti/client_id/scope/application_id/grant_id/token_use=access_token`。用户 access audience 固定为 userinfo resource；机器 access audience 必须由客户端白名单选择。
 - ID token header `typ=JWT`，`aud=client_id`，包含 nonce、auth_time 和 sid。refresh token 为 opaque，仅 HMAC 哈希保存；只有明确同意 `offline_access` 才签发。重放 refresh 会撤销整条 grant family。
-- 资源服务须校验 RS256、kid、issuer、exp、iat、jti、token_use、typ、精确 audience、scope，且通过 `verifyAccessTokenForAudience()` 复核 token / grant / client 的数据库状态。
+- 资源服务须校验 RS256、kid、issuer、exp、iat、jti、token_use、typ、精确 audience、scope，且通过 `verifyAccessTokenForAudience()` 复核 token / grant / client 的数据库状态。用户令牌还检查原应用内身份及 grant 绑定会话：身份停用、会话停用或撤销、记录缺失或归属不符均拒绝；机器令牌不依赖用户会话。
 
-`GET /userinfo` 只接受 `aud=userinfo`、`openid` access token，按 profile/email 最小返回。`POST /oauth/revoke` 对未知 token 也返回成功。`/oauth/logout` 校验 id_token_hint 和精确 logout redirect，撤销同一 SandIAM session 的全部 OAuth grants/tokens 后撤销底层 session，并在 logout redirect 回传已校验 `state`。
+刷新成功时，旧 refresh token 的消费、新令牌记录与成功审计在同一事务提交；已确认发生事务回滚时，旧令牌保持未消费，可以重新发起刷新。当前没有按 `request_id` 恢复已提交刷新响应的能力：如果服务端已提交而客户端未收到响应，再提交旧 refresh token 会触发重放检测并撤销整条授权，包括第一次刷新生成的新令牌。因此网络超时不能当作“事务已回滚”，客户端不得无限自动重试同一旧令牌；无法确认结果时应重新发起授权登录。
+
+机器 `client_credentials` 请求先验证 scope 与 audience，再创建授权。授权、访问令牌记录和成功审计一起提交，失败回滚；不签发 refresh token 或 ID token。该事务保证不等于成功请求幂等：响应丢失后再次签发可能产生另一组有效授权和令牌，接入方不能按相同 `request_id` 假定返回上一次令牌。
+
+`GET /userinfo` 只接受 `aud=userinfo`、`openid` access token，按 profile/email 最小返回。`POST /oauth/revoke` 对未知 token 也返回成功。`/oauth/logout` 校验 id_token_hint 和精确 logout redirect，撤销同一 SandIAM session 的全部 OAuth grants/tokens 后撤销底层 session，并在 logout redirect 回传已校验 `state`。`state` 最长 1024 字节且不能含控制字符，非法值在撤销前拒绝；会话撤销和成功审计同事务提交，写入失败回滚后可以重试。
+
+启用后通道登出时，待投递通知与会话撤销一起提交，入队成功不等于客户端已收到。会话已撤销后重复登出不会重复生成通知，也不会重新返回前通道地址；因此重复请求不能补回首次响应丢失的前通道通知。客户端应同时清除自身登录状态，并按后通道协议处理收到的通知。
+
+已知且属于当前客户端的令牌撤销会同时撤销所在 grant 及其关联令牌，并将成功审计纳入同一事务；不是仅删除本次提交的单个 token。未知、空值或不属于当前客户端的 token 不修改其他授权，仍保持成功响应，避免暴露令牌存在性。
 
 ## 审计与验收
 

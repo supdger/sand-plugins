@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { ref } from 'vue'
+  import { computed, onScopeDispose, ref, watch } from 'vue'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
   import { businessActionFields } from '../api/fields'
@@ -18,6 +18,8 @@
     readonly sources: readonly string[]
   }
 
+  let disposed = false
+  onScopeDispose(() => { disposed = true; claimVersion++; claims.value = [] })
   const { hasAuth } = useAuth()
   const claims = ref<PendingClaim[]>([])
   const claimError = ref<SandIamRequestError | null>(null)
@@ -25,6 +27,15 @@
   const applications = ref<SandIamResourceRow[]>([])
   const applicationId = ref('')
   const loadingClaims = ref(false)
+  const canReadClaims = computed(() => hasAuth('sand_iam:api_resource:read'))
+  let claimVersion = 0
+  watch([applicationId, canReadClaims], () => {
+    claimVersion++
+    claims.value = []
+    claimError.value = null
+    loadingClaims.value = false
+    claimHint.value = '先按名称选择接入应用，再查看待认领的历史动作。'
+  }, { flush: 'sync' })
 
   const columns: SandIamResourceColumn[] = [
     { key: 'name', label: '动作名称', minWidth: 160 },
@@ -60,6 +71,8 @@
    * 待认领报告只列出历史旧值，不会自动写成正式声明。
    */
   async function loadClaims(): Promise<void> {
+    if (disposed || loadingClaims.value || !canReadClaims.value) return
+    const version = ++claimVersion
     const parsed = Number(applicationId.value)
     if (!Number.isInteger(parsed) || parsed <= 0) {
       claimError.value = describeSandIamError(new Error('请先按名称选择接入应用。'))
@@ -67,12 +80,15 @@
     }
     loadingClaims.value = true
     claimError.value = null
+    claims.value = []
     try {
       const result = await getSandIamAdmin('application-business-action/pending-claims', {
         application_id: parsed
       })
+      if (disposed || !canReadClaims.value || version !== claimVersion) return
       const payload = isRecord(result) && isRecord(result.data) ? result.data : result
-      const items = isRecord(payload) && Array.isArray(payload.items) ? payload.items : []
+      if (!isRecord(payload) || payload.application_id !== parsed || !Array.isArray(payload.items)) throw new Error('待认领报告返回的应用或格式不匹配，请重新加载。')
+      const items = payload.items
       claims.value = items.flatMap((item) => {
         const claim = parsePendingClaim(item)
         return claim === null ? [] : [claim]
@@ -82,22 +98,38 @@
           ? '当前应用没有待认领的历史动作。这与没有权限不同。'
           : '这些旧值还不是正式声明。请核对中文名称后新建业务动作，不要猜测迁移。'
     } catch (error: unknown) {
+      if (disposed || !canReadClaims.value || version !== claimVersion) return
       claimError.value = describeSandIamError(error)
       claims.value = []
     } finally {
-      loadingClaims.value = false
+      if (!disposed && version === claimVersion) loadingClaims.value = false
     }
   }
 
-  async function loadApplications(): Promise<void> {
+  const applicationLoading = ref(false)
+  const applicationError = ref('')
+  const applicationKeywords = ref('')
+  let applicationRequest = 0
+
+  async function loadApplications(keywords = ''): Promise<void> {
+    const attempt = ++applicationRequest
+    if (disposed) return
+    applicationKeywords.value = keywords
+    applicationLoading.value = true
+    applicationError.value = ''
     try {
-      applications.value = listRows(
-        await listSandIamResource('application', { page: 1, limit: 100 })
-      )
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      if (disposed || attempt !== applicationRequest) return
+      const selected = applications.value.find(row => String(row.id) === applicationId.value)
+      const rows = listRows(result)
+      applications.value = selected && !rows.some(row => row.id === selected.id) ? [selected, ...rows] : rows
     } catch (error: unknown) {
-      claimError.value = describeSandIamError(error)
+      if (!disposed && attempt === applicationRequest) applicationError.value = describeSandIamError(error).detail
+    } finally {
+      if (!disposed && attempt === applicationRequest) applicationLoading.value = false
     }
   }
+
 
   void loadApplications()
 </script>
@@ -124,7 +156,7 @@
         pending_claim 只出现在本报告。新建、变更和路由同步都不会接受未声明动作。
       </p>
       <ElAlert
-        v-if="!hasAuth('sand_iam:api_resource:read')"
+        v-if="!canReadClaims"
         class="mb-3"
         type="warning"
         :closable="false"
@@ -147,9 +179,12 @@
         title="待认领说明"
         :description="claimHint"
       />
+      <ElAlert v-if="applicationError" type="error" :closable="false" :title="applicationError" />
+      <ElButton v-if="applicationError" :loading="applicationLoading" @click="loadApplications(applicationKeywords)">重试应用搜索</ElButton>
       <ElSpace class="mb-3">
         <ElSelect
           v-model="applicationId"
+            remote :remote-method="loadApplications" :loading="applicationLoading"
           filterable
           clearable
           placeholder="按名称选择接入应用"
@@ -162,7 +197,7 @@
             :value="String(row.id)"
           />
         </ElSelect>
-        <ElButton :loading="loadingClaims" @click="loadClaims">加载待认领</ElButton>
+        <ElButton :disabled="!canReadClaims" :loading="loadingClaims" @click="loadClaims">加载待认领</ElButton>
       </ElSpace>
       <ElTable :data="claims" border stripe empty-text="暂无待认领动作">
         <ElTableColumn label="历史代码" min-width="180">

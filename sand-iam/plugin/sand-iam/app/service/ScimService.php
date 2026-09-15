@@ -113,9 +113,9 @@ final class ScimService
             $attributes = ['userName' => $username, 'displayName' => $displayName];
             if ($externalId !== null) $attributes['externalId'] = $externalId;
             $scim = ScimResource::create(['application_id' => $applicationId, 'identity_provider_id' => (int) $provider->id, 'identity_id' => (int) $identity->id, 'external_id' => $sourceKey, 'scim_id' => 'su_' . bin2hex(random_bytes(16)), 'version' => 1, 'source_state' => $sourceState, 'source_attributes' => $attributes]);
+            $this->audit($provider, $applicationId, 'scim.user_create', 'succeeded', $requestId, ['identity_id' => (int) $identity->id, 'scim_id' => (string) $scim->scim_id]);
             Db::commit();
         } catch (\Throwable $exception) { Db::rollback(); if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SCIM_CONFLICT', 409); throw $exception; }
-        $this->audit($provider, $applicationId, 'scim.user_create', 'succeeded', $requestId, ['identity_id' => (int) $identity->id, 'scim_id' => (string) $scim->scim_id]);
         return $this->resourceUser($scim, $identity);
     }
 
@@ -170,9 +170,9 @@ final class ScimService
                 $identity->save(['display_name' => (string) $attributes['displayName']]);
             }
             if (isset($changes['source_state'])) $this->setBindingSourceState($provider, $applicationId, (string) $scim->external_id, (string) $changes['source_state']);
+            $this->audit($provider, $applicationId, 'scim.user_patch', 'succeeded', $requestId, ['identity_id' => (int) $scim->identity_id, 'paths' => array_values(array_unique($paths))]);
             Db::commit();
         } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
-        $this->audit($provider, $applicationId, 'scim.user_patch', 'succeeded', $requestId, ['identity_id' => (int) $scim->identity_id, 'paths' => array_values(array_unique($paths))]);
         return $this->resourceUser($scim->refresh(), Identity::find((int) $scim->identity_id));
     }
 
@@ -197,9 +197,9 @@ final class ScimService
             $this->assertResourceVersion($scim, $ifMatch);
             $scim->save(['source_state' => 'deleted', 'version' => (int) $scim->version + 1]);
             $this->setBindingSourceState($provider, $applicationId, (string) $scim->external_id, 'deleted');
+            $this->audit($provider, $applicationId, 'scim.user_delete', 'succeeded', $requestId, ['scim_id' => $id]);
             Db::commit();
         } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
-        $this->audit($provider, $applicationId, 'scim.user_delete', 'succeeded', $requestId, ['scim_id' => $id]);
     }
 
     /** @return array<string,mixed> */
@@ -220,8 +220,7 @@ final class ScimService
     public function createGroup(IdentityProvider $provider, int $applicationId, array $resource, string $requestId): array
     {
         $sourceKey = $this->sourceKey($resource); $externalId = $this->externalId($resource); $displayName = $this->groupDisplayName($resource['displayName'] ?? null);
-        try { Db::startTrans(); $provider = $this->lockedProvider($provider, $applicationId); $attributes = ['displayName' => $displayName]; if ($externalId !== null) $attributes['externalId'] = $externalId; $group = ScimGroup::create(['application_id' => $applicationId, 'identity_provider_id' => (int) $provider->id, 'external_id' => $sourceKey, 'display_name' => $displayName, 'scim_id' => 'sg_' . bin2hex(random_bytes(16)), 'version' => 1, 'source_state' => 'active', 'source_attributes' => $attributes, 'status' => 1]); $this->replaceMembers($group, $provider, $applicationId, $resource['members'] ?? []); Db::commit(); } catch (\Throwable $exception) { Db::rollback(); if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SCIM_CONFLICT', 409); throw $exception; }
-        $this->audit($provider, $applicationId, 'scim.group_create', 'succeeded', $requestId, ['group_id' => (int) $group->id]);
+        try { Db::startTrans(); $provider = $this->lockedProvider($provider, $applicationId); $attributes = ['displayName' => $displayName]; if ($externalId !== null) $attributes['externalId'] = $externalId; $group = ScimGroup::create(['application_id' => $applicationId, 'identity_provider_id' => (int) $provider->id, 'external_id' => $sourceKey, 'display_name' => $displayName, 'scim_id' => 'sg_' . bin2hex(random_bytes(16)), 'version' => 1, 'source_state' => 'active', 'source_attributes' => $attributes, 'status' => 1]); $this->replaceMembers($group, $provider, $applicationId, $resource['members'] ?? []); $this->audit($provider, $applicationId, 'scim.group_create', 'succeeded', $requestId, ['group_id' => (int) $group->id]); Db::commit(); } catch (\Throwable $exception) { Db::rollback(); if (str_contains(strtolower($exception->getMessage()), 'unique')) throw new ApiException('SAND_IAM_SCIM_CONFLICT', 409); throw $exception; }
         return $this->group($group);
     }
 
@@ -240,8 +239,8 @@ final class ScimService
     {
         $current = $this->scimGroup($provider, $applicationId, $id);
         $this->assertSourceKey((string) $current->external_id, $resource);
-        Db::startTrans(); try { $provider = $this->lockedProvider($provider, $applicationId); $group = $this->lockedGroup($provider, $applicationId, $id); $this->assertGroupVersion($group, $ifMatch); $name = $this->groupDisplayName($resource['displayName'] ?? null); $attributes = $group->source_attributes; if (is_string($attributes)) $attributes = json_decode($attributes, true); if (!is_array($attributes)) $attributes = []; $attributes['displayName'] = $name; if (array_key_exists('externalId', $resource)) { $externalId = $this->externalId($resource); if ($externalId === null) unset($attributes['externalId']); else $attributes['externalId'] = $externalId; } $group->save(['display_name' => $name, 'source_attributes' => $attributes, 'version' => (int) $group->version + 1]); $this->replaceMembers($group, $provider, $applicationId, $resource['members'] ?? []); Db::commit(); } catch (\Throwable $e) { Db::rollback(); throw $e; }
-        $this->audit($provider, $applicationId, 'scim.group_replace', 'succeeded', $requestId, ['scim_id' => $id]); return $this->group($group->refresh());
+        Db::startTrans(); try { $provider = $this->lockedProvider($provider, $applicationId); $group = $this->lockedGroup($provider, $applicationId, $id); $this->assertGroupVersion($group, $ifMatch); $name = $this->groupDisplayName($resource['displayName'] ?? null); $attributes = $group->source_attributes; if (is_string($attributes)) $attributes = json_decode($attributes, true); if (!is_array($attributes)) $attributes = []; $attributes['displayName'] = $name; if (array_key_exists('externalId', $resource)) { $externalId = $this->externalId($resource); if ($externalId === null) unset($attributes['externalId']); else $attributes['externalId'] = $externalId; } $group->save(['display_name' => $name, 'source_attributes' => $attributes, 'version' => (int) $group->version + 1]); $this->replaceMembers($group, $provider, $applicationId, $resource['members'] ?? []); $this->audit($provider, $applicationId, 'scim.group_replace', 'succeeded', $requestId, ['scim_id' => $id]); Db::commit(); } catch (\Throwable $e) { Db::rollback(); throw $e; }
+        return $this->group($group->refresh());
     }
     /** @param array<string,mixed> $patch @return array<string,mixed> */
     public function patchGroup(IdentityProvider $provider, int $applicationId, string $id, array $patch, ?string $ifMatch, string $requestId): array
@@ -253,7 +252,7 @@ final class ScimService
             $kind = strtolower((string) $op['op']); $path = (string) ($op['path'] ?? ''); $value = $op['value'] ?? null;
             if ($path === '' && is_array($value) && in_array($kind, ['add', 'replace'], true)) {
                 if (array_key_exists(self::SOURCE_EXTENSION, $value)) throw new ApiException('SAND_IAM_SCIM_IMMUTABLE_SOURCE_KEY', 400);
-                if (array_key_exists('externalId', $value)) { $externalId = $this->externalId($value); if ($externalId === null) unset($current['externalId']); else $current['externalId'] = $externalId; }
+                if (array_key_exists('externalId', $value)) $current['externalId'] = $this->externalId($value);
                 if (array_key_exists('displayName', $value)) { if (!is_string($value['displayName'])) throw new ApiException('SAND_IAM_SCIM_INVALID_PATCH', 400); $current['displayName'] = $this->groupDisplayName($value['displayName']); }
                 if (array_key_exists('members', $value)) {
                     $members = $value['members'];
@@ -263,7 +262,7 @@ final class ScimService
                 continue;
             }
             if ($path === 'displayName' && is_string($value) && $kind !== 'remove') { $current['displayName'] = $this->cleanDisplayName($value, ''); continue; }
-            if ($path === 'externalId') { if ($kind === 'remove') unset($current['externalId']); else { $externalId = $this->externalId(['externalId' => $value]); if ($externalId === null) unset($current['externalId']); else $current['externalId'] = $externalId; } continue; }
+            if ($path === 'externalId') { $current['externalId'] = $kind === 'remove' ? null : $this->externalId(['externalId' => $value]); continue; }
             if ($path === self::SOURCE_EXTENSION || str_starts_with($path, self::SOURCE_EXTENSION . ':')) throw new ApiException('SAND_IAM_SCIM_IMMUTABLE_SOURCE_KEY', 400);
             if ($path === 'members') {
                 if ($kind === 'remove') $current['members'] = [];
@@ -280,7 +279,7 @@ final class ScimService
         }
         return $this->replaceGroup($provider,$applicationId,$id,$current,$ifMatch,$requestId);
     }
-    public function deleteGroup(IdentityProvider $provider,int $applicationId,string $id,?string $ifMatch,string $requestId): void { Db::startTrans(); try{$provider=$this->lockedProvider($provider,$applicationId);$group=$this->lockedGroup($provider,$applicationId,$id);$this->assertGroupVersion($group,$ifMatch);$group->save(['source_state'=>'deleted','status'=>2,'version'=>(int)$group->version+1]);foreach(ScimGroupMember::withTrashed()->where('group_id',(int)$group->id)->where('application_id',$applicationId)->lock(true)->select()->all() as $member){if((int)$member->status===1){$member->save(['status'=>2]);$member->delete();}}Db::commit();}catch(\Throwable $e){Db::rollback();throw $e;} $this->audit($provider,$applicationId,'scim.group_delete','succeeded',$requestId,['scim_id'=>$id]); }
+    public function deleteGroup(IdentityProvider $provider,int $applicationId,string $id,?string $ifMatch,string $requestId): void { Db::startTrans(); try{$provider=$this->lockedProvider($provider,$applicationId);$group=$this->lockedGroup($provider,$applicationId,$id);$this->assertGroupVersion($group,$ifMatch);$group->save(['source_state'=>'deleted','status'=>2,'version'=>(int)$group->version+1]);foreach(ScimGroupMember::withTrashed()->where('group_id',(int)$group->id)->where('application_id',$applicationId)->lock(true)->select()->all() as $member){if((int)$member->status===1){$member->save(['status'=>2]);$member->delete();}}$this->audit($provider,$applicationId,'scim.group_delete','succeeded',$requestId,['scim_id'=>$id]);Db::commit();}catch(\Throwable $e){Db::rollback();throw $e;} }
 
     /** @return array<string,mixed> */
     public function serviceProviderConfig(): array

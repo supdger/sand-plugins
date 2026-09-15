@@ -1,3 +1,5 @@
+import { validBaseUrl } from './baseUrl.js'
+
 /** SandAdmin management-plane SDK. This client never accepts workload credentials. */
 
 export type SandIamManagementJson = Record<string, unknown>
@@ -105,7 +107,7 @@ export class SandIamManagementClient {
 
   constructor(private readonly options: SandIamManagementClientOptions) {
     const baseUrl = options.baseUrl.replace(/\/+$/, '')
-    if (baseUrl === '' || (!baseUrl.startsWith('https://') && !baseUrl.startsWith('http://127.0.0.1') && !baseUrl.startsWith('http://localhost'))) {
+    if (!validBaseUrl(baseUrl)) {
       throw new SandIamManagementError('SAND_IAM_SDK_INVALID_CONFIGURATION', '管理 API 地址必须使用 HTTPS；仅本机开发允许 HTTP', 0)
     }
     this.baseUrl = baseUrl
@@ -184,7 +186,7 @@ export class SandIamManagementClient {
     const token = (await this.options.administratorToken()).trim()
     if (token === '') throw new SandIamManagementError('SAND_IAM_AUTHENTICATION_FAILED', '管理员登录态或 Bearer 令牌不能为空', 401)
     const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'X-Request-Id': requestId ?? createRequestId(), 'Cache-Control': 'no-store', Accept: 'application/json' }
-    const init: RequestInit = { method, headers }
+    const init: RequestInit = { method, headers, redirect: 'error' }
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json'
       init.body = JSON.stringify(body)

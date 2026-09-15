@@ -2,7 +2,13 @@
 
 > 冻结日期：2026-09-08。本文固定 `9 + 20 + 7 + 4 + 8 = 48` 个 FLOW 原子的名称、完成定义和当日计分基线。它是在原子名称遗失后，依据当时的产品需求、终极目标、验收矩阵、发布执行单、T09–T12 契约和现存证据完成的**基线重建**；不是对 2026-08-23 历史清单原文的伪造还原，也不把 2026-09-07/08 的候选或恢复状态冒充 P1 当前状态。后续[模块实现关口归位审计](sand-iam-module-implementation-gate-audit-2026-09-08.md)不改变 P01–P20 名称、产品范围或 20 项分母，只把误混入 P 的真实供应商、标准客户端、宿主 HTTP、浏览器、业务应用、恢复/性能和部署证据归还 F/L/D。
 
-## 2026-09-12 完整开源成品 Goal 当前基线
+## 2026-09-14 当前进度口径修正
+
+后续实现核查已发现并修复 P02、P14、P18 的功能缺口。历史 `P=20/20` 不能继续代表当前全需求完成，`28/48=58.3%` 也不是当前功能完成率。当前模块完整性尚未逐项核准，具体实现、离线验证和未验证层以[原任务板当前执行顺序](sand-iam-task-board.md#当前执行顺序)为准。
+
+下文保留原日期的证据和计分，不重新计分、不执行 FLOW。真实生命周期、七链、协议对端、发布包及最终稳定性仍未通过，不能声明可发布。
+
+## 2026-09-12 完整开源成品 Goal 历史基线
 
 ### 签名链初审 checkpoint（2026-09-12）
 
@@ -31,15 +37,15 @@ SandIAM 源码树、候选包和适用运行环境，按第 9 节逐项判定复
 
 | 当前事实 | 只读证据 | 结论 |
 | --- | --- | --- |
-| SandIAM 权威源码 | A′ 已提交 `61a7f13821980deca8479f9c9e5e872be92cf72a`，独立范围复核 ACCEPT、未 push；当前工作树 non-clean，有 22 项 tracked changes 与 6 个 untracked path roots | 主树 integrity 25/26，唯一失败为 clean/tracked；最终 commit/tree/ZIP 均 pending |
-| SandAdmin H1 基线 | `sandadmin-host.lock` 锁定 clean revision `558d92959947230ee562f29e015c62566be58c8e` | 仅证明宿主文件基线，不证明插件已同步、安装或运行 |
-| 包内一致性 | 当前静态状态：safe **114**、PHP lint **507**、package **24/24 PASS**；Composer **58** 与 TypeScript `dist` **4** 已双隔离重建并完成锁校验 | 仅证明当前源码包内部契约，不证明生命周期 |
+| SandIAM 权威源码 | A′ 已提交 `61a7f13821980deca8479f9c9e5e872be92cf72a`，独立范围复核 ACCEPT、未 push；当前 0.7.2 工作树 non-clean | 主树 integrity 25/26，唯一失败为 clean/tracked；最终 commit/tree/ZIP 均 pending |
+| SandAdmin H1 基线 | `sandadmin-host.lock` 锁定 clean revision `3f9c141de0bec49ac62d0512325c8ea7fcbd46d9`；宿主后台前端依赖已重建并实际返回 HTTP 200 | 当前 demo 插件载荷仍为 0.7.1；宿主启动不证明 0.7.2 已同步、安装或验收 |
+| 包内一致性 | 当前 0.7.2：非数据库 PHP **177/177**、Dart **62/62**、package integrity **25/26**、release payload **16/16**、package contract **22/22**；Composer vendor **58** 与 TypeScript `dist` **6** 由锁定契约约束 | 唯一 package 失败项是 clean/tracked HEAD；这些结果不证明生命周期、宿主或业务验收 |
 | 冻结 review-only artifact | v12 内容自洽；旧 verifier 对 manifest/validation 自报 `release/unsigned`、clean committed source/hygiene PASS | 独立 Astra 发现 verifier 只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件；自报已被推翻，v12 仅为历史快照，不能作为正式来源或升级包 |
 | 历史 review-only 清单 | `0.7.0-v70/v71` payload 相同；v70 archive `6cae3a2f…cfd97cf82`、635 entries、descriptor-excluded payload `4bbf9289…` | 仅作历史 0.7.0 证据，不能作为 0.7.1 证据；v71 B 已因 rsync size+mtime 假阴性被独立 REJECT |
 | 开源材料 | 已有 `CHANGELOG.md`、SBOM **80** 个组件（含 W3C vendored schema 独立 component）及 SPDX/许可证证据引用、精确坐标许可证策略、独立 SDK `LICENSE`/`NOTICE` 与 metadata、`THIRD_PARTY_NOTICES.md`、`SECURITY.md`、`CONTRIBUTING.md` 和八份公开中文指南；hygiene **16/16**、policy **16/16**，public path 漏检已修复，Astra 独立复核 **ACCEPT（P0/P1/P2=0）** | 仅修复开源材料静态门禁；v12 来源完整性仍 REJECT，最终 clean 候选、签名和发布材料门槛未通过 |
 | 旧循环 | Codex 与 Cursor Autopilot/DETECT 均已 `enabled=false` | 旧任务不会作为当前 Goal 的自动执行入口 |
 
-### 当前 FLOW 复核计分
+### 2026-09-12 FLOW 复核计分（历史记录，非当前完成率）
 
 | FLOW 关口 | 本轮已复核/总项 | 说明 |
 | --- | ---: | --- |
@@ -48,7 +54,7 @@ SandIAM 源码树、候选包和适用运行环境，按第 9 节逐项判定复
 | 正式 FLOW 验收 | **0/7** | 当前候选尚无完整七维真实证据 |
 | 本地业务闭环 | **0/4** | 当前候选尚无完整业务闭环证据 |
 | 可上线部署 | **0/8** | dirty workspace，未完成正式生命周期、恢复、稳定性或发布审查 |
-| 当前 Goal 总计 | **28/48** | 本轮从 0/48 逐项复核恢复，非自动继承旧结论 |
+| 当时 Goal 总计 | **28/48** | 当时从 0/48 逐项复核恢复；后续完整性修正见本文顶部，不作为当前功能完成率 |
 
 ### 可发布完整交付包门槛
 
