@@ -129,7 +129,21 @@ function migrationPayload(string $directory, array $names): string
     $payload = '';
     foreach ($names as $name) {
         $payload .= "\n-- lifecycle source: migrations/{$name}\n";
-        $payload .= rtrim(readRequired($directory . '/' . $name)) . "\n";
+        $source = readRequired($directory . '/' . $name);
+        if ($name === '038_auth_rate_limit_retention.pgsql') {
+            // Preserve the published migration and its ledger checksum.
+            // PostgreSQL returns an empty string for an absent index column.
+            $source = str_replace(
+                'pg_get_indexdef(actual_index.indexrelid, 3, true) IS NULL',
+                'actual_index.indnatts = 2 AND actual_index.indnkeyatts = 2',
+                $source,
+                $replacements
+            );
+            if ($replacements !== 1) {
+                throw new RuntimeException('Migration 038 index compatibility patch source changed');
+            }
+        }
+        $payload .= rtrim($source) . "\n";
     }
 
     return $payload;

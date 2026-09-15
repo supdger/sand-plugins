@@ -321,6 +321,19 @@ $assert('generated lifecycle separates full install from guarded 0.7.1 to 0.7.2 
     foreach ($manifestMigrationNames as $offset => $name) {
         $source = file_get_contents($root . '/migrations/' . $name);
         $payload = is_string($source) ? $collapse($source) : '';
+        if ($name === '038_auth_rate_limit_retention.pgsql') {
+            // Only the generated fresh-install index probe differs from the
+            // immutable published migration; all remaining bytes must match.
+            $payload = str_replace(
+                'pg_get_indexdef(actual_index.indexrelid, 3, true) IS NULL',
+                'actual_index.indnatts = 2 AND actual_index.indnkeyatts = 2',
+                $payload,
+                $replacements
+            );
+            if ($replacements !== 1) {
+                throw new RuntimeException('Migration 038 index compatibility source changed');
+            }
+        }
         if ($offset >= 4 && !str_contains($install, $payload)) {
             throw new RuntimeException('install is missing migration payload ' . $name);
         }

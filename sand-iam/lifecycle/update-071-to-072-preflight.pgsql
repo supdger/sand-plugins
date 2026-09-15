@@ -108,7 +108,8 @@ BEGIN
       AND actual_index.indoption::text = '0 0'
       AND pg_get_indexdef(actual_index.indexrelid, 1, true) = 'window_start'
       AND pg_get_indexdef(actual_index.indexrelid, 2, true) = 'id'
-      AND pg_get_indexdef(actual_index.indexrelid, 3, true) IS NULL;
+      AND actual_index.indnatts = 2
+      AND actual_index.indnkeyatts = 2;
     IF matched_indexes <> 1 THEN
         RAISE EXCEPTION 'SandIAM 0.7.2 update requires the completed revision 038 retention index';
     END IF;
