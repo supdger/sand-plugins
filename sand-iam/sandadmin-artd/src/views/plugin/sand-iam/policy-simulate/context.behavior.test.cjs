@@ -31,10 +31,10 @@ async function run() {
   assert.equal(h.p.identities.value.length, 1); assert.equal(h.p.identities.value[0].id, 101)
   h.p.identityId.value = '101'
   await h.p.runSimulate(); assert.equal(h.writes.length, 0)
-  h.p.resourceCode.value = 'matter'; h.p.action.value = 'matter.read'
+  h.p.resourceCode.value = 'work_item'; h.p.action.value = 'work_item.read'
   const simulate = h.p.runSimulate(); await h.p.runSimulate()
   assert.equal(h.writes.length, 1)
-  assert.equal(JSON.stringify(h.writes[0].params), '{"application_id":1,"identity_id":101,"resource_code":"matter","action":"matter.read","operation":"read","attributes":{}}')
+  assert.equal(JSON.stringify(h.writes[0].params), '{"application_id":1,"identity_id":101,"resource_code":"work_item","action":"work_item.read","operation":"read","attributes":{}}')
   h.writes[0].reject(new Error('retry')); await simulate; assert.equal(h.p.acting.value, false)
   const retry = h.p.runSimulate(); h.writes[1].resolve({ allowed: true }); await retry
   assert.equal(h.p.simulation.value.allowed, true)

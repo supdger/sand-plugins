@@ -33,6 +33,21 @@
 
 ### 当前执行顺序
 
+#### 2026-09-15 完整目标恢复与 demo 登录修复
+
+- **2026-09-15 解除暂停**：SandAdmin 已发布并推送 clean 宿主 `07d83d591b85deb83875473687a0d033a418c778`，`sand_plugins` 宿主锁提交为 `c7aaad447de551f4524044788814953b2cb468f5`；SandIAM PostgreSQL retention 索引结构校验修复提交为 `2f65ac6d964c385b4b7987cce4c6d6a831cd5c37`。当前宿主 dry-run 无差异，JWT 运行配置报告 `available`；SandIAM 从 clean consumer clone 重建的 unsigned ZIP SHA-256 为 `48fd6222bd1cb5f42677bdf16b9dd54d311d0b6f6365f74fe4c0a55de859f3a8`、689 项、重复构建字节一致，package integrity **26/26**，与 SandAdmin 独立宿主安装验收使用的修复包摘要一致。
+- demo 发布副本已从上述 clean clone 受控导出并锁定 `2f65ac6`，随后 dry-run 无差异；这仍只是 source export，不是安装。当前 demo 服务未运行，旧活动 registry 仍缺失，事务停在 `backed_up`。新宿主官方只读命令 `sandpackage:recover inspect-pre-upgrade sand-iam` 已返回 `pre_upgrade_backup_restore_required`，唯一允许 `restore_interrupted_pre_upgrade_backup`，确认 0.7.0 备份、旧登记摘要与实际 deployment manifest；尚未执行恢复、数据库、安装或服务操作。
+- 上述官方恢复已执行并返回 `state=restored`、`sql_executed=false`：0.7.0 registry 恢复为 `state=1` / `stage=completed`，登记摘要与实际 deployment manifest 一致，后端和前端 runtime 均存在，旧事务 journal 已清除，再次 inspect 明确无待恢复记录。随后尝试启动 demo Webman 时，进程因既有 PostgreSQL 18.4 实例未运行而退出；未进入 0.7.2 上传、数据库升级或部署。启动 `/opt/homebrew/var/postgresql@18` 的精确服务操作被自动审批要求本次明确授权，未绕过。
+- clean `c7aaad4` checkout、SandIAM 最后源码变更 `2f65ac6`、package integrity **26/26** 及两处独立环境构建相同 `48fd6222…f3a8` ZIP，证明该包可重建且可由新 SandPackage 安装；但独立发布审查发现管理端四处用户可见法律业务示例，原检查器只扫描公开 Markdown，故该摘要已废止为发布候选。权威源码已改用通用 `work_item` 示例，检查器现按内容识别发布包全部非 vendor UTF-8 文本；行为回归、发布卫生 **16/16**、无扩展名文本负例和差异检查通过。独立复核确认 631 个非 vendor 文本及四个 `.env.example` 均受覆盖，P0/P1/P2=0。本批尚未提交和从新 clean revision 重建，D01 暂退回未通过。当前 FLOW 为 R **8/9**、P **20/20**、F **0/7**、L **0/4**、D **0/8**，合计 **28/48**；七链仍 **0/7**，发布门槛仍 **0/10**。
+- **暂停记录（已解除）**：SandIAM 自身源码功能对账为 **20/20**；下一批能增加正式 FLOW、业务链、安装生命周期或发布门槛分子的工作，须绑定 SandAdmin 维护方发布的 clean revision 及其中按 SaiPackage 基线恢复的内置 SandPackage。等待期间按用户指示冻结 SandIAM 权威源码与 demo；上列 `07d83d5` clean revision 已解除该等待条件。
+- 用户已结束“只实现功能、不执行 FLOW”的阶段限制，恢复本 Goal 的完整范围。当前继续推进 demo 正式生命周期、真实 HTTP/浏览器、七条业务链、48 项 FLOW、10 项发布门槛和独立终验；源码 20/20 不等于上述门槛已通过。
+- 权威源码已按授权提交为 `213d42ef72d45388ce5813d287dd737bfbc33a34`，仅包含 `sand-iam/**`，未 push。当前 Git-blob-only unsigned 候选 ZIP SHA-256 为 `3917319c03fa9f44f4e20570a02ee46bea77bfc8df3ec96c078479e216fd9f48`；三次独立构建摘要一致，package integrity **26/26**。
+- demo 前端和 Webman 后端均已运行；真实 `/api/core/captcha` 返回 200。此前后台登录失败根因是 demo 缺少宿主独立的 Tinywan JWT 运行配置，账号密码校验通过后在签发令牌时报 `JwtConfigException`。经用户明确授权执行宿主自己的 JWT 初始化和服务重载后，验证码、登录及携带新令牌读取用户信息均返回 200，临时 cookie、验证码和令牌材料已清理。
+- `scripts/sync-sandadmin-host.sh` 原先直接 rsync SandAdmin 工作树，Git ignore 不会保护 `server/config/plugin/tinywan/jwt/`，存在复制源宿主密钥或因源缺失删除 demo 密钥的风险。消费侧现已排除该宿主独立目录，并只报告 `available`/`missing`/`unreadable`/`placeholder`；`available` 不能替代真实登录验证。脚本语法、diff-check 和当前 host dry-run 通过，Astra/high 独立复核通过并补齐 grep I/O 失败不误报。
+- 当前权威源码为 0.7.2，demo 发布副本仍为 0.7.1，已安装运行文件仍为 0.7.0。SandPackage 活动 registry 实际缺失，候选事务停在 `backed_up`；官方只读 `sandpackage:recover inspect sand-iam` 复现 `Undefined array key "package_backup_id"`。SandAdmin 维护方正在按 SaiPackage 基线恢复 SandPackage 正轨；SandIAM 不再开发或交付 SandPackage 修复。待维护方完成后，从新的 clean SandAdmin revision 拉取包含 SandPackage 的宿主，再以正式安装路径重建 demo 并安装当前 SandIAM 候选。
+- 当前 0.7.2 权威源码的全部 `*_non_pg_test.php` 已重新执行，结果 **137/137**；PHP SDK、TypeScript SDK 和 Dart SDK **62/62** 均通过，发布载荷卫生 **16/16**。包完整性 **25/26**，唯一失败为本节及本轮规格修正使 `sand-iam/` 不再与已提交候选 Git blob 完全一致，不能沿用旧 26/26。R08 静态门发现 T10-03 的 `outbox_id` 和 `SAND_IAM_SYNC_OUTBOX_NOT_RETRYABLE` 未同步进入字段/错误码对账，已修正两份权威规格并恢复 **9/9**；该修正只关闭需求冻结一致性缺口，不增加真实 FLOW、业务链或发布门槛分子。
+- 早前按授权写入 `/Users/code/project/sandadmin` 的本地恢复补丁未提交、未同步、未重载，也不再作为 SandIAM 交付方案继续推进；保留现场供 SandAdmin 维护方自行判断和处理，SandIAM 不据此增加任何验收或发布计分。
+
 #### 2026-09-15 本次 Goal 功能实现对账
 
 本表是本次目标的当前源码功能对账，替代历史完成数及“尚未核准”描述。依据原 P01–P20 功能子项，核对当前权威源码的入口、调用链、实现和确定缺陷；不继承历史勾选，不以没跑 FLOW 判定源码未实现。**已实现（源码层）20/20，部分实现 0/20，无法确认 0/20。** 20/20＝100% 只表示该模块口径的源码实现确认比例，不表示无缺陷、业务验收、可发布或完整交付完成。
@@ -62,7 +77,7 @@
 
 对账分工：Astra/medium 核 P01–P04/P20；Sol/medium 核 P07–P11；另一 Sol/medium 核 P05/P06/P12/P15；主控核 P13/P14/P16–P19，并复读 P07 两控制器及 Kerberos 默认类确认缺口。此批为当前源码核对，没有运行数据库、服务、FLOW 或终验。完整目标的 48 原子、7 业务链、10 发布门槛尚未达成，不据本表增加验收账本分子。
 
-P11、P14、P15 的已知源码缺口均已补齐。当前按用户要求只实现功能，不执行 FLOW 或验收；完整目标保留。
+P11、P14、P15 的已知源码缺口均已补齐。该“只实现功能”阶段现已结束，后续按上节恢复完整目标。
 
 #### 2026-09-15 P11 可空数据分级约束源码闭环
 

@@ -294,10 +294,10 @@
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="业务资源代码">
-          <ElInput v-model="resourceCode" placeholder="matter" />
+          <ElInput v-model="resourceCode" placeholder="work_item" />
         </ElFormItem>
         <ElFormItem label="语义动作">
-          <ElInput v-model="action" placeholder="matter.read" />
+          <ElInput v-model="action" placeholder="work_item.read" />
         </ElFormItem>
         <ElFormItem label="数据操作">
           <ElSelect v-model="operation">
@@ -385,7 +385,7 @@
           <ElInput v-model="applicationCode" />
         </ElFormItem>
         <ElFormItem label="接口代码">
-          <ElInput v-model="apiCode" placeholder="matter.detail" />
+          <ElInput v-model="apiCode" placeholder="work_item.detail" />
         </ElFormItem>
         <ElFormItem label="接口版本">
           <ElInput v-model="apiVersion" />

@@ -416,7 +416,7 @@ export const policyFields: SandIamFormField[] = [
   }),
   field('action', 'text', {
     required: true,
-    help: '稳定的业务语义动作，例如 matter.read；不是页面按钮或 HTTP 方法。'
+    help: '稳定的业务语义动作，例如 work_item.read；不是页面按钮或 HTTP 方法。'
   }),
   field('effect', 'select', {
     required: true,

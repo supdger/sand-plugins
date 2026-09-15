@@ -155,7 +155,6 @@ $publicMarkdown = array_values(array_filter($payload, static fn (string $path): 
     && !str_starts_with($path, 'plugin/sand-iam/vendor/')));
 $brokenLinks = [];
 $internalMarkers = [];
-$industryMarkers = [];
 foreach ($publicMarkdown as $path) {
     $source = file_get_contents($root . '/' . $path);
     if (!is_string($source)) {
@@ -164,10 +163,6 @@ foreach ($publicMarkdown as $path) {
     }
     if (preg_match('#(?:docs/development|\.codex/|\.cursor/|(?:^|[\s"\'`=:(\[,])/(?:Users|home)/[A-Za-z0-9._-]+(?:/|$)|(?:^|[\s"\'`=:(\[,])/private(?:/|$)|file://|(?<![A-Za-z0-9_])(?:\$HOME|\$\{HOME\}|~)(?:[\\\\/]|$)|(?<![A-Za-z0-9])[A-Za-z]:[\\\\/])#', $source) === 1) {
         $internalMarkers[] = $path;
-    }
-    if ((str_starts_with($path, 'docs/user-guide/') || str_starts_with($path, 'examples/'))
-        && preg_match('/(?:案件|律所|律师|律序|\bmatter\b|\blawyer\b)/iu', $source) === 1) {
-        $industryMarkers[] = $path;
     }
     preg_match_all('/\[[^\]]*\]\(([^)]+)\)/', $source, $matches);
     foreach ($matches[1] ?? [] as $rawTarget) {
@@ -180,25 +175,24 @@ foreach ($publicMarkdown as $path) {
 }
 $record('public Markdown links stay inside the payload', $brokenLinks === [], implode(', ', array_slice($brokenLinks, 0, 10)));
 $record('public Markdown has no internal task or local-path markers', $internalMarkers === [], implode(', ', $internalMarkers));
-$record('public guides and examples are industry-neutral', $industryMarkers === [], implode(', ', $industryMarkers));
 
-$textExtensions = ['css', 'dart', 'html', 'ini', 'js', 'json', 'lock', 'md', 'mjs', 'pgsql', 'php', 'sh', 'sql', 'ts', 'tsx', 'txt', 'vue', 'yaml', 'yml'];
 $localPathFiles = [];
 $internalPayloadFiles = [];
 $credentialFiles = [];
+$industryMarkers = [];
 foreach ($payload as $path) {
     if (str_starts_with($path, 'plugin/sand-iam/vendor/')) continue;
-    $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-    if (!in_array($extension, $textExtensions, true) && !in_array(basename($path), ['composer.lock', 'composer.json'], true)) continue;
     $source = file_get_contents($root . '/' . $path);
-    if (!is_string($source)) continue;
+    if (!is_string($source) || str_contains($source, "\0") || preg_match('//u', $source) !== 1) continue;
     if (preg_match('#(?:file://|(?:^|[\s"\'`=:(\[,])/(?:Users|home)/[A-Za-z0-9._-]+(?:/|$)|(?:^|[\s"\'`=:(\[,])/private(?:/|$)|(?<![A-Za-z0-9_])(?:\$HOME|\$\{HOME\}|~)(?:[\\\\/]|$)|(?<![A-Za-z0-9])[A-Za-z]:[\\\\/])#', $source) === 1) $localPathFiles[] = $path;
     if (preg_match('#(?:\.codex/|\.cursor/|docs/development/|candidate/dirty-not-release|autopilot)#i', $source) === 1) $internalPayloadFiles[] = $path;
     if (preg_match('/-----BEGIN [A-Z ]*PRIVATE KEY-----|\bsiam_(?:at|wc|rt)_[A-Za-z0-9_-]{8,}\b/i', $source) === 1) $credentialFiles[] = $path;
+    if (preg_match('/(?:案件|律所|律师|律序|\bmatter\b|\blawyer\b)/iu', $source) === 1) $industryMarkers[] = $path;
 }
 $record('payload has no developer-machine absolute paths', $localPathFiles === [], implode(', ', $localPathFiles));
 $record('payload has no internal task-system references', $internalPayloadFiles === [], implode(', ', $internalPayloadFiles));
 $record('payload has no high-confidence private keys or SandIAM credentials', $credentialFiles === [], implode(', ', $credentialFiles));
+$record('release payload is industry-neutral', $industryMarkers === [], implode(', ', $industryMarkers));
 
 $failed = array_keys(array_filter($checks, static fn (bool $passed): bool => !$passed));
 foreach ($checks as $name => $passed) {

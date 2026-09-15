@@ -114,4 +114,4 @@ LIMIT :limit
 | --- | --- | --- |
 | R08-T10-01 | `lifecycle_state`、`group_code`、`member_id` | `SAND_IAM_IDENTITY_LIFECYCLE_UNAVAILABLE`：拒绝变更并说明恢复限制。 |
 | R08-T10-02 | `invitation_token`、`external_guest_id`、`import_row` | `SAND_IAM_INVITATION_GROUPS_INVALID`、`SAND_IAM_IMPORT_FILE_INVALID`：拒绝确认，修正后可重试。 |
-| R08-T10-03 | `sync_connector_id`、`cursor`、`conflict_policy` | `SAND_IAM_SYNC_CONFIGURATION_INVALID`：保留失败页并修正后重试。 |
+| R08-T10-03 | `sync_connector_id`、`cursor`、`conflict_policy`、`outbox_id` | `SAND_IAM_SYNC_CONFIGURATION_INVALID`：保留失败页并修正后重试；`SAND_IAM_SYNC_OUTBOX_NOT_RETRYABLE`：拒绝跨应用、非 failed、连接停用或存在 running 同步任务时的显式重试。 |
