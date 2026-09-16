@@ -106,7 +106,7 @@ final class ApiRouteBindingController extends ApplicationResourceController
             || str_contains($route, '?')
             || str_contains($route, '#')
             || str_contains($route, '//')
-            || !preg_match('~^/[A-Za-z0-9._~!$&\'()*+,;=:@%/{\}\[\]-]*$~', $route)
+            || !preg_match('~^/[A-Za-z0-9._\x7E!$&\'()*+,;=:@%/{\}\[\]-]*$~', $route)
         ) {
             throw new ApiException('SAND_IAM_VALIDATION_ERROR: 路由模板须以 / 开头，不含域名、查询参数、片段或连续斜杠', 400);
         }

@@ -43,7 +43,8 @@ clean Git commit 的 blob 构建，不能以本机缓存或 ignored 文件替代
 manifest 和 ZIP 内逐文件摘要，再执行安装。
 
 已发布迁移文件不可修改。`0.7.2` 只允许已完成 `001–038` 精确账本的 `0.7.1` 安装执行
-`039_service_grant_nullable_data_class.pgsql`，使服务授权的可空 `data_class` 与公开接口契约一致。
+`039_service_grant_nullable_data_class.pgsql` 和 `040_passkey_auth_challenge_identity.pgsql`，
+分别对齐服务授权的可空 `data_class` 与 Passkey 成功后 challenge 绑定身份的运行契约。
 不要手工改写迁移账本、伪造失败状态或跳过前置核验。
 安装、升级和卸载都可能改变数据库，应先备份，并只在获得环境负责人授权后执行。
 

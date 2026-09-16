@@ -31,6 +31,7 @@ final class ApplicationAuthorizationService
         string $apiVersion,
         array $attributes,
         string $requestId,
+        ?array $entityAttributes = null,
     ): array {
         $requestId = RequestId::normalize($requestId);
         try {
@@ -41,7 +42,31 @@ final class ApplicationAuthorizationService
                 $apiCode,
                 $apiVersion,
             );
-            return $this->decision($application, $identity, $api, $attributes, $requestId);
+            $decision = $this->decision($application, $identity, $api, $attributes, $requestId);
+            if ($decision['allowed'] !== true || $entityAttributes === null) {
+                return $decision + ['scope_checked' => false];
+            }
+            try {
+                $this->assertScope(
+                    (int) $decision['application_id'],
+                    (int) $decision['identity_id'],
+                    (string) $decision['resource_code'],
+                    (string) $decision['operation'],
+                    (array) $decision['scope'],
+                    $entityAttributes,
+                    (string) $decision['request_id'],
+                );
+            } catch (ApiException $exception) {
+                if (!str_starts_with($exception->getMessage(), 'SAND_IAM_RESOURCE_SCOPE_DENIED')) {
+                    throw $exception;
+                }
+                return array_replace($decision, [
+                    'allowed' => false,
+                    'code' => 'SAND_IAM_RESOURCE_SCOPE_DENIED',
+                    'scope_checked' => true,
+                ]);
+            }
+            return $decision + ['scope_checked' => true];
         } catch (ApiException $exception) {
             $this->auditResolutionFailure($accessToken, $requestId, $apiCode, $exception);
             throw $exception;

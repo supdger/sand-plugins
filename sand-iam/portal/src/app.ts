@@ -1659,7 +1659,7 @@ function render(): void {
     button.addEventListener("click", () => {
       const id = Number(button.getAttribute("data-revoke-factor"));
       const type = button.getAttribute("data-factor-type");
-      const factor = state.factors.find((item) => item.id === id);
+      const factor = state.factors.find((item) => item.id === id && item.type === type);
       if (factor !== undefined && (type === "totp" || type === "passkey")) {
         void revokeFactor(factor);
       }

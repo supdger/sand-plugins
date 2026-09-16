@@ -108,17 +108,19 @@ if ($kind === 'endurance') {
                     'recovery_attempts' => -1, 'unresolved_failures' => -1,
                     'business_code_change_points' => -1, 'completed' => false,
                     'result_equivalent' => false, 'security_equivalent' => false, 'cleanup_verified' => false,
-                    'evidence' => [[
-                        'path' => 'evidence/' . $journeyId . '-' . $system . '-' . $round . '.json',
-                        'sha256' => '__REQUIRED_EVIDENCE_SHA256__',
-                    ]],
+                    'evidence' => [
+                        ['kind' => 'structured', 'path' => 'evidence/' . $journeyId . '/' . $system . '-' . $round . '/structured.json', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
+                        ['kind' => 'browser', 'path' => 'evidence/' . $journeyId . '/' . $system . '-' . $round . '/browser.json', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
+                        ['kind' => 'system', 'path' => 'evidence/' . $journeyId . '/' . $system . '-' . $round . '/system.json', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
+                        ['kind' => 'cleanup', 'path' => 'evidence/' . $journeyId . '/' . $system . '-' . $round . '/cleanup.json', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
+                    ],
                 ];
             }
         }
         $journeys[] = ['id' => $journeyId, 'runs' => $runs];
     }
     $document = [
-        'schema' => 'sand-iam.casdoor-comparison/v1', 'candidate' => $candidate,
+        'schema' => 'sand-iam.casdoor-comparison/v2', 'candidate' => $candidate,
         'reviewer' => ['id' => '__REQUIRED_REVIEWER_ID__', 'independent' => false, 'webman_experience' => false, 'conflict_statement' => '__REQUIRED_CONFLICT_STATEMENT__'],
         'environment' => ['fingerprint' => '__REQUIRED_ENVIRONMENT_SHA256__', 'host' => '__REQUIRED_HOST__', 'browser' => '__REQUIRED_BROWSER__', 'php' => '__REQUIRED_PHP__', 'postgresql' => '__REQUIRED_POSTGRESQL__', 'network_profile' => '__REQUIRED_NETWORK_PROFILE__'],
         'journeys' => $journeys,
@@ -142,11 +144,17 @@ if ($kind === 'endurance') {
             'started_at' => '__REQUIRED_UTC_START__', 'ended_at' => '__REQUIRED_UTC_END__',
             'assertions' => array_fill_keys($assertionNames, false),
             'completed' => false, 'cleanup_verified' => false, 'unresolved_failures' => -1,
-            'evidence' => [['path' => 'evidence/' . $id . '.json', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__']],
+            'evidence' => [
+                ['kind' => 'structured', 'path' => 'evidence/' . $id . '/structured.json', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
+                ['kind' => 'client', 'path' => 'evidence/' . $id . '/client.log', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
+                ['kind' => 'sandiam', 'path' => 'evidence/' . $id . '/sandiam.json', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
+                ['kind' => 'counterpart', 'path' => 'evidence/' . $id . '/counterpart.log', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
+                ['kind' => 'cleanup', 'path' => 'evidence/' . $id . '/cleanup.json', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
+            ],
         ];
     }
     $document = [
-        'schema' => 'sand-iam.protocol-interop/v1', 'candidate' => $candidate,
+        'schema' => 'sand-iam.protocol-interop/v2', 'candidate' => $candidate,
         'reviewer' => ['id' => '__REQUIRED_REVIEWER_ID__', 'independent' => false, 'conflict_statement' => '__REQUIRED_CONFLICT_STATEMENT__'],
         'environment' => ['fingerprint' => '__REQUIRED_ENVIRONMENT_SHA256__', 'host' => '__REQUIRED_HOST__', 'postgresql' => '__REQUIRED_POSTGRESQL__', 'network_profile' => '__REQUIRED_NETWORK_PROFILE__'],
         'cases' => $cases,

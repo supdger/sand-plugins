@@ -71,6 +71,7 @@ $authorizer = (string) file_get_contents($root . '/plugin/sand-iam/app/runtime/S
 $normalizer = (string) file_get_contents($root . '/plugin/sand-iam/app/security/ServiceGrantConstraintNormalizer.php');
 $controller = (string) file_get_contents($root . '/plugin/sand-iam/app/admin/controller/ServiceGrantController.php');
 $routes = (string) file_get_contents($root . '/plugin/sand-iam/config/route.php');
+$pgIntegration = (string) file_get_contents($root . '/plugin/sand-iam/tests/service_grant_invocation_control_pg_integration_test.php');
 foreach (["service.code AS service_code", "hash_equals((string) \$client->audience, \$audience)", 'verifyForService', "subject_scope_trust' => 'caller_asserted'", 'action_grants', 'SAND_IAM_SERVICE_NETWORK_FORBIDDEN', 'NetworkPolicy::allows'] as $needle) invocationControlAssert(str_contains($provider, $needle), "context provider missing {$needle}");
 foreach (['ServiceInvocationOperation', 'ServiceInvocationFactResolverRegistry', 'ResolvedInvocationFacts::resolve', 'ON CONFLICT (grant_id,window_seconds,window_start)', 'service.invoke.authorize', 'service.invoke.revalidate', 'SAND_IAM_SERVICE_QUOTA_EXCEEDED', 'SAND_IAM_SERVICE_NETWORK_FORBIDDEN', 'SAND_IAM_INVOCATION_SCOPE_FORBIDDEN', "'context_id' =>", "'credential_id' =>", "'grant_ids' =>", 'grantSet($claims)', 'assertFactsScope($claims, $facts)', 'facts->organizationId', 'facts->applicationId', 'facts->environmentId', 'facts->workloadClientId', "operation->context_id", "operation->credential_id", "operation->resource_type"] as $needle) invocationControlAssert(str_contains($authorizer, $needle), "invocation authorizer missing {$needle}");
 $scopeCheckPosition = strpos($authorizer, '$this->assertFactsScope($claims, $facts);');
@@ -83,6 +84,44 @@ invocationControlAssert(!str_contains((string) file_get_contents($root . '/plugi
 invocationControlAssert(str_contains($normalizer, 'SAND_IAM_DATA_CLASS_FORBIDDEN'), 'data class exact-match error is missing');
 invocationControlAssert(str_contains($controller, 'SAND_IAM_SERVICE_GRANT_IMMUTABLE') && str_contains($controller, 'ServiceGrantConstraintNormalizer::quota') && str_contains($controller, 'ServiceGrantConstraintNormalizer::dataClass'), 'grant management does not enforce immutable strict constraints');
 invocationControlAssert(!str_contains($routes, 'ServiceInvocationAuthorizer'), 'host-local invocation authorizer was exposed as public HTTP');
+invocationControlAssert(
+    str_contains($pgIntegration, 'function invocationPgCloseChildren(array &$children, bool $terminate): void')
+    && str_contains($pgIntegration, 'invocationPgCloseChildren($children, false);')
+    && str_contains($pgIntegration, 'finally {')
+    && str_contains($pgIntegration, 'invocationPgCloseChildren($children, true);'),
+    'quota concurrency test does not join or terminate workers before fixture cleanup',
+);
+invocationControlAssert(
+    str_contains($pgIntegration, '\\Dotenv\\Dotenv::createUnsafeImmutable($hostRoot)->load();')
+    && str_contains($pgIntegration, "putenv('SAND_IAM_CONTEXT_SIGNING_KEY=' . \$key);")
+    && str_contains($pgIntegration, "\$_ENV['SAND_IAM_CONTEXT_SIGNING_KEY'] = \$key;")
+    && str_contains($pgIntegration, "\$_SERVER['SAND_IAM_CONTEXT_SIGNING_KEY'] = \$key;")
+    && str_contains($pgIntegration, "Db::query('SELECT current_database() AS name')")
+    && str_contains($pgIntegration, 'refusing fixture writes outside expected database')
+    && str_contains($pgIntegration, 'did not load from the authoritative plugin source')
+    && strpos($pgIntegration, "if ((\$argv[1] ?? '') === '--quota-worker')") > strpos($pgIntegration, "Db::query('SELECT current_database() AS name')"),
+    'quota concurrency parent and worker do not share fail-closed configuration, source, and database guards',
+);
+foreach ([
+    'fixture cleanup left audit rows',
+    'fixture cleanup left quota rows',
+    'fixture cleanup left invocation rows',
+    'fixture cleanup left grant rows',
+    'fixture cleanup left rows in {$table}',
+] as $cleanupProof) {
+    invocationControlAssert(str_contains($pgIntegration, $cleanupProof), "quota concurrency test is missing cleanup proof: {$cleanupProof}");
+}
+$selfTestOutput = [];
+$selfTestStatus = 0;
+exec(
+    escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($root . '/plugin/sand-iam/tests/service_grant_invocation_control_pg_integration_test.php') . ' --signing-key-self-test',
+    $selfTestOutput,
+    $selfTestStatus,
+);
+invocationControlAssert(
+    $selfTestStatus === 0 && $selfTestOutput === ['service invocation signing key self-test passed'],
+    'quota concurrency signing key repositories diverged when configuration was empty',
+);
 
 $migration = $root . '/migrations/030_service_grant_invocation_control.pgsql';
 $pluginMigration = $root . '/plugin/sand-iam/migrations/030_service_grant_invocation_control.pgsql';

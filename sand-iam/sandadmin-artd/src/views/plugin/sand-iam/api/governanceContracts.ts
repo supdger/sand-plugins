@@ -163,6 +163,7 @@ export function describeRouteBindingPayloadError(
 
 export interface SandIamOnboardingPreview {
   readonly dryRun: true
+  readonly canApply: boolean
   readonly operationId: string
   readonly previewHash: string
   readonly organizationId: number | null
@@ -194,6 +195,7 @@ export function parseOnboardingPreview(value: unknown): SandIamOnboardingPreview
     : []
   return {
     dryRun: true,
+    canApply: record.valid !== false,
     operationId,
     previewHash,
     organizationId: readPositiveInt(record.organization_id),
@@ -201,6 +203,43 @@ export function parseOnboardingPreview(value: unknown): SandIamOnboardingPreview
     changeCount: changes.length,
     changes
   }
+}
+
+/**
+ * 路由清单预检沿用同一展示 DTO，但对象键来自请求方法与路由模板。
+ */
+export function parseRouteManifestPreview(value: unknown): SandIamOnboardingPreview | null {
+  const record = unwrapData(value)
+  if (record === null || record.dry_run !== true) return null
+  const previewHash = readString(record.preview_hash)
+  const operationId = readString(record.operation_id)
+  if (!/^[a-f0-9]{64}$/.test(previewHash) || operationId === '') return null
+  const candidates = [
+    ...(Array.isArray(record.changes) ? record.changes : []),
+    ...(Array.isArray(record.problems) ? record.problems : [])
+  ]
+  const changes = candidates
+    .map((item) => parseRouteManifestChange(item))
+    .filter((item): item is SandIamOnboardingChange => item !== null)
+  return {
+    dryRun: true,
+    canApply: record.valid === true,
+    operationId,
+    previewHash,
+    organizationId: readPositiveInt(record.organization_id),
+    applicationId: readPositiveInt(record.application_id),
+    changeCount: changes.length,
+    changes
+  }
+}
+
+function parseRouteManifestChange(value: unknown): SandIamOnboardingChange | null {
+  if (!isRecord(value)) return null
+  const method = readString(value.method)
+  const routeTemplate = readString(value.route_template)
+  const operation = readString(value.operation)
+  if (method === '' || routeTemplate === '' || operation === '') return null
+  return { objectType: 'route', objectKey: `${method} ${routeTemplate}`, operation }
 }
 
 function parseOnboardingChange(value: unknown): SandIamOnboardingChange | null {
@@ -291,7 +330,7 @@ export function parseOidcSigningStatus(value: unknown): SandIamOidcSigningStatus
 }
 
 /**
- * 管理端不能把 route-sync/v1 当成独立 HTTP；只允许 onboarding 清单进入 preview/apply。
+ * 同一页面接受完整接入清单和独立路由清单，并在提交时分流到各自的预检/应用接口。
  */
 export function describeOnboardingManifestError(value: unknown): string | null {
   if (!isRecord(value)) {
@@ -299,7 +338,15 @@ export function describeOnboardingManifestError(value: unknown): string | null {
   }
   const format = readString(value.format)
   if (format === SAND_IAM_ROUTE_SYNC_FORMAT) {
-    return '这份路由清单不能直接在这里导入。请向开发团队索取用于管理端导入的接入清单，再先查看变更后确认保存。'
+    if (
+      readString(value.organization_code) === '' ||
+      readString(value.application_code) === '' ||
+      readString(value.environment_code) === '' ||
+      !Array.isArray(value.routes)
+    ) {
+      return '路由清单必须包含客户主体、应用、环境代码和 routes 列表。'
+    }
+    return null
   }
   if (format !== SAND_IAM_ONBOARDING_FORMAT) {
     return '接入清单版本不受支持。请向开发团队索取当前版本的清单。'

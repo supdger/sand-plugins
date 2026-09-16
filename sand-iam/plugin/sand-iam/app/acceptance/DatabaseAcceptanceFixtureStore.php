@@ -12,18 +12,40 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
     private const TABLES = [
         'organization' => 'sand_iam_organization',
         'application' => 'sand_iam_application',
+        'application_experience' => 'sand_iam_application_experience',
         'environment' => 'sand_iam_environment',
         'resource' => 'sand_iam_resource',
+        'application_business_action' => 'sand_iam_application_business_action',
         'identity' => 'sand_iam_identity',
+        'auth_policy' => 'sand_iam_auth_policy',
         'identity_group' => 'sand_iam_identity_group',
         'identity_group_member' => 'sand_iam_identity_group_member',
         'identity_group_role' => 'sand_iam_identity_group_role',
+        'sync_connector' => 'sand_iam_sync_connector',
+        'sync_run' => 'sand_iam_sync_run',
+        'sync_resource' => 'sand_iam_sync_resource',
+        'directory_identity' => 'sand_iam_identity',
+        'identity_invitation' => 'sand_iam_identity_invitation',
+        'identity_import_job' => 'sand_iam_identity_import_job',
+        'identity_import_row' => 'sand_iam_identity_import_row',
+        'import_invitation' => 'sand_iam_identity_invitation',
+        'identity_provider' => 'sand_iam_identity_provider',
+        'identity_provider_application' => 'sand_iam_identity_provider_application',
+        'scim_token' => 'sand_iam_scim_token',
+        'scim_resource' => 'sand_iam_scim_resource',
+        'identity_binding' => 'sand_iam_identity_binding',
+        'provisioning_event' => 'sand_iam_provisioning_event',
+        'scim_identity' => 'sand_iam_identity',
         'identity_auth' => 'sand_iam_identity_auth',
+        'auth_verification' => 'sand_iam_auth_verification',
+        'auth_challenge' => 'sand_iam_auth_challenge',
         'auth_session' => 'sand_iam_auth_session',
         'auth_refresh_token' => 'sand_iam_auth_refresh_token',
         'mfa_factor' => 'sand_iam_mfa_factor',
         'mfa_recovery_code' => 'sand_iam_mfa_recovery_code',
+        'webauthn_credential' => 'sand_iam_webauthn_credential',
         'role' => 'sand_iam_role',
+        'admin_organization_grant' => 'sand_iam_admin_organization_grant',
         'admin_application_grant' => 'sand_iam_admin_application_grant',
         'workload_client' => 'sand_iam_workload_client',
         'credential' => 'sand_iam_credential',
@@ -138,7 +160,7 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
             ->where('actor_type', 'admin')
             ->where('actor_ref', (string) $adminId)
             ->where('outcome', 'succeeded')
-            ->exists();
+            ->count() > 0;
     }
 
     public function organizationApplicationEnvironmentUniverse(string $prefix, bool $lock): array
@@ -155,11 +177,26 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
         if ($lock) $applicationQuery->lock(true);
         $roots['application'] = $this->queryRows($applicationQuery);
         $applicationIds = $this->sortedIds($roots['application']);
+        $experienceRows = [];
+        if ($applicationIds !== []) {
+            $query = Db::table($this->table('application_experience'))
+                ->whereIn('application_id', $applicationIds);
+            if ($lock) $query->lock(true);
+            $experienceRows = $this->queryRows($query);
+        }
         $environmentQuery = Db::table($this->table('environment'))
             ->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
         if ($applicationIds !== []) $environmentQuery->whereOr('application_id', 'in', $applicationIds);
         if ($lock) $environmentQuery->lock(true);
         $roots['environment'] = $this->queryRows($environmentQuery);
+        $roots['application_experience'] = $experienceRows;
+        $organizationGrants = [];
+        if ($organizationIds !== []) {
+            $query = Db::table($this->table('admin_organization_grant'))
+                ->whereIn('organization_id', $organizationIds);
+            if ($lock) $query->lock(true);
+            $organizationGrants = $this->queryRows($query);
+        }
         $grants = [];
         if ($applicationIds !== []) {
             $query = Db::table($this->table('admin_application_grant'))
@@ -168,7 +205,10 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
             $grants = $this->queryRows($query);
         }
 
-        return $roots + ['admin_application_grant' => $grants];
+        return $roots + [
+            'admin_organization_grant' => $organizationGrants,
+            'admin_application_grant' => $grants,
+        ];
     }
 
     public function mfaLoginChallengeAuditExists(int $applicationId, int $identityId, string $requestId, string $prefix): bool
@@ -178,15 +218,27 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
             ->where('audit.actor_type', 'application_user')
             ->where('audit.actor_ref', (string) $identityId)
             ->where('audit.application_id', $applicationId)
-            ->where('audit.action', 'identity.mfa_login_verify')
             ->where('audit.resource_type', 'mfa_challenge')
             ->where('audit.request_id', $requestId)
             ->whereRaw('left(audit.request_id, ?) = ?', [strlen($prefix), $prefix])
             ->where('audit.outcome', 'succeeded')
             ->where('challenge.application_id', $applicationId)
             ->where('challenge.identity_id', $identityId)
-            ->where('challenge.purpose', 'mfa_login')
-            ->exists();
+            ->where('challenge.status', 2)
+            ->where(static function ($query): void {
+                $query
+                    ->where(static function ($passwordMfa): void {
+                        $passwordMfa
+                            ->where('audit.action', 'identity.mfa_login_verify')
+                            ->where('challenge.purpose', 'mfa_login');
+                    })
+                    ->whereOr(static function ($passkey): void {
+                        $passkey
+                            ->where('audit.action', 'identity.passkey_auth_finish')
+                            ->where('challenge.purpose', 'webauthn_auth');
+                    });
+            })
+            ->count() > 0;
     }
 
     public function membershipCreationAuditIds(string $requestId, int $identityGroupId, int $identityId, string $prefix): array
@@ -229,6 +281,104 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
             ->field('group_role.id, group_role.application_id, group_role.identity_group_id, group_role.role_id, group_role.status');
         if ($lock) $query->lock(true);
         return $this->queryRows($query);
+    }
+
+    public function directorySyncArtifacts(array $connectorIds, int $applicationId, bool $lock): array
+    {
+        if ($connectorIds === []) {
+            return ['sync_run' => [], 'sync_resource' => [], 'directory_identity' => []];
+        }
+        $runs = Db::table('sand_iam_sync_run')
+            ->where('application_id', $applicationId)
+            ->whereIn('sync_connector_id', $connectorIds);
+        $resources = Db::table('sand_iam_sync_resource')
+            ->where('application_id', $applicationId)
+            ->whereIn('sync_connector_id', $connectorIds);
+        if ($lock) {
+            $runs->lock(true);
+            $resources->lock(true);
+        }
+        $runRows = $this->queryRows($runs);
+        $resourceRows = $this->queryRows($resources);
+        $identityIds = $this->sortedIds(array_map(
+            static fn (array $row): array => ['id' => (int) ($row['identity_id'] ?? 0)],
+            $resourceRows,
+        ));
+        $identityRows = [];
+        if ($identityIds !== []) {
+            $identities = Db::table('sand_iam_identity')
+                ->where('application_id', $applicationId)
+                ->whereIn('id', $identityIds);
+            if ($lock) $identities->lock(true);
+            $identityRows = $this->queryRows($identities);
+        }
+        return [
+            'sync_run' => $runRows,
+            'sync_resource' => $resourceRows,
+            'directory_identity' => $identityRows,
+        ];
+    }
+
+    public function identityLifecycleArtifacts(array $importJobIds, int $applicationId, bool $lock): array
+    {
+        if ($importJobIds === []) return ['identity_import_row' => [], 'import_invitation' => []];
+        $rows = Db::table('sand_iam_identity_import_row')
+            ->where('application_id', $applicationId)
+            ->whereIn('import_job_id', $importJobIds);
+        if ($lock) $rows->lock(true);
+        $rowRecords = $this->queryRows($rows);
+        $invitationIds = array_values(array_unique(array_filter(array_map(
+            static fn (array $row): int => (int) ($row['result_invitation_id'] ?? 0),
+            $rowRecords,
+        ), static fn (int $id): bool => $id > 0)));
+        sort($invitationIds);
+        $invitations = [];
+        if ($invitationIds !== []) {
+            $query = Db::table('sand_iam_identity_invitation')
+                ->where('application_id', $applicationId)
+                ->whereIn('id', $invitationIds);
+            if ($lock) $query->lock(true);
+            $invitations = $this->queryRows($query);
+        }
+        return ['identity_import_row' => $rowRecords, 'import_invitation' => $invitations];
+    }
+
+    public function scimArtifacts(array $providerIds, int $applicationId, bool $lock): array
+    {
+        $empty = [
+            'identity_provider_application' => [], 'scim_token' => [], 'scim_resource' => [],
+            'identity_binding' => [], 'provisioning_event' => [], 'scim_identity' => [],
+        ];
+        if ($providerIds === []) return $empty;
+        $read = function (string $table) use ($providerIds, $applicationId, $lock): array {
+            $query = Db::table($table)
+                ->where('application_id', $applicationId)
+                ->whereIn('identity_provider_id', $providerIds);
+            if ($lock) $query->lock(true);
+            return $this->queryRows($query);
+        };
+        $resources = $read('sand_iam_scim_resource');
+        $identityIds = array_values(array_unique(array_filter(array_map(
+            static fn (array $row): int => (int) ($row['identity_id'] ?? 0),
+            $resources,
+        ), static fn (int $id): bool => $id > 0)));
+        sort($identityIds);
+        $identities = [];
+        if ($identityIds !== []) {
+            $query = Db::table('sand_iam_identity')
+                ->where('application_id', $applicationId)
+                ->whereIn('id', $identityIds);
+            if ($lock) $query->lock(true);
+            $identities = $this->queryRows($query);
+        }
+        return [
+            'identity_provider_application' => $read('sand_iam_identity_provider_application'),
+            'scim_token' => $read('sand_iam_scim_token'),
+            'scim_resource' => $resources,
+            'identity_binding' => $read('sand_iam_identity_binding'),
+            'provisioning_event' => $read('sand_iam_provisioning_event'),
+            'scim_identity' => $identities,
+        ];
     }
 
     public function invocationOperations(string $prefix, array $credentialIds, array $grantIds, array $scopeIds, bool $lock): array
@@ -293,6 +443,18 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
         $sessionRows = $this->queryRows($sessions);
         $sessionIds = array_values(array_filter(array_map(static fn (array $row): int => (int) ($row['id'] ?? 0), $sessionRows), static fn (int $id): bool => $id > 0));
 
+        $challenges = Db::table('sand_iam_auth_challenge')
+            ->where('application_id', $applicationId)
+            ->whereIn('identity_id', $identityIds);
+        if ($lock) $challenges->lock(true);
+        $challengeRows = $this->queryRows($challenges);
+
+        $verifications = Db::table('sand_iam_auth_verification')
+            ->where('application_id', $applicationId)
+            ->whereIn('identity_id', $identityIds);
+        if ($lock) $verifications->lock(true);
+        $verificationRows = $this->queryRows($verifications);
+
         $factors = Db::table('sand_iam_mfa_factor')
             ->where('application_id', $applicationId)
             ->whereIn('identity_id', $identityIds);
@@ -314,13 +476,21 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
             if ($lock) $recoveryCodes->lock(true);
             $recoveryRows = $this->queryRows($recoveryCodes);
         }
+        $passkeys = Db::table('sand_iam_webauthn_credential')
+            ->where('application_id', $applicationId)
+            ->whereIn('identity_id', $identityIds);
+        if ($lock) $passkeys->lock(true);
+        $passkeyRows = $this->queryRows($passkeys);
 
         return [
             'identity_auth' => $identityAuthRows,
+            'auth_verification' => $verificationRows,
+            'auth_challenge' => $challengeRows,
             'auth_session' => $sessionRows,
             'auth_refresh_token' => $refreshRows,
             'mfa_factor' => $factorRows,
             'mfa_recovery_code' => $recoveryRows,
+            'webauthn_credential' => $passkeyRows,
         ];
     }
 
@@ -395,6 +565,63 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
         return $roots + $artifact;
     }
 
+    public function nonAiBusinessConsumerUniverse(string $prefix, int $applicationId, int $identityId, bool $lock): array
+    {
+        $actions = Db::table('sand_iam_application_business_action')
+            ->where('application_id', $applicationId)
+            ->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
+        $resources = Db::table('sand_iam_resource')
+            ->where('application_id', $applicationId)
+            ->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
+        if ($lock) {
+            $actions->lock(true);
+            $resources->lock(true);
+        }
+        $roots = [
+            'application_business_action' => $this->queryRows($actions),
+            'resource' => $this->queryRows($resources),
+        ];
+        $resourceIds = $this->sortedIds($roots['resource']);
+        $apiResources = [];
+        if ($resourceIds !== []) {
+            $query = Db::table('sand_iam_api_resource')
+                ->where('application_id', $applicationId)
+                ->whereIn('resource_id', $resourceIds)
+                ->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
+            if ($lock) $query->lock(true);
+            $apiResources = $this->queryRows($query);
+        }
+        $roots['api_resource'] = $apiResources;
+        $apiResourceIds = $this->sortedIds($apiResources);
+        $routeBindings = [];
+        if ($apiResourceIds !== []) {
+            $query = Db::table('sand_iam_api_route_binding')
+                ->where('application_id', $applicationId)
+                ->whereIn('api_resource_id', $apiResourceIds);
+            if ($lock) $query->lock(true);
+            $routeBindings = $this->queryRows($query);
+        }
+        $roots['api_route_binding'] = $routeBindings;
+        $policies = [];
+        if ($resourceIds !== []) {
+            $query = Db::table('sand_iam_policy')
+                ->where('application_id', $applicationId)
+                ->where('identity_id', $identityId)
+                ->whereIn('resource_id', $resourceIds);
+            if ($lock) $query->lock(true);
+            $policies = $this->queryRows($query);
+        }
+        $roots['policy'] = $policies;
+        $artifact = $this->oauthCasApiGovernanceArtifacts(
+            [],
+            [],
+            $this->sortedIds($policies),
+            $applicationId,
+            $lock,
+        );
+        return $roots + ['policy_version' => $artifact['policy_version']];
+    }
+
     public function detachPolicyVersions(array $policyVersionIds, array $policyIds, int $applicationId): void
     {
         if ($policyVersionIds === []) return;
@@ -433,11 +660,14 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_POLICY_VERSION_SCOPE_DENIED: 策略版本不属于本轮应用或提交策略，拒绝清理', 400);
             }
         }
-        $foreignPublication = Db::table('sand_iam_policy')
-            ->whereIn('published_version_id', $policyVersionIds)
-            ->whereNotIn('id', $policyIds)
-            ->lock(true)
-            ->exists();
+        $foreignPublication = $this->queryRows(
+            Db::table('sand_iam_policy')
+                ->field('id')
+                ->whereIn('published_version_id', $policyVersionIds)
+                ->whereNotIn('id', $policyIds)
+                ->limit(1)
+                ->lock(true),
+        ) !== [];
         if ($foreignPublication) {
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_POLICY_VERSION_SCOPE_DENIED: 本轮策略版本仍被未提交或跨应用策略引用，拒绝清理', 400);
         }
@@ -462,13 +692,18 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
     private function fixtureRows(string $type, array $ids, string $prefix): mixed
     {
         $query = Db::table($this->table($type))->whereIn('id', $ids);
-        if ($prefix !== '' && in_array($type, ['organization', 'application', 'environment', 'identity', 'identity_group'], true)) {
+        if ($prefix !== '' && in_array($type, ['organization', 'application', 'environment', 'identity', 'identity_group', 'resource', 'application_business_action'], true)) {
             $query->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
         }
         if ($prefix !== '' && $type === 'webhook_endpoint') $query->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
-        if ($prefix !== '' && $type === 'webhook_delivery') $query->whereRaw('left(event_id, ?) = ?', [strlen($prefix), $prefix]);
+        // Production webhook event ids deliberately use the `evt_` namespace.
+        // Delivery ownership is proved later from the exact endpoint,
+        // application and credential event envelope, so a fixture-prefix
+        // predicate here would hide the real row and make safe cleanup fail.
         if ($prefix !== '' && $type === 'credential') $query->whereRaw('left(name, ?) = ?', [strlen($prefix), $prefix]);
         if ($prefix !== '' && in_array($type, ['oauth_client', 'api_resource'], true)) $query->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
+        if ($prefix !== '' && $type === 'sync_connector') $query->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
+        if ($prefix !== '' && $type === 'identity_provider') $query->whereRaw('left(code, ?) = ?', [strlen($prefix), $prefix]);
         if ($prefix !== '' && $type === 'cas_service') $query->whereRaw('left(name, ?) = ?', [strlen($prefix), $prefix]);
         return $query;
     }

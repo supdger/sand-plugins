@@ -12,6 +12,12 @@ export interface OnboardingApplyInput {
     previewHash: string;
     requestId: string;
 }
+export interface RouteSyncApplyInput {
+    manifest: SandIamManagementJson;
+    previewHash: string;
+    requestId: string;
+    disableMissing?: boolean | undefined;
+}
 export interface CredentialIssueInput {
     workloadClientId: number;
     name: string;
@@ -73,9 +79,8 @@ export declare class SandIamManagementClient {
     constructor(options: SandIamManagementClientOptions);
     onboardingPreview(manifest: SandIamManagementJson, requestId?: string): Promise<SandIamManagementJson>;
     onboardingApply(input: OnboardingApplyInput): Promise<SandIamManagementJson>;
-    /** Route sync is part of the official onboarding manifest; no standalone path is guessed. */
-    routeSyncPreview(manifest: SandIamManagementJson, requestId?: string): Promise<SandIamManagementJson>;
-    routeSyncApply(input: OnboardingApplyInput): Promise<SandIamManagementJson>;
+    routeSyncPreview(manifest: SandIamManagementJson, disableMissing?: boolean, requestId?: string): Promise<SandIamManagementJson>;
+    routeSyncApply(input: RouteSyncApplyInput): Promise<SandIamManagementJson>;
     policySimulate(input: SandIamManagementJson, requestId?: string): Promise<SandIamManagementJson>;
     policyRollback(policyId: number, versionId: number, requestId: string): Promise<SandIamManagementJson>;
     credentialIssue(input: CredentialIssueInput): Promise<SandIamCredentialResult>;

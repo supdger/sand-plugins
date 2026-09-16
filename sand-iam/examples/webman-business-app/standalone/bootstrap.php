@@ -66,4 +66,6 @@ return new Controller(
         }
         return (string) $identityId;
     },
+    $config->readApiCode,
+    $config->closeApiCode,
 );

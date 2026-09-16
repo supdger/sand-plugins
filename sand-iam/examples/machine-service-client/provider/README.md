@@ -5,8 +5,9 @@
 仅通过 `X-Sand-Iam-Context` 请求头交接；服务端每次请求都调用 SDK 的
 `verifyContext()`，包括幂等重放。
 
-服务、受众和动作固定为 `provider-b-document`、`provider-b`、`document.process`，
-调用请求不能覆盖。验证成功后，服务锁定 PostgreSQL 中已有的 `provider_b_document`，
+服务、受众和动作由部署环境固定，默认分别为 `provider-b-document`、`provider-b`、
+`document.process`，调用请求不能覆盖。调用方和 Provider 必须注入相同值，真实验收可使用
+隔离前缀而不占用生产协议名。验证成功后，服务锁定 PostgreSQL 中已有的 `provider_b_document`，
 确认其 `organization_id` 与验证结果一致，再保存文档的 SHA-256 和字节数。
 业务处理记录与成功审计在同一事务中提交；失败则回滚。
 
@@ -14,7 +15,8 @@
 
 1. 经数据库负责人明确授权后，将 `schema.pgsql` 应用到已存在的隔离 PostgreSQL
    业务数据库，并准备业务文档。示例不创建数据库、账号、`sand_iam_*` 或 `sa_*` 表。
-2. 在本目录执行 `composer install`；依赖 `sand/iam-sdk` 来自本仓 `../../../sdk/php`。
+2. 在本目录执行 `composer install`；锁文件固定本次可安装依赖，`sand/iam-sdk` 来自本仓
+   `../../../sdk/php`。生成的 `vendor/` 是可再生目录，不进入源码或候选包。
 3. 按 `.env.example` 的配置项，通过部署环境和密钥管理系统注入配置，不提交真实 `.env`。
    缺少必填配置或 DSN 不是 `pgsql:` 时，服务拒绝运行。
 4. 使用内部 PHP 进程管理器部署 `public/index.php`。调用方执行

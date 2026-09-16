@@ -29,6 +29,7 @@ namespace plugin\SandIam\app\model {
     class Application extends \CasScopeTest\Record {}
     class Organization extends \CasScopeTest\Record {}
     class Identity extends \CasScopeTest\Record {}
+    class IdentityAuth extends \CasScopeTest\Record {}
     class CasService extends \CasScopeTest\Record {}
     class CasTicket extends \CasScopeTest\Record {}
 }
@@ -47,7 +48,7 @@ namespace think\facade {
 namespace {
     use CasScopeTest\State;
     use function CasScopeTest\check;
-    use plugin\SandIam\app\model\{Application, Organization, Identity, CasService, CasTicket};
+    use plugin\SandIam\app\model\{Application, Organization, Identity, IdentityAuth, CasService, CasTicket};
     use plugin\SandIam\app\service\CasProtocolService;
     function config(string $key, mixed $default = null): mixed { return match ($key) { 'plugin.sand-iam.app.cas_enabled' => 1, 'plugin.sand-iam.app.auth_pepper' => str_repeat('fixture', 8), default => $default }; }
     require __DIR__ . '/../app/service/CasProtocolService.php';
@@ -56,7 +57,8 @@ namespace {
     $baseline = [
         Organization::class => [1 => ['id' => 1, 'status' => 1]],
         Application::class => [2 => ['id' => 2, 'organization_id' => 1, 'status' => 1]],
-        Identity::class => [3 => ['id' => 3, 'application_id' => 2, 'username' => 'person', 'status' => 1]],
+        Identity::class => [3 => ['id' => 3, 'application_id' => 2, 'code' => 'person', 'display_name' => 'Person', 'status' => 1]],
+        IdentityAuth::class => [6 => ['id' => 6, 'application_id' => 2, 'identity_id' => 3, 'email' => 'person@example.test', 'status' => 1]],
         CasService::class => [4 => ['id' => 4, 'application_id' => 2, 'service_url' => $url, 'released_attributes' => [], 'status' => 1]],
         CasTicket::class => [5 => ['id' => 5, 'application_id' => 2, 'cas_service_id' => 4, 'identity_id' => 3, 'status' => 1, 'consumed_time' => null, 'expire_time' => date('Y-m-d H:i:s', time() + 300), 'ticket_hash' => hash_hmac('sha256', 'cas-ticket:' . $ticket, config('plugin.sand-iam.app.auth_pepper'))]],
     ];
@@ -100,5 +102,8 @@ namespace {
         check($service->validate($url, $ticket, 'cas-invalid-ticket') === null, 'Invalid ticket accepted: ' . $state);
         check(State::$rows === $before && State::$audits === [] && State::$snapshot === null, 'Invalid ticket changed state');
     }
+    State::$rows = $baseline; State::$audits = [];
+    State::$rows[CasService::class][4]['released_attributes'] = ['display_name', 'email'];
+    check($service->validate($url, $ticket, 'cas-attributes-test') === ['username' => 'person', 'attributes' => ['displayName' => 'Person', 'email' => 'person@example.test']], 'CAS principal did not use application identity code and active auth email');
     echo "CAS service binding, disabled principals, expiry and replay behavior PASS (non-PG)\n";
 }

@@ -79,12 +79,18 @@ export class SandIamManagementClient {
             throw new SandIamManagementError('SAND_IAM_SDK_INVALID_ARGUMENT', '应用接入草稿必须提供预检哈希', 0);
         return this.objectRequest('POST', '/developer/onboarding/apply', { manifest: input.manifest, preview_hash: input.previewHash, apply: true }, input.requestId, true);
     }
-    /** Route sync is part of the official onboarding manifest; no standalone path is guessed. */
-    routeSyncPreview(manifest, requestId) {
-        return this.onboardingPreview(manifest, requestId);
+    routeSyncPreview(manifest, disableMissing = false, requestId) {
+        return this.objectRequest('POST', '/developer/route-manifest/preview', { manifest, disable_missing: disableMissing }, requestId, false);
     }
     routeSyncApply(input) {
-        return this.onboardingApply(input);
+        if (!/^[a-f0-9]{64}$/.test(input.previewHash))
+            throw new SandIamManagementError('SAND_IAM_SDK_INVALID_ARGUMENT', '路由清单必须提供有效预检哈希', 0);
+        return this.objectRequest('POST', '/developer/route-manifest/apply', {
+            manifest: input.manifest,
+            disable_missing: input.disableMissing ?? false,
+            preview_hash: input.previewHash,
+            apply: true
+        }, input.requestId, true);
     }
     policySimulate(input, requestId) {
         return this.objectRequest('POST', '/policy/simulate', input, requestId, false);

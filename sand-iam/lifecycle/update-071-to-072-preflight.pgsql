@@ -2,6 +2,9 @@
 --
 -- This lifecycle input admits only the completed 0.7.1 ledger through 038
 -- and the exact service-grant column that revision 039 changes.
+-- The installed 0.7.0 v28 ledger manager predates the 038 catalog entry.
+-- Its business schema fingerprint is identical, so its recorded 035 identity
+-- is accepted without rewriting the historical ledger.
 DO $$
 DECLARE
     expected_rows integer;
@@ -82,13 +85,16 @@ BEGIN
       AND table_row.relname = 'sand_iam_service_grant'
       AND actual.conname = 'ck_sand_iam_service_grant_data_class'
       AND actual.contype = 'c'
-      AND actual.convalidated
+      AND NOT actual.convalidated
       AND regexp_replace(
             regexp_replace(
-                regexp_replace(lower(pg_get_constraintdef(actual.oid, true)), E'::[a-z_][a-z0-9_]*(\\s+varying)?(\\[\\])?', '', 'g'),
-                E'\\s+', '', 'g'
+                regexp_replace(
+                    regexp_replace(lower(pg_get_constraintdef(actual.oid, true)), E'::[a-z_][a-z0-9_]*(\\s+varying)?(\\[\\])?', '', 'g'),
+                    E'\\s+', '', 'g'
+                ),
+                '[()]', '', 'g'
             ),
-            '[()]', '', 'g'
+            'notvalid$', ''
           ) = 'checkdata_classisnullordata_class~''^[a-z0-9][a-z0-9._-]{1,31}$''';
     IF matched_constraints <> 1 THEN
         RAISE EXCEPTION 'SandIAM 0.7.2 update requires the service-grant data-class constraint';
@@ -173,7 +179,15 @@ BEGIN
             WHERE recorded.migration_file IS NULL
                OR expected.migration_file IS NULL
                OR recorded.revision IS DISTINCT FROM expected.revision
-               OR recorded.checksum IS DISTINCT FROM expected.checksum
+               OR (
+                    recorded.checksum IS DISTINCT FROM expected.checksum
+                    AND NOT (
+                        recorded.migration_file = '035_schema_migration_ledger.pgsql'
+                        AND recorded.revision = 35
+                        AND recorded.package_version = '0.7.0'
+                        AND recorded.checksum = '4372ad7731e2dae60e51b7b2448a95971c5b22db06fc9678fb1d076d6e28ea25'
+                    )
+               )
                OR recorded.package_version IS DISTINCT FROM expected.package_version
        ) THEN
         RAISE EXCEPTION 'SandIAM 0.7.2 update requires exact 001-038 ledger identities before executing 039';

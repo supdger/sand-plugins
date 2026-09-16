@@ -1,5 +1,6 @@
 {
   "name": "sand-iam-example/provider-b-document",
+  "description": "Controlled non-AI machine-service provider for SandIAM integration acceptance",
   "type": "project",
   "license": "Apache-2.0",
   "repositories": [{"type": "path", "url": "../../../sdk/php", "options": {"symlink": false}}],
@@ -8,7 +9,7 @@
     "ext-curl": "*",
     "ext-json": "*",
     "ext-pdo_pgsql": "*",
-    "sand/iam-sdk": "*@dev"
+    "sand/iam-sdk": "dev-main"
   },
   "autoload": {"psr-4": {"Sand\\Iam\\Example\\ProviderB\\": "src/"}},
   "scripts": {"test": "php tests/ProviderApplicationTest.php"}

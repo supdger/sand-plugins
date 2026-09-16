@@ -242,6 +242,8 @@ Route::post('/app/sand-iam/admin/oidc-signing-key/rotate', [OidcSigningKeyContro
 Route::post('/app/sand-iam/admin/oidc-signing-key/retire', [OidcSigningKeyController::class, 'retire'])->middleware([OidcSigningKeySensitiveMiddleware::class, CheckLogin::class, CheckAuth::class, SystemLog::class]);
 Route::post('/app/sand-iam/admin/developer/onboarding/preview', [DeveloperController::class, 'onboardingPreview'])->middleware([InitializationSensitiveMiddleware::class, CheckLogin::class, CheckAuth::class]);
 Route::post('/app/sand-iam/admin/developer/onboarding/apply', [DeveloperController::class, 'onboardingApply'])->middleware([InitializationSensitiveMiddleware::class, CheckLogin::class, CheckAuth::class]);
+Route::post('/app/sand-iam/admin/developer/route-manifest/preview', [DeveloperController::class, 'routeManifestPreview'])->middleware([InitializationSensitiveMiddleware::class, CheckLogin::class, CheckAuth::class]);
+Route::post('/app/sand-iam/admin/developer/route-manifest/apply', [DeveloperController::class, 'routeManifestApply'])->middleware([InitializationSensitiveMiddleware::class, CheckLogin::class, CheckAuth::class]);
 
 Route::post('/app/sand-iam/runtime/context/issue', [RuntimeContextController::class, 'issue']);
 Route::post('/app/sand-iam/runtime/context/verify', [RuntimeContextController::class, 'verify']);

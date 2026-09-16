@@ -31,9 +31,23 @@ final class RouteBindingSynchronizer
      * @param array<string,mixed> $manifest
      * @return array<string,mixed>
      */
-    public function synchronize(array $manifest, bool $apply = false, bool $disableMissing = false, string $requestId = '', string $operationId = ''): array
+    public function synchronize(
+        array $manifest,
+        bool $apply = false,
+        bool $disableMissing = false,
+        string $requestId = '',
+        string $operationId = '',
+        ?string $expectedPreviewHash = null,
+    ): array
     {
-        return $this->synchronizeNormalized(RouteSyncManifest::normalize($manifest), $apply, $disableMissing, $requestId, $operationId);
+        return $this->synchronizeNormalized(
+            RouteSyncManifest::normalize($manifest),
+            $apply,
+            $disableMissing,
+            $requestId,
+            $operationId,
+            $expectedPreviewHash,
+        );
     }
 
     /**
@@ -44,14 +58,27 @@ final class RouteBindingSynchronizer
      * @param array<string,mixed> $manifest
      * @return array<string,mixed>
      */
-    public function synchronizeNormalized(array $manifest, bool $apply = false, bool $disableMissing = false, string $requestId = '', string $operationId = ''): array
+    public function synchronizeNormalized(
+        array $manifest,
+        bool $apply = false,
+        bool $disableMissing = false,
+        string $requestId = '',
+        string $operationId = '',
+        ?string $expectedPreviewHash = null,
+    ): array
     {
         $plan = $this->planNormalized(RouteSyncManifest::requireNormalized($manifest), $disableMissing);
+        $plan['preview_hash'] = hash('sha256', $this->canonical($plan));
         $requestedOperationId = trim($operationId !== '' ? $operationId : $requestId);
         $plan['operation_id'] = $requestedOperationId !== '' ? substr($requestedOperationId, 0, 96) : RequestId::normalize('');
         $plan['dry_run'] = !$apply;
         if (!$apply) {
             return $plan;
+        }
+        if ($expectedPreviewHash !== null
+            && (preg_match('/^[a-f0-9]{64}$/D', $expectedPreviewHash) !== 1
+                || !hash_equals($plan['preview_hash'], $expectedPreviewHash))) {
+            throw new ApiException('SAND_IAM_ROUTE_SYNC_PREVIEW_STALE: 路由或接口目录已变化，请重新预检', 409);
         }
         if (($plan['valid'] ?? false) !== true) {
             throw new ApiException('SAND_IAM_ROUTE_SYNC_APPLY_BLOCKED: 存在冲突或未登记接口；请先修正清单或接口目录', 409);
@@ -59,10 +86,16 @@ final class RouteBindingSynchronizer
 
         Db::startTrans();
         try {
-            foreach ($plan['changes'] as $change) {
+            foreach ($plan['changes'] as $index => $change) {
                 if (!in_array($change['operation'], ['create', 'refresh'], true)) {
                     continue;
                 }
+                $auditRequestId = $this->childRequestId(
+                    (string) $plan['operation_id'],
+                    (string) $change['operation'],
+                    (int) ($change['binding_id'] ?? 0),
+                    (string) $change['method'] . "\0" . (string) $change['route_template'],
+                );
                 $this->governance->observeRoute(
                     (int) $plan['application_id'],
                     (string) $change['api_code'],
@@ -70,11 +103,21 @@ final class RouteBindingSynchronizer
                     (string) $change['method'],
                     (string) $change['route_template'],
                     'route_scan',
-                    $this->childRequestId((string) $plan['operation_id'], (string) $change['operation'], (int) ($change['binding_id'] ?? 0), (string) $change['method'] . "\0" . (string) $change['route_template']),
+                    $auditRequestId,
                     true,
                 );
+                $binding = ApiRouteBinding::where('application_id', (int) $plan['application_id'])
+                    ->where('http_method', (string) $change['method'])
+                    ->where('route_template', (string) $change['route_template'])
+                    ->where('source', 'route_scan')
+                    ->find();
+                if ($binding === null) {
+                    throw new ApiException('SAND_IAM_ROUTE_SYNC_STALE: 路由绑定写入后无法读取', 409);
+                }
+                $plan['changes'][$index]['binding_id'] = (int) $binding->id;
+                $plan['changes'][$index]['audit_request_id'] = $auditRequestId;
             }
-            foreach ($plan['changes'] as $change) {
+            foreach ($plan['changes'] as $index => $change) {
                 if ($change['operation'] !== 'disable') {
                     continue;
                 }
@@ -88,6 +131,12 @@ final class RouteBindingSynchronizer
                     throw new ApiException('SAND_IAM_ROUTE_SYNC_STALE: 路由绑定已变化，请重新预览', 409);
                 }
                 $binding->save(['status' => 2]);
+                $auditRequestId = $this->childRequestId(
+                    (string) $plan['operation_id'],
+                    'disable',
+                    (int) $binding->id,
+                    (string) $binding->http_method . "\0" . (string) $binding->route_template,
+                );
                 $this->auditWriter->write(
                     'system',
                     'api_route_catalog',
@@ -97,9 +146,10 @@ final class RouteBindingSynchronizer
                     'api_route_binding',
                     (int) $binding->id,
                     'succeeded',
-                    $this->childRequestId((string) $plan['operation_id'], 'disable', (int) $binding->id, (string) $binding->http_method . "\0" . (string) $binding->route_template),
+                    $auditRequestId,
                     ['source' => 'route_scan', 'reason' => 'manifest_disable_diff'],
                 );
+                $plan['changes'][$index]['audit_request_id'] = $auditRequestId;
             }
             Db::commit();
         } catch (\Throwable $exception) {
@@ -233,6 +283,22 @@ final class RouteBindingSynchronizer
 
     private function childRequestId(string $operationId, string $operation, int $bindingId, string $route): string
     {
+        $suffix = substr(hash('sha256', $operationId . "\0" . $operation . "\0" . $bindingId . "\0" . $route), 0, 16);
+        $traceable = substr($operationId, 0, 79) . '.' . $suffix;
+        if (preg_match('/^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$/D', $traceable) === 1) {
+            return $traceable;
+        }
         return 'rs_' . substr(hash('sha256', $operationId . "\0" . $operation . "\0" . $bindingId . "\0" . $route), 0, 48);
+    }
+
+    private function canonical(mixed $value): string
+    {
+        $sort = static function (mixed $item) use (&$sort): mixed {
+            if (!is_array($item)) return $item;
+            if (!array_is_list($item)) ksort($item);
+            foreach ($item as $key => $child) $item[$key] = $sort($child);
+            return $item;
+        };
+        return json_encode($sort($value), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 }

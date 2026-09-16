@@ -20,6 +20,9 @@ $seed = tempnam('/private/tmp', 'sand-iam-interop-');
 if ($seed === false || !unlink($seed) || !mkdir($seed, 0700) || !mkdir($seed . '/evidence', 0700)) throw new RuntimeException('cannot create interop fixture');
 
 try {
+    $archiveHash = str_repeat('a', 64);
+    $manifestHash = str_repeat('b', 64);
+    $environmentHash = str_repeat('c', 64);
     $assertions = [
         'oidc' => ['discovery', 'authorization_code_pkce', 'userinfo', 'wrong_audience_rejected', 'refresh_replay_rejected', 'revocation_effective'],
         'saml' => ['signed_authn', 'attribute_mapping', 'wrong_audience_rejected', 'assertion_replay_rejected', 'disabled_binding_rejected'],
@@ -31,23 +34,62 @@ try {
     ];
     $cases = [];
     foreach ($assertions as $id => $names) {
-        $evidencePath = 'evidence/' . $id . '.json';
-        $bytes = json_encode(['protocol' => $id, 'result' => 'redacted-pass'], JSON_THROW_ON_ERROR) . "\n";
-        file_put_contents($seed . '/' . $evidencePath, $bytes);
+        $client = ['name' => 'Standards Project ' . $id, 'version' => '1.2.3', 'project_url' => 'https://client.example.test/' . $id, 'standard' => true];
+        $counterpart = ['name' => 'Controlled ' . $id, 'version' => '2.0.0', 'endpoint' => $id === 'ldap' ? 'ldaps://directory.example.test' : 'https://interop.example.test/' . $id, 'real' => true, 'controlled' => true];
+        $evidenceDirectory = $seed . '/evidence/' . $id;
+        if (!mkdir($evidenceDirectory, 0700, true)) throw new RuntimeException('cannot create protocol evidence fixture');
+        $evidence = [];
+        $pathsByKind = [];
+        foreach ([
+            'client' => 'client.log',
+            'sandiam' => 'sandiam.json',
+            'counterpart' => 'counterpart.log',
+            'cleanup' => 'cleanup.json',
+        ] as $kind => $filename) {
+            $relative = 'evidence/' . $id . '/' . $filename;
+            $bytes = json_encode(['protocol' => $id, 'kind' => $kind, 'result' => 'redacted-pass'], JSON_THROW_ON_ERROR) . "\n";
+            file_put_contents($seed . '/' . $relative, $bytes);
+            $evidence[] = ['kind' => $kind, 'path' => $relative, 'sha256' => hash('sha256', $bytes)];
+            $pathsByKind[$kind] = $relative;
+        }
+        $structuredAssertions = [];
+        foreach (array_values($names) as $assertionIndex => $assertion) {
+            $structuredAssertions[$assertion] = [
+                'passed' => true,
+                'request_id' => 'interop-' . $id . '-' . str_pad((string) $assertionIndex, 2, '0', STR_PAD_LEFT),
+                'artifact_paths' => [$pathsByKind['client'], $pathsByKind['sandiam'], $pathsByKind['counterpart']],
+            ];
+        }
+        $structured = [
+            'schema' => 'sand-iam.protocol-interop-evidence/v1',
+            'protocol' => $id,
+            'candidate_archive_sha256' => $archiveHash,
+            'environment_fingerprint' => $environmentHash,
+            'client' => array_intersect_key($client, array_flip(['name', 'version', 'project_url'])),
+            'counterpart' => array_intersect_key($counterpart, array_flip(['name', 'version', 'endpoint'])),
+            'started_at' => '2026-09-12T00:00:00Z',
+            'ended_at' => '2026-09-12T00:05:00Z',
+            'assertions' => $structuredAssertions,
+            'cleanup' => ['verified' => true, 'residual_count' => 0, 'artifact_paths' => [$pathsByKind['cleanup']]],
+        ];
+        $structuredPath = 'evidence/' . $id . '/structured.json';
+        $structuredBytes = json_encode($structured, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+        file_put_contents($seed . '/' . $structuredPath, $structuredBytes);
+        array_unshift($evidence, ['kind' => 'structured', 'path' => $structuredPath, 'sha256' => hash('sha256', $structuredBytes)]);
         $cases[] = [
             'id' => $id,
-            'client' => ['name' => 'Standards Project ' . $id, 'version' => '1.2.3', 'project_url' => 'https://client.example.test/' . $id, 'standard' => true],
-            'counterpart' => ['name' => 'Controlled ' . $id, 'version' => '2.0.0', 'endpoint' => $id === 'ldap' ? 'ldaps://directory.example.test' : 'https://interop.example.test/' . $id, 'real' => true, 'controlled' => true],
+            'client' => $client,
+            'counterpart' => $counterpart,
             'started_at' => '2026-09-12T00:00:00Z', 'ended_at' => '2026-09-12T00:05:00Z',
             'assertions' => array_fill_keys($names, true), 'completed' => true, 'cleanup_verified' => true,
-            'unresolved_failures' => 0, 'evidence' => [['path' => $evidencePath, 'sha256' => hash('sha256', $bytes)]],
+            'unresolved_failures' => 0, 'evidence' => $evidence,
         ];
     }
     $valid = [
-        'schema' => 'sand-iam.protocol-interop/v1',
-        'candidate' => ['version' => '0.7.0', 'archive_sha256' => str_repeat('a', 64), 'artifact_manifest_sha256' => str_repeat('b', 64)],
+        'schema' => 'sand-iam.protocol-interop/v2',
+        'candidate' => ['version' => '0.7.0', 'archive_sha256' => $archiveHash, 'artifact_manifest_sha256' => $manifestHash],
         'reviewer' => ['id' => 'independent-interop-reviewer', 'independent' => true, 'conflict_statement' => 'I did not develop the protocol implementations.'],
-        'environment' => ['fingerprint' => str_repeat('c', 64), 'host' => 'controlled-host', 'postgresql' => '18', 'network_profile' => 'isolated-controlled'],
+        'environment' => ['fingerprint' => $environmentHash, 'host' => 'controlled-host', 'postgresql' => '18', 'network_profile' => 'isolated-controlled'],
         'cases' => $cases,
     ];
     $reportPath = $seed . '/report.json';
@@ -85,32 +127,59 @@ try {
     $write($missingAssertion);
     [$assertionStatus, $assertionOutput] = $run($reportPath);
 
+    $oidcStructuredPath = $seed . '/evidence/oidc/structured.json';
+    $oidcStructuredBytes = (string) file_get_contents($oidcStructuredPath);
+    $structuredBinding = $valid;
+    $structuredDocument = json_decode($oidcStructuredBytes, true, 512, JSON_THROW_ON_ERROR);
+    $structuredDocument['candidate_archive_sha256'] = str_repeat('d', 64);
+    $changedStructuredBytes = json_encode($structuredDocument, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+    file_put_contents($oidcStructuredPath, $changedStructuredBytes);
+    $structuredBinding['cases'][0]['evidence'][0]['sha256'] = hash('sha256', $changedStructuredBytes);
+    $write($structuredBinding);
+    [$structuredBindingStatus, $structuredBindingOutput] = $run($reportPath);
+    file_put_contents($oidcStructuredPath, $oidcStructuredBytes);
+
+    $missingArtifact = $valid;
+    $structuredDocument = json_decode($oidcStructuredBytes, true, 512, JSON_THROW_ON_ERROR);
+    $firstAssertion = array_key_first($structuredDocument['assertions']);
+    $structuredDocument['assertions'][$firstAssertion]['artifact_paths'] = [
+        'evidence/oidc/client.log',
+        'evidence/oidc/sandiam.json',
+    ];
+    $changedStructuredBytes = json_encode($structuredDocument, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+    file_put_contents($oidcStructuredPath, $changedStructuredBytes);
+    $missingArtifact['cases'][0]['evidence'][0]['sha256'] = hash('sha256', $changedStructuredBytes);
+    $write($missingArtifact);
+    [$missingArtifactStatus, $missingArtifactOutput] = $run($reportPath);
+    file_put_contents($oidcStructuredPath, $oidcStructuredBytes);
+
     $tampered = $valid;
-    file_put_contents($seed . '/evidence/radius.json', "tampered\n");
+    file_put_contents($seed . '/evidence/radius/counterpart.log', "tampered\n");
     $write($tampered);
     [$tamperedStatus, $tamperedOutput] = $run($reportPath);
 
     $secret = $valid;
     $secretBytes = "-----BEGIN PRIVATE KEY-----\nredacted-fixture\n-----END PRIVATE KEY-----\n";
-    file_put_contents($seed . '/evidence/oidc.json', $secretBytes);
-    $secret['cases'][0]['evidence'][0]['sha256'] = hash('sha256', $secretBytes);
+    file_put_contents($seed . '/evidence/oidc/client.log', $secretBytes);
+    $secret['cases'][0]['evidence'][1]['sha256'] = hash('sha256', $secretBytes);
     $write($secret);
     [$secretStatus, $secretOutput] = $run($reportPath);
 
     if (!symlink($seed . '/evidence', $seed . '/linked-evidence')) throw new RuntimeException('cannot create evidence symlink fixture');
     $linked = $valid;
-    $linked['cases'][0]['evidence'][0]['path'] = 'linked-evidence/oidc.json';
-    $linked['cases'][0]['evidence'][0]['sha256'] = hash('sha256', $secretBytes);
+    $linked['cases'][0]['evidence'][0]['path'] = 'linked-evidence/oidc/structured.json';
     $write($linked);
     [$linkedStatus, $linkedOutput] = $run($reportPath);
 
-    $passed = $validStatus === 0 && str_contains($validOutput, '"cases_passed": 7') && str_contains($validOutput, '"assertions_verified": 37')
+    $passed = $validStatus === 0 && str_contains($validOutput, '"cases_passed": 7') && str_contains($validOutput, '"assertions_verified": 37') && str_contains($validOutput, '"evidence_files_verified": 35')
         && $tamperedEvidenceHashStatus !== 0 && str_contains($tamperedEvidenceHashOutput, 'evidence SHA-256 mismatch')
         && $uncleanStatus !== 0 && str_contains($uncleanOutput, 'did not complete cleanly')
         && $missingVersionStatus !== 0 && str_contains($missingVersionOutput, 'client is missing keys: version')
         && $invalidVersionStatus !== 0 && str_contains($invalidVersionOutput, 'client.version is required')
         && $clientStatus !== 0 && str_contains($clientOutput, 'versioned standard client')
         && $assertionStatus !== 0 && str_contains($assertionOutput, 'did not prove ticket_replay_rejected')
+        && $structuredBindingStatus !== 0 && str_contains($structuredBindingOutput, 'structured evidence binding mismatch')
+        && $missingArtifactStatus !== 0 && str_contains($missingArtifactOutput, 'missing counterpart evidence')
         && $tamperedStatus !== 0 && str_contains($tamperedOutput, 'evidence SHA-256 mismatch')
         && $secretStatus !== 0 && str_contains($secretOutput, 'evidence contains a high-confidence secret')
         && $linkedStatus !== 0 && str_contains($linkedOutput, 'path contains a symbolic link');

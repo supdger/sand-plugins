@@ -12,7 +12,7 @@ try {
     $context = value('X-Sand-Iam-Context'); $key = value('Idempotency-Key');
     RouteInput::validate(file_get_contents('php://input'), $context, $key);
     $db = new PDO($config->databaseDsn, $config->databaseUser, $config->databasePassword, [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES=>false]);
-    $result = (new ProviderApplication(new SandIamContextVerifier($config), new PdoProcessStore($db)))->process($match[1], $context, $key, $requestId);
+    $result = (new ProviderApplication(new SandIamContextVerifier($config), new PdoProcessStore($db), $config->serviceCode, $config->audience, $config->action))->process($match[1], $context, $key, $requestId);
     respond(200, ['data'=>$result,'request_id'=>$requestId]);
 } catch (ProviderException $e) {
     failureAudit($routeMatched, $auditConfig, $documentId, $context, $key, $requestId, $e->errorCode, $e->httpStatus);

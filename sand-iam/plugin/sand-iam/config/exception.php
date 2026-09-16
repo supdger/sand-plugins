@@ -1,5 +1,5 @@
 <?php
 
 return [
-    '' => plugin\sandadmin\app\exception\Handler::class,
+    '' => plugin\SandIam\app\exception\Handler::class,
 ];

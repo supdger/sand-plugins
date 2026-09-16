@@ -20,6 +20,7 @@ function livePostgresReadonlyChecks(): array
 {
     return [
         'human_auth_artifacts' => [
+            ['table' => 'sand_iam_auth_challenge', 'column' => 'identity_id', 'capture' => 'identity_id'],
             ['table' => 'sand_iam_auth_refresh_token', 'column' => 'session_id', 'capture' => 'session_id'],
             ['table' => 'sand_iam_auth_session', 'column' => 'id', 'capture' => 'session_id'],
             ['table' => 'sand_iam_mfa_recovery_code', 'column' => 'factor_id', 'capture' => 'mfa_factor_id'],
@@ -73,8 +74,13 @@ function liveMethodWriteAllowed(array $target, array $step): bool
 {
     $method = $step['method'] ?? null;
     $write = $step['write'] ?? null;
-    if (!in_array($method, ['GET', 'POST'], true) || !is_bool($write)) return false;
+    if (!in_array($method, ['GET', 'POST', 'PATCH', 'DELETE'], true) || !is_bool($write)) return false;
     if ($method === 'GET') return $write === false;
+    if (in_array($method, ['PATCH', 'DELETE'], true)) {
+        return $write === true
+            && ($target['kind'] ?? null) === 'sandiam'
+            && str_starts_with((string) ($step['path'] ?? ''), '/api/sand-iam/v1/scim/');
+    }
     return $write === true || ($write === false && (
         (($target['kind'] ?? null) === 'external' && in_array($step['effect'] ?? null, ['non_persistent', 'sandiam_invocation_operation'], true))
         || (($target['kind'] ?? null) === 'sandiam' && in_array($step['effect'] ?? null, ['audit_only', 'read_only'], true))
@@ -363,20 +369,34 @@ function livePreflightGate(array $plan, string $prefix, string $chainId, array $
     $selectedCleanupSteps = liveSelectedCleanupSteps($chain, liveFullSuccessVariables($chain));
     $selectedCleanupStepIds = array_values(array_map(static fn (array $step): string => (string) ($step['id'] ?? ''), $selectedCleanupSteps));
     $selectedZeroResidualSteps = array_values(array_filter($selectedCleanupSteps, static fn (array $step): bool => ($step['proof'] ?? null) === 'zero_residual'));
-    $selectedZeroResidualStep = count($selectedZeroResidualSteps) === 1 ? $selectedZeroResidualSteps[0] : null;
+    $selectedZeroResidualStepIds = array_values(array_map(static fn (array $step): string => (string) ($step['id'] ?? ''), $selectedZeroResidualSteps));
     $selectedPhysicalStepIds = array_values(array_map(static fn (array $step): string => (string) ($step['id'] ?? ''), array_filter($selectedCleanupSteps, static fn (array $step): bool => ($step['proof'] ?? null) === 'physical_cleanup')));
     $selectedContractZeroIds = [];
     foreach ($actionContracts as $contract) {
         if (in_array($contract['cleanup_step_id'] ?? null, $selectedPhysicalStepIds, true)) $selectedContractZeroIds[] = $contract['zero_residual_step_id'] ?? null;
     }
+    $normalizedSelectedContractZeroIds = array_values(array_unique($selectedContractZeroIds));
+    $normalizedSelectedZeroResidualStepIds = $selectedZeroResidualStepIds;
+    sort($normalizedSelectedContractZeroIds);
+    sort($normalizedSelectedZeroResidualStepIds);
+    $allContractZeroIds = array_values(array_unique(array_map(
+        static fn (array $contract): mixed => $contract['zero_residual_step_id'] ?? null,
+        $actionContracts,
+    )));
+    $evidenceZeroResidualStepIds = $cleanupEvidence['zero_residual_step_ids'] ?? null;
+    if ($evidenceZeroResidualStepIds === null && is_string($cleanupEvidence['zero_residual_step_id'] ?? null)) {
+        $evidenceZeroResidualStepIds = [$cleanupEvidence['zero_residual_step_id']];
+    }
     if (!is_array($cleanupEvidence)
         || ($cleanupEvidence['api_available'] ?? null) !== true
         || ($cleanupEvidence['cleanup_step_ids'] ?? null) !== $cleanupStepIds
         || ($cleanupEvidence['action_contracts'] ?? null) !== $actionContracts
-        || !is_array($selectedZeroResidualStep)
-        || ($cleanupEvidence['zero_residual_step_id'] ?? null) !== ($selectedZeroResidualStep['id'] ?? null)
-        || !in_array($cleanupEvidence['zero_residual_step_id'] ?? null, $selectedCleanupStepIds, true)
-        || $selectedContractZeroIds !== [($selectedZeroResidualStep['id'] ?? null)]) {
+        || $selectedZeroResidualStepIds === []
+        || !is_array($evidenceZeroResidualStepIds)
+        || array_diff($selectedZeroResidualStepIds, $evidenceZeroResidualStepIds) !== []
+        || array_diff($evidenceZeroResidualStepIds, $allContractZeroIds) !== []
+        || $normalizedSelectedContractZeroIds !== $normalizedSelectedZeroResidualStepIds
+        || array_filter($evidenceZeroResidualStepIds, static fn (string $id): bool => !in_array($id, $cleanupStepIds, true)) !== []) {
         throw new RuntimeException('自动清理证据为空、未逐项绑定真实清理动作、与所选业务链不匹配，或未绑定最终零残留检查。');
     }
     $runtimeCleanupEvidence = trim((string) getenv('SAND_IAM_ACCEPTANCE_AUTOMATED_CLEANUP_EVIDENCE'));
@@ -418,7 +438,7 @@ function liveSafeTarget(array $target, string $defaultHost): array
         throw new RuntimeException('每个 target 必须给出非空的绝对路径 allow_paths。');
     }
     $kind = (string) ($target['kind'] ?? 'external');
-    if (!in_array($kind, ['sandiam', 'external'], true)) throw new RuntimeException('target kind 只能是 sandiam 或 external。');
+    if (!in_array($kind, ['sandiam', 'business_app', 'external'], true)) throw new RuntimeException('target kind 只能是 sandiam、business_app 或 external。');
     return ['base_url' => $baseUrl, 'allow_paths' => array_values($paths), 'kind' => $kind];
 }
 
@@ -430,10 +450,130 @@ function liveAllowedPath(string $path, array $target): bool
     return false;
 }
 
+/** @return array{fields:array<string,string>,file:array{field:string,filename:string,content_type:string,content:string}}|null */
+function liveMultipartDefinition(array $target, array $step): ?array
+{
+    $multipart = $step['multipart'] ?? null;
+    if ($multipart === null) return null;
+    $fields = is_array($multipart) ? ($multipart['fields'] ?? null) : null;
+    $file = is_array($multipart) ? ($multipart['file'] ?? null) : null;
+    if (($target['kind'] ?? null) !== 'sandiam'
+        || ($step['method'] ?? null) !== 'POST'
+        || ($step['write'] ?? null) !== true
+        || ($step['path'] ?? null) !== '/app/sand-iam/admin/identity-import/preview'
+        || array_key_exists('body', $step)
+        || !is_array($fields)
+        || array_keys($fields) !== ['application_id', 'mode']
+        || !is_array($file)
+        || array_keys($file) !== ['field', 'filename', 'content_type', 'content']
+        || ($file['field'] ?? null) !== 'file'
+        || ($file['content_type'] ?? null) !== 'text/csv'
+        || !is_string($file['filename'] ?? null)
+        || strlen($file['filename']) < 5
+        || strlen($file['filename']) > 255
+        || !str_ends_with(strtolower($file['filename']), '.csv')
+        || preg_match('#[\\\\/\\x00-\\x1f\\x7f]#', $file['filename'])
+        || !is_string($file['content'] ?? null)
+        || $file['content'] === ''
+        || strlen($file['content']) > 65_536
+        || str_contains($file['content'], "\0")) {
+        throw new RuntimeException('multipart 只允许 SandIAM 身份导入预检使用一个不超过 64KiB 的内联 CSV 文件。');
+    }
+    foreach ($fields as $name => $value) {
+        if (!is_string($name) || !is_string($value) || $value === '' || strlen($value) > 128 || preg_match('/[\\x00-\\x1f\\x7f]/', $value)) {
+            throw new RuntimeException('multipart 表单字段不安全。');
+        }
+    }
+    return ['fields' => $fields, 'file' => $file];
+}
+
+function liveMediaType(array $target, array $step): string
+{
+    $mediaType = $step['media_type'] ?? 'application/json';
+    if (!is_string($mediaType)) throw new RuntimeException('media_type 必须是字符串。');
+    if ($mediaType === 'application/json') return $mediaType;
+    if ($mediaType !== 'application/scim+json'
+        || ($target['kind'] ?? null) !== 'sandiam'
+        || !str_starts_with((string) ($step['path'] ?? ''), '/api/sand-iam/v1/scim/')) {
+        throw new RuntimeException('application/scim+json 只允许用于 SandIAM SCIM 运行端点。');
+    }
+    return $mediaType;
+}
+
+function liveQueryString(array $step): string
+{
+    $query = $step['query'] ?? null;
+    if ($query === null) return '';
+    if (($step['method'] ?? null) !== 'GET' || !is_array($query) || $query === []) {
+        throw new RuntimeException('query 只允许用于 GET，且必须是非空对象。');
+    }
+    $validate = static function (mixed $value, int $depth = 0) use (&$validate): void {
+        if ($depth > 4) throw new RuntimeException('query 嵌套过深。');
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                if ((!is_int($key) && (!is_string($key) || preg_match('/^[A-Za-z0-9_.-]{1,64}$/', $key) !== 1))) {
+                    throw new RuntimeException('query 字段名不安全。');
+                }
+                $validate($item, $depth + 1);
+            }
+            return;
+        }
+        if (!is_scalar($value) || (is_string($value) && (strlen($value) > 512 || preg_match('/[\x00-\x1f\x7f]/', $value)))) {
+            throw new RuntimeException('query 值不安全。');
+        }
+    };
+    $validate($query);
+    $encoded = http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+    if ($encoded === '' || strlen($encoded) > 8192) throw new RuntimeException('query 编码结果为空或过长。');
+    return $encoded;
+}
+
+function liveDeclaredRequestId(array $step, string $fallback): string
+{
+    if (is_string($step['request_id'] ?? null) && $step['request_id'] !== '') return $step['request_id'];
+    $query = $step['query'] ?? null;
+    if (is_array($query) && is_string($query['request_id'] ?? null) && $query['request_id'] !== '') {
+        return $query['request_id'];
+    }
+    parse_str((string) parse_url((string) ($step['path'] ?? ''), PHP_URL_QUERY), $pathQuery);
+    return is_string($pathQuery['request_id'] ?? null) && $pathQuery['request_id'] !== ''
+        ? $pathQuery['request_id']
+        : $fallback;
+}
+
+function liveExtraHeadersSafe(mixed $headers): bool
+{
+    if (!is_array($headers)) return false;
+    foreach ($headers as $name => $value) {
+        if (!is_string($name)
+            || !is_string($value)
+            || preg_match("/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/", $name) !== 1
+            || preg_match('/[\r\n]/', $value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function liveCustomCaFile(array $target): ?string
+{
+    if (parse_url((string) ($target['base_url'] ?? ''), PHP_URL_SCHEME) !== 'https') return null;
+    $configured = getenv('SAND_IAM_ACCEPTANCE_CA_FILE');
+    if (!is_string($configured) || $configured === '') return null;
+    if (getenv('SAND_IAM_ACCEPTANCE_ALLOW_CUSTOM_CA') !== 'I_UNDERSTAND_THIS_TRUSTS_ONLY_THE_CONFIGURED_CA') {
+        throw new RuntimeException('自定义验收 CA 必须显式确认。');
+    }
+    $real = realpath($configured);
+    if ($real === false || !is_file($real) || !is_readable($real)) {
+        throw new RuntimeException('自定义验收 CA 文件不可读。');
+    }
+    return $real;
+}
+
 /** @return array{status:int,body:string,json:array<string,mixed>|null,headers:array<string,list<string>>,location:string} */
 function liveHttp(array $target, array $step, string $authorization, string $requestId, ?string $cookieJar): array
 {
-    $declaredRequestId = (string) ($step['request_id'] ?? $requestId);
+    $declaredRequestId = liveDeclaredRequestId($step, $requestId);
     if (preg_match(SAND_IAM_ACCEPTANCE_FIXTURE_REQUEST_ID_PATTERN, $declaredRequestId) !== 1) throw new RuntimeException('计划中的 request_id 必须以完整验收前缀开头且使用安全后缀。');
     $transport = $GLOBALS['sand_iam_live_http_transport'] ?? null;
     if (is_callable($transport)) {
@@ -445,23 +585,30 @@ function liveHttp(array $target, array $step, string $authorization, string $req
     if (!function_exists('curl_init')) throw new RuntimeException('当前 PHP 缺少 curl，不能执行 live HTTP 验收。');
     $method = strtoupper((string) ($step['method'] ?? ''));
     $path = (string) ($step['path'] ?? '');
+    $query = liveQueryString($step);
     $write = $step['write'] ?? null;
     if (!liveMethodWriteAllowed($target, $step) || !liveAllowedPath($path, $target)) {
         throw new RuntimeException('live step 的 method/write/path 不符合受控 allowlist。');
     }
     $body = $step['body'] ?? null;
-    if (($method === 'POST' && !is_array($body)) || ($method === 'GET' && $body !== null)) throw new RuntimeException('POST 必须是 JSON 对象，GET 不得带请求体。');
+    $multipart = liveMultipartDefinition($target, $step);
+    $mediaType = liveMediaType($target, $step);
+    if ((in_array($method, ['POST', 'PATCH'], true) && $multipart === null && !is_array($body))
+        || (in_array($method, ['GET', 'DELETE'], true) && ($body !== null || $multipart !== null))) {
+        throw new RuntimeException('POST/PATCH 必须是 JSON 对象或登记的内联 multipart，GET/DELETE 不得带请求体。');
+    }
     $extraHeaders = $step['headers'] ?? [];
-    if (!is_array($extraHeaders) || array_filter($extraHeaders, static fn ($v, $k): bool => !is_string($k) || !is_string($v) || preg_match('/^[A-Za-z-]+$/', $k) !== 1 || str_contains($v, "\n"), ARRAY_FILTER_USE_BOTH)) throw new RuntimeException('请求头不安全。');
+    if (!liveExtraHeadersSafe($extraHeaders)) throw new RuntimeException('请求头不安全。');
     foreach ($extraHeaders as $name => $_value) {
-        if (strcasecmp($name, 'Authorization') === 0 || strcasecmp($name, 'X-Request-Id') === 0) throw new RuntimeException('计划不得重复或自行注入 Authorization/X-Request-Id。');
+        if (strcasecmp($name, 'Authorization') === 0 || strcasecmp($name, 'X-Request-Id') === 0 || strcasecmp($name, 'Content-Type') === 0) throw new RuntimeException('计划不得重复或自行注入 Authorization/X-Request-Id/Content-Type。');
     }
     if ($target['kind'] === 'external' && $authorization !== '') throw new RuntimeException('外部 target 不得携带 SandIAM 凭证。');
-    $headers = ['Accept: application/json', 'Content-Type: application/json', 'X-Request-Id: ' . $declaredRequestId];
-    if ($target['kind'] === 'sandiam') $headers[] = $authorization;
+    $headers = ['Accept: ' . $mediaType, 'X-Request-Id: ' . $declaredRequestId];
+    if ($multipart === null && $body !== null) $headers[] = 'Content-Type: ' . $mediaType;
+    if (in_array($target['kind'], ['sandiam', 'business_app'], true) && $authorization !== '') $headers[] = $authorization;
     foreach ($extraHeaders as $name => $value) $headers[] = $name . ': ' . $value;
     $responseHeaders = [];
-    $curl = curl_init($target['base_url'] . $path);
+    $curl = curl_init($target['base_url'] . $path . ($query === '' ? '' : (str_contains($path, '?') ? '&' : '?') . $query));
     if ($curl === false) throw new RuntimeException('无法初始化 HTTP 请求。');
     curl_setopt_array($curl, [
         CURLOPT_CUSTOMREQUEST => $method,
@@ -477,11 +624,23 @@ function liveHttp(array $target, array $step, string $authorization, string $req
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
     ]);
+    if (($caFile = liveCustomCaFile($target)) !== null) curl_setopt($curl, CURLOPT_CAINFO, $caFile);
     if ($target['kind'] === 'sandiam' && $cookieJar !== null) {
         curl_setopt($curl, CURLOPT_COOKIEFILE, $cookieJar);
         curl_setopt($curl, CURLOPT_COOKIEJAR, $cookieJar);
     }
-    if ($body !== null) curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    if ($multipart !== null) {
+        if (!class_exists('CURLStringFile')) throw new RuntimeException('当前 PHP curl 不支持安全的内联 multipart 文件。');
+        $postFields = $multipart['fields'];
+        $postFields[$multipart['file']['field']] = new CURLStringFile(
+            $multipart['file']['content'],
+            $multipart['file']['filename'],
+            $multipart['file']['content_type'],
+        );
+        curl_setopt($curl, CURLOPT_POSTFIELDS, $postFields);
+    } elseif ($body !== null) {
+        curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+    }
     $response = curl_exec($curl);
     $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
     $error = curl_error($curl);
@@ -537,6 +696,13 @@ function liveTotpCode(string $base32Secret, ?int $afterCounter = null): string
     return str_pad((string) ($value % 1_000_000), 6, '0', STR_PAD_LEFT);
 }
 
+function liveCaptureNameSensitive(string $name): bool
+{
+    if (str_ends_with($name, '_ref')) return false;
+    return preg_match('/(?:token|secret|password|ticket)/i', $name) === 1
+        || preg_match('/(?:^|_)(?:oauth|authorization|totp|recovery|verification|challenge)_code(?:$|_)/i', $name) === 1;
+}
+
 /** @param array<string,mixed> $step @param array<string,mixed> $variables */
 function liveDeriveBody(array $step, array $variables): array
 {
@@ -587,16 +753,59 @@ function liveMatches(mixed $actual, mixed $expected): bool
     return false;
 }
 
+function liveAssertionValue(mixed $value): string
+{
+    if (is_bool($value)) return $value ? 'true' : 'false';
+    if ($value === null) return 'null';
+    if (is_int($value) || is_float($value)) return (string) $value;
+    if (!is_string($value)) return get_debug_type($value);
+    $value = preg_replace('/[\x00-\x1f\x7f]+/', ' ', $value) ?? '';
+    return mb_strlen($value) > 96 ? mb_substr($value, 0, 96) . '…' : $value;
+}
+
 /** @return array{ok:bool,detail:string} */
 function liveCheckResponse(array $response, array $step): array
 {
     $expected = $step['expect_http'] ?? null;
     $expected = is_array($expected) ? $expected : [$expected];
-    if ($expected === [null] || !in_array($response['status'], array_map('intval', $expected), true)) return ['ok' => false, 'detail' => 'HTTP 状态不符合计划断言。'];
+    if ($expected === [null] || !in_array($response['status'], array_map('intval', $expected), true)) {
+        $declared = implode('/', array_map('strval', $expected));
+        $applicationCode = '';
+        if (is_array($response['json'] ?? null)) {
+            if (is_int($response['json']['code'] ?? null)) {
+                $applicationCode .= '，响应 code=' . $response['json']['code'];
+            }
+            $message = $response['json']['msg'] ?? $response['json']['message'] ?? $response['json']['error'] ?? null;
+            if (is_string($message) && preg_match('/^[A-Za-z0-9_.:-]{1,128}/', $message, $match) === 1) {
+                $applicationCode .= '，错误=' . $match[0];
+                if (preg_match('/（([a-z_]+)）/u', $message, $typeMatch) === 1) {
+                    $applicationCode .= '，对象类型=' . $typeMatch[1];
+                }
+            }
+        }
+        return ['ok' => false, 'detail' => "HTTP 状态不符合计划断言：实际 {$response['status']}{$applicationCode}，期望 {$declared}。"];
+    }
     $assert = $step['assert'] ?? null;
     if (!is_array($assert) || $assert === []) return ['ok' => false, 'detail' => '缺少业务语义断言。'];
     foreach (($assert['json'] ?? []) as $path => $expectedValue) {
-        try { if (!liveMatches(liveJsonPath($response['json'], (string) $path), $expectedValue)) return ['ok' => false, 'detail' => "JSON 断言失败：{$path}。"]; } catch (Throwable) { return ['ok' => false, 'detail' => "JSON 断言失败：{$path}。"]; }
+        try {
+            $actualValue = liveJsonPath($response['json'], (string) $path);
+            if (!liveMatches($actualValue, $expectedValue)) {
+                $errorCode = '';
+                $message = is_array($response['json'] ?? null)
+                    ? ($response['json']['msg'] ?? $response['json']['message'] ?? null)
+                    : null;
+                if (is_string($message) && preg_match('/^(SAND_IAM_[A-Z0-9_]+)/', $message, $match) === 1) {
+                    $errorCode = '，业务错误码 ' . $match[1];
+                    if (preg_match('/（([a-z_]+)）/u', $message, $typeMatch) === 1) {
+                        $errorCode .= '，对象类型 ' . $typeMatch[1];
+                    }
+                }
+                return ['ok' => false, 'detail' => "JSON 断言失败：{$path}，实际 " . liveAssertionValue($actualValue) . $errorCode . '。'];
+            }
+        } catch (Throwable) {
+            return ['ok' => false, 'detail' => "JSON 断言失败：{$path}，响应缺少该路径。"];
+        }
     }
     foreach (($assert['headers'] ?? []) as $name => $expectedValue) {
         $actual = implode(', ', $response['headers'][strtolower((string) $name)] ?? []);
@@ -618,17 +827,46 @@ function liveValidateChainPlan(string $chainId, array $chain, array $credentialR
     if (!is_string($chain['required_fixture_gate'] ?? null) || trim($chain['required_fixture_gate']) === '') throw new RuntimeException('每条 live 链必须明确 required_fixture_gate，不能把预置夹具写成可自动完成。');
     if (!is_string($chain['physical_cleanup_gate'] ?? null) || trim($chain['physical_cleanup_gate']) === '') throw new RuntimeException('每条 live 链必须明确 physical_cleanup_gate。');
     if (!is_array($chain['steps'] ?? null) || !is_array($chain['cleanup'] ?? null) || !is_array($chain['cleanup']['steps'] ?? null)) throw new RuntimeException('每条 live 链必须有 steps 与 cleanup.steps。');
+    $captureProducers = [];
+    foreach ($chain['steps'] as $index => $candidate) {
+        if (!is_array($candidate)) continue;
+        foreach (($candidate['capture'] ?? []) as $name => $source) {
+            if (!is_string($name) || !is_array($source)) throw new RuntimeException('live chain 的 capture 名称和来源必须完整。');
+            if (isset($captureProducers[$name])) throw new RuntimeException("业务步骤重复声明捕获名称 {$name}。");
+            $captureProducers[$name] = ['index' => $index, 'source' => $source];
+        }
+    }
     $proofs = [];
-    foreach ($chain['steps'] as $step) {
+    foreach ($chain['steps'] as $index => $step) {
         if (!is_array($step) || !is_string($step['id'] ?? null) || !is_string($step['proof'] ?? null) || !is_string($step['target'] ?? null) || !isset($targets[$step['target']]) || !is_array($step['assert'] ?? null) || ($step['assert'] ?? []) === []) throw new RuntimeException('live step 缺少 id/proof/target/assert，或 target 不在 allowlist。');
         if (!liveMethodWriteAllowed($targets[$step['target']], $step)) throw new RuntimeException('live step 的 method/write/effect 不一致。');
+        liveMultipartDefinition($targets[$step['target']], $step);
+        liveMediaType($targets[$step['target']], $step);
         livePollDefinition($step);
         $auth = (string) ($step['auth'] ?? '');
-        if (isset($step['auth_capture']) && (!is_string($step['auth_capture']) || !preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $step['auth_capture']))) throw new RuntimeException('auth_capture 必须引用本轮捕获的安全变量。');
+        $targetKind = (string) ($targets[$step['target']]['kind'] ?? '');
+        $authCapture = $step['auth_capture'] ?? null;
+        if ($authCapture !== null) {
+            $producer = is_string($authCapture) ? ($captureProducers[$authCapture] ?? null) : null;
+            $capturedScimToken = $auth === 'scim_token'
+                && $targetKind === 'sandiam'
+                && str_starts_with((string) ($step['path'] ?? ''), '/api/sand-iam/v1/scim/');
+            if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', (string) $authCapture)
+                || !is_array($producer)
+                || ($producer['index'] ?? PHP_INT_MAX) >= $index
+                || (($producer['source']['sensitive'] ?? false) !== true)
+                || ($auth !== 'application_user' && !$capturedScimToken)) {
+                throw new RuntimeException('auth_capture 必须引用此前响应捕获的敏感应用用户或 SCIM token。');
+            }
+        }
         if (array_key_exists('session_scope', $step)) throw new RuntimeException('session_scope 不允许由计划自定义；会话隔离范围只能由当前凭证槽或本轮捕获凭证确定。');
-        if (($targets[$step['target']]['kind'] ?? '') === 'external') {
+        if ($targetKind === 'external') {
             if ($auth !== 'none') throw new RuntimeException('外部 target 必须声明 auth:none，且不得携带 SandIAM 凭证。');
-        } elseif ($auth !== 'none' && !in_array($auth, $requiredSlots, true)) {
+        } elseif ($targetKind === 'business_app') {
+            if ($auth !== 'application_user' || $authCapture !== null) {
+                throw new RuntimeException('业务应用 target 只能使用本链明确批准的 application_user 凭证槽。');
+            }
+        } elseif ($authCapture === null && $auth !== 'none' && !in_array($auth, $requiredSlots, true)) {
             throw new RuntimeException('step 使用了未获该链批准的凭证槽。');
         }
         $proofs[$step['proof']] = true;
@@ -646,8 +884,18 @@ function liveValidateChainPlan(string $chainId, array $chain, array $credentialR
         }
         if (!is_string($step['target'] ?? null) || !isset($targets[$step['target']]) || !is_array($step['assert'] ?? null) || ($step['assert'] ?? []) === []) throw new RuntimeException('cleanup step 缺少 target/assert。');
         $auth = (string) ($step['auth'] ?? '');
-        if (($targets[$step['target']]['kind'] ?? '') === 'external') {
+        $targetKind = (string) ($targets[$step['target']]['kind'] ?? '');
+        if ($targetKind === 'external') {
             if ($auth !== 'none') throw new RuntimeException('外部 cleanup target 必须声明 auth:none。');
+        } elseif ($targetKind === 'business_app') {
+            if ($auth !== 'application_user' || isset($step['auth_capture'])) {
+                throw new RuntimeException('业务应用 cleanup target 只能使用本链明确批准的 application_user 凭证槽。');
+            }
+        } elseif (isset($step['auth_capture'])) {
+            $producer = is_string($step['auth_capture']) ? ($captureProducers[$step['auth_capture']] ?? null) : null;
+            if (!is_array($producer) || (($producer['source']['sensitive'] ?? false) !== true) || $auth !== 'application_user') {
+                throw new RuntimeException('cleanup step 的 auth_capture 必须引用本轮捕获的敏感应用用户 token。');
+            }
         } elseif (!in_array($auth, $requiredSlots, true)) {
             throw new RuntimeException('cleanup step 使用了未获该链批准的凭证槽。');
         }
@@ -673,8 +921,179 @@ function liveValidateChainPlan(string $chainId, array $chain, array $credentialR
         if (($step['proof'] ?? '') === 'zero_residual' && (str_contains($path, 'status=1') || str_contains($path, 'status%3D1'))) throw new RuntimeException('zero_residual 不得只查询启用状态；物理清理后必须全状态精确查询。');
     }
     if ($chainId === 'human-auth-session-mfa') liveValidateHumanAuthSessionMfaProtocol($chain);
-    if ($chainId === 'oauth-cas-api-governance') liveValidateOAuthCasApiGovernanceProtocol($chain);
+    if ($chainId === 'identity-group-role-policy') liveValidateIdentityDirectoryProtocol($chain, $targets);
+    if ($chainId === 'oauth-cas-api-governance') liveValidateOAuthCasApiGovernanceProtocol($chain, $targets);
+    if ($chainId === 'delegation-scope') liveValidateDelegationScopeProtocol($chain);
     if ($chainId === 'event-webhook-delivery') liveValidateWebhookDeliveryProtocol($chain, $targets);
+}
+
+/** @param array<string,array<string,mixed>> $targets */
+function liveValidateIdentityDirectoryProtocol(array $chain, array $targets): void
+{
+    $byId = [];
+    foreach ($chain['steps'] ?? [] as $index => $step) {
+        if (is_array($step) && is_string($step['id'] ?? null)) $byId[$step['id']] = ['index' => $index, 'step' => $step];
+    }
+    $required = [
+        'preview controlled identity import',
+        'confirm controlled identity import invitation',
+        'audit controlled identity import preview',
+        'audit controlled import invitation creation',
+        'create controlled SCIM identity provider',
+        'configure controlled SCIM identity provider',
+        'issue controlled SCIM token',
+        'SCIM creates controlled user',
+        'SCIM reads controlled user',
+        'SCIM updates controlled user',
+        'SCIM disables controlled user',
+        'SCIM deletes controlled user',
+        'revoke controlled SCIM token',
+        'revoked SCIM token is denied',
+        'audit controlled SCIM lifecycle',
+        'configure controlled Keycloak directory',
+        'create controlled directory connector',
+        'configure controlled directory connector',
+        'test controlled directory connector',
+        'run controlled directory create sync',
+        'mutate controlled Keycloak directory',
+        'run controlled directory update sync',
+        'controlled directory proves both generations',
+        'disable controlled directory connector',
+        'create identity',
+        'grant role to group',
+        'authorization decision allows derived group role',
+        'authorization decision denies outside policy',
+    ];
+    foreach ($required as $id) if (!isset($byId[$id])) throw new RuntimeException("Chain2 缺少固定目录或授权步骤：{$id}。");
+    $index = static fn (string $id): int => $byId[$id]['index'];
+    $step = static fn (string $id): array => $byId[$id]['step'];
+    if (!($index('preview controlled identity import') < $index('confirm controlled identity import invitation')
+        && $index('confirm controlled identity import invitation') < $index('create controlled SCIM identity provider')
+        && $index('create controlled SCIM identity provider') < $index('configure controlled SCIM identity provider')
+        && $index('configure controlled SCIM identity provider') < $index('issue controlled SCIM token')
+        && $index('issue controlled SCIM token') < $index('SCIM creates controlled user')
+        && $index('SCIM creates controlled user') < $index('SCIM reads controlled user')
+        && $index('SCIM reads controlled user') < $index('SCIM updates controlled user')
+        && $index('SCIM updates controlled user') < $index('SCIM disables controlled user')
+        && $index('SCIM disables controlled user') < $index('SCIM deletes controlled user')
+        && $index('SCIM deletes controlled user') < $index('revoke controlled SCIM token')
+        && $index('revoke controlled SCIM token') < $index('revoked SCIM token is denied')
+        && $index('revoked SCIM token is denied') < $index('audit controlled SCIM lifecycle')
+        && $index('audit controlled SCIM lifecycle') < $index('configure controlled Keycloak directory')
+        && $index('configure controlled Keycloak directory') < $index('create controlled directory connector')
+        && $index('create controlled directory connector') < $index('configure controlled directory connector')
+        && $index('configure controlled directory connector') < $index('test controlled directory connector')
+        && $index('test controlled directory connector') < $index('run controlled directory create sync')
+        && $index('run controlled directory create sync') < $index('mutate controlled Keycloak directory')
+        && $index('mutate controlled Keycloak directory') < $index('run controlled directory update sync')
+        && $index('run controlled directory update sync') < $index('controlled directory proves both generations')
+        && $index('controlled directory proves both generations') < $index('disable controlled directory connector'))) {
+        throw new RuntimeException('Chain2 必须按目录配置、连接测试、首次同步、目录变更、再次同步、证据和停用顺序执行。');
+    }
+    $directoryTarget = $targets['directory'] ?? null;
+    $configuredDirectory = $step('configure controlled directory connector')['body']['config'] ?? null;
+    if (!is_array($directoryTarget)
+        || ($directoryTarget['kind'] ?? null) !== 'external'
+        || !is_string($directoryTarget['base_url'] ?? null)
+        || (!str_starts_with((string) $directoryTarget['base_url'], 'https://')
+            && $directoryTarget['base_url'] !== '__REQUIRED_C02_DIRECTORY_URL__')
+        || !is_array($configuredDirectory)
+        || ($configuredDirectory['base_url'] ?? null) !== $directoryTarget['base_url']
+        || ($directoryTarget['allow_paths'] ?? null) !== ['/admin/realms', '/directory']) {
+        throw new RuntimeException('Chain2 必须使用独立 allowlist 的公网 HTTPS 目录 target。');
+    }
+    $create = $step('create controlled directory connector');
+    $importPreview = $step('preview controlled identity import');
+    $importConfirm = $step('confirm controlled identity import invitation');
+    $scimProvider = $step('create controlled SCIM identity provider');
+    $scimConfigure = $step('configure controlled SCIM identity provider');
+    $scimToken = $step('issue controlled SCIM token');
+    $scimCreate = $step('SCIM creates controlled user');
+    $scimRead = $step('SCIM reads controlled user');
+    $scimUpdate = $step('SCIM updates controlled user');
+    $scimDisable = $step('SCIM disables controlled user');
+    $scimDelete = $step('SCIM deletes controlled user');
+    $scimRevoke = $step('revoke controlled SCIM token');
+    $scimDenied = $step('revoked SCIM token is denied');
+    $configure = $step('configure controlled directory connector');
+    $firstRun = $step('run controlled directory create sync');
+    $secondRun = $step('run controlled directory update sync');
+    $proof = $step('controlled directory proves both generations');
+    $importContent = (string) ($importPreview['multipart']['file']['content'] ?? '');
+    $hasConcreteImportEmail = preg_match('/^[^,\r\n]*,[^,\r\n]*,[^,\r\n@]+@[^,\r\n@]+,[^,\r\n]*,[^,\r\n]*,[^,\r\n]*$/m', $importContent) === 1;
+    if (($importPreview['path'] ?? null) !== '/app/sand-iam/admin/identity-import/preview'
+        || (($importPreview['multipart']['fields']['mode'] ?? null) !== 'create')
+        || (($importPreview['multipart']['file']['content_type'] ?? null) !== 'text/csv')
+        || (!str_contains($importContent, '__REQUIRED_C02_IMPORT_EMAIL__') && !$hasConcreteImportEmail)
+        || (($importPreview['capture']['identity_import_job_id']['path'] ?? null) !== 'data.id')
+        || (($importPreview['capture']['identity_import_digest']['sensitive'] ?? null) !== true)
+        || ($importConfirm['path'] ?? null) !== '/app/sand-iam/admin/identity-import/confirm'
+        || (($importConfirm['body']['id'] ?? null) !== '${identity_import_job_id}')
+        || (($importConfirm['body']['digest'] ?? null) !== '${identity_import_digest}')
+        || (($importConfirm['assert']['json']['data.success'] ?? null) !== 1)
+        || (($importConfirm['assert']['json']['data.warning'] ?? null) !== 0)
+        || (($importConfirm['assert']['json']['data.failure'] ?? null) !== 0)
+        || ($scimProvider['path'] ?? null) !== '/app/sand-iam/admin/identity-provider/save'
+        || ($scimProvider['body']['scope_type'] ?? null) !== 'application'
+        || ($scimProvider['capture']['identity_provider_id']['path'] ?? null) !== 'data.id'
+        || ($scimProvider['capture']['scim_provider_code']['path'] ?? null) !== 'data.public_code'
+        || ($scimConfigure['path'] ?? null) !== '/app/sand-iam/admin/federation/configure'
+        || ($scimConfigure['body']['provider_type'] ?? null) !== 'scim'
+        || ($scimConfigure['body']['provider_id'] ?? null) !== '${identity_provider_id}'
+        || ($scimToken['path'] ?? null) !== '/app/sand-iam/admin/scim/token/issue'
+        || ($scimToken['capture']['scim_access_token']['path'] ?? null) !== 'data.token'
+        || ($scimToken['capture']['scim_access_token']['sensitive'] ?? null) !== true
+        || ($scimCreate['auth'] ?? null) !== 'scim_token'
+        || ($scimCreate['auth_capture'] ?? null) !== 'scim_access_token'
+        || ($scimCreate['method'] ?? null) !== 'POST'
+        || ($scimCreate['media_type'] ?? null) !== 'application/scim+json'
+        || ($scimCreate['path'] ?? null) !== '/api/sand-iam/v1/scim/${scim_provider_code}/Users'
+        || ($scimCreate['capture']['scim_user_ref']['path'] ?? null) !== 'id'
+        || ($scimRead['media_type'] ?? null) !== 'application/scim+json'
+        || ($scimUpdate['method'] ?? null) !== 'PATCH'
+        || ($scimUpdate['media_type'] ?? null) !== 'application/scim+json'
+        || ($scimUpdate['headers']['If-Match'] ?? null) !== '${scim_user_version}'
+        || ($scimDisable['method'] ?? null) !== 'PATCH'
+        || ($scimDisable['media_type'] ?? null) !== 'application/scim+json'
+        || ($scimDisable['body']['Operations'][0]['path'] ?? null) !== 'active'
+        || ($scimDisable['body']['Operations'][0]['value'] ?? null) !== false
+        || ($scimDelete['method'] ?? null) !== 'DELETE'
+        || ($scimDelete['media_type'] ?? null) !== 'application/scim+json'
+        || ($scimDelete['headers']['If-Match'] ?? null) !== '${scim_disabled_version}'
+        || ($scimRevoke['path'] ?? null) !== '/app/sand-iam/admin/scim/token/revoke'
+        || ($scimRevoke['body']['token_id'] ?? null) !== '${scim_token_ref}'
+        || ($scimDenied['proof'] ?? null) !== 'revoke_effective'
+        || ($scimDenied['expect_http'] ?? null) !== 401
+        || ($scimDenied['media_type'] ?? null) !== 'application/scim+json'
+        || ($scimDenied['auth_capture'] ?? null) !== 'scim_access_token'
+        || ($create['path'] ?? null) !== '/app/sand-iam/admin/sync-connector/save'
+        || ($create['body']['driver_code'] ?? null) !== 'keycloak'
+        || ($create['body']['direction'] ?? null) !== 'inbound'
+        || ($create['capture']['sync_connector_id']['path'] ?? null) !== 'data.id'
+        || ($configure['path'] ?? null) !== '/app/sand-iam/admin/sync-connector/configure'
+        || ($configure['body']['id'] ?? null) !== '${sync_connector_id}'
+        || !is_string($configure['body']['config']['realm'] ?? null)
+        || trim((string) $configure['body']['config']['realm']) === ''
+        || !is_string($configure['body']['config']['access_token'] ?? null)
+        || trim((string) $configure['body']['config']['access_token']) === ''
+        || ($firstRun['assert']['json']['data.created'] ?? null) !== 1
+        || ($secondRun['assert']['json']['data.updated'] ?? null) !== 1
+        || ($proof['assert']['json']['generations_seen'] ?? null) !== [1, 2]) {
+        throw new RuntimeException('Chain2 目录连接、两代真实同步或外部证据契约被弱化。');
+    }
+    $cleanupIds = array_column($chain['cleanup']['steps'] ?? [], 'id');
+    foreach ([
+        'cleanup controlled Keycloak directory',
+        'zero residual controlled Keycloak directory',
+        'controlled cleanup directory sync only',
+        'zero residual directory sync only',
+        'controlled cleanup SCIM provider only',
+        'zero residual SCIM provider only',
+        'controlled cleanup identity import only',
+        'zero residual identity import only',
+    ] as $cleanupId) {
+        if (!in_array($cleanupId, $cleanupIds, true)) throw new RuntimeException("Chain2 缺少目录夹具恢复步骤：{$cleanupId}。");
+    }
 }
 
 function liveValidateHumanAuthSessionMfaProtocol(array $chain): void
@@ -710,8 +1129,8 @@ function liveValidateHumanAuthSessionMfaProtocol(array $chain): void
     }
 }
 
-/** @param array<string,mixed> $chain */
-function liveValidateOAuthCasApiGovernanceProtocol(array $chain): void
+/** @param array<string,mixed> $chain @param array<string,array<string,mixed>> $targets */
+function liveValidateOAuthCasApiGovernanceProtocol(array $chain, array $targets): void
 {
     $steps = $chain['steps'] ?? [];
     if (!is_array($steps)) throw new RuntimeException('Chain5 缺少步骤集合。');
@@ -720,7 +1139,8 @@ function liveValidateOAuthCasApiGovernanceProtocol(array $chain): void
         if (is_array($step) && is_string($step['id'] ?? null)) $byId[$step['id']] = ['index' => $index, 'step' => $step];
     }
     $required = [
-        'create controlled API catalog entry', 'create controlled route binding',
+        'create controlled API catalog entry', 'preview controlled route manifest',
+        'apply controlled route manifest',
         'create OAuth client with distinct public code and database ID', 'OAuth authorize 302',
         'correct PKCE token', 'OAuth authorize distinct wrong-PKCE request',
         'wrong PKCE invalid grant on independent code', 'create controlled CAS service',
@@ -728,46 +1148,84 @@ function liveValidateOAuthCasApiGovernanceProtocol(array $chain): void
         'CAS XML denies disabled service ticket', 'OAuth userinfo allows this-run access token',
         'revoke this-run OAuth grant', 'OAuth userinfo denies revoked access token',
         'create and bind controlled identity policy', 'publish controlled identity policy',
-        'simulate controlled policy allow', 'application session permits controlled API invocation',
+        'simulate controlled policy allow', 'provider route allows',
+        'application session permits controlled API invocation',
         'revoke controlled identity policy', 'simulate controlled policy deny after revoke',
-        'application session denies revoked policy API invocation',
+        'application session denies revoked policy API invocation', 'disable route', 'provider route deny',
     ];
     foreach ($required as $id) if (!isset($byId[$id])) throw new RuntimeException("Chain5 缺少固定协议步骤：{$id}。");
     $step = static fn (string $id): array => $byId[$id]['step'];
     $index = static fn (string $id): int => $byId[$id]['index'];
-    if (!($index('create controlled API catalog entry') < $index('create controlled route binding')
-        && $index('create controlled route binding') < $index('create and bind controlled identity policy')
+    if (!($index('create controlled API catalog entry') < $index('preview controlled route manifest')
+        && $index('preview controlled route manifest') < $index('apply controlled route manifest')
+        && $index('apply controlled route manifest') < $index('create and bind controlled identity policy')
         && $index('create and bind controlled identity policy') < $index('publish controlled identity policy')
         && $index('publish controlled identity policy') < $index('simulate controlled policy allow'))) {
         throw new RuntimeException('Chain5 必须按 catalog→route→policy publish→simulate 顺序验证接口治理。');
     }
-    $route = $step('create controlled route binding');
+    $routePreview = $step('preview controlled route manifest');
+    $routeApply = $step('apply controlled route manifest');
     $catalog = $step('create controlled API catalog entry');
     $policyCreate = $step('create and bind controlled identity policy');
-    if (($route['body']['application_id'] ?? null) !== '__REQUIRED_APPLICATION_ID__'
-        || ($route['body']['api_resource_id'] ?? null) !== '${api_resource_id}'
+    $templateScope = ($catalog['body']['application_id'] ?? null) === '__REQUIRED_APPLICATION_ID__';
+    $applicationId = filter_var($catalog['body']['application_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    $resourceId = filter_var($catalog['body']['resource_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    $identityId = filter_var($policyCreate['body']['identity_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    if (($routePreview['path'] ?? null) !== '/app/sand-iam/admin/developer/route-manifest/preview'
+        || ($routePreview['write'] ?? null) !== false
+        || (($routePreview['body']['manifest']['routes'][0]['sand_iam']['api_code'] ?? null) !== '${prefix}chain5-api')
+        || (($routePreview['capture']['route_preview_hash']['path'] ?? null) !== 'data.preview_hash')
+        || ($routeApply['path'] ?? null) !== '/app/sand-iam/admin/developer/route-manifest/apply'
+        || (($routeApply['body']['preview_hash'] ?? null) !== '${route_preview_hash}')
+        || (($routeApply['body']['apply'] ?? null) !== true)
+        || (($routeApply['capture']['route_binding_id']['path'] ?? null) !== 'data.changes.0.binding_id')
+        || (($routeApply['capture']['route_binding_audit_request']['path'] ?? null) !== 'data.changes.0.audit_request_id')
         || (($catalog['capture']['api_resource_id']['path'] ?? null) !== 'data.id')
-        || (($policyCreate['body']['application_id'] ?? null) !== '__REQUIRED_APPLICATION_ID__')
-        || (($policyCreate['body']['resource_id'] ?? null) !== '__REQUIRED_RESOURCE_ID__')
-        || (($policyCreate['body']['identity_id'] ?? null) !== '__REQUIRED_APPLICATION_IDENTITY_ID__')) {
-        throw new RuntimeException('Chain5 catalog、route 与 policy 必须绑定同一应用、本轮 api_resource、资源和身份。');
+        || ($templateScope
+            ? (($policyCreate['body']['application_id'] ?? null) !== '__REQUIRED_APPLICATION_ID__'
+                || ($policyCreate['body']['resource_id'] ?? null) !== '__REQUIRED_RESOURCE_ID__'
+                || ($policyCreate['body']['identity_id'] ?? null) !== '__REQUIRED_APPLICATION_IDENTITY_ID__')
+            : ($applicationId === false
+                || $resourceId === false
+                || $identityId === false
+                || ($policyCreate['body']['application_id'] ?? null) !== ($catalog['body']['application_id'] ?? null)
+                || ($policyCreate['body']['resource_id'] ?? null) !== ($catalog['body']['resource_id'] ?? null)))) {
+        throw new RuntimeException('Chain5 catalog、route manifest 与 policy 必须绑定同一应用、本轮 API 代码、资源和身份。');
     }
     $pkcePositive = $step('correct PKCE token');
     $pkceNegative = $step('wrong PKCE invalid grant on independent code');
     $authorizePositive = $step('OAuth authorize 302');
     $authorizeNegative = $step('OAuth authorize distinct wrong-PKCE request');
+    parse_str((string) parse_url((string) ($authorizePositive['path'] ?? ''), PHP_URL_QUERY), $authorizePositiveQuery);
+    parse_str((string) parse_url((string) ($authorizeNegative['path'] ?? ''), PHP_URL_QUERY), $authorizeNegativeQuery);
+    $pkceVerifier = (string) ($pkcePositive['body']['code_verifier'] ?? '');
+    $wrongPkceVerifier = (string) ($pkceNegative['body']['code_verifier'] ?? '');
+    $pkceChallenge = rtrim(strtr(base64_encode(hash('sha256', $pkceVerifier, true)), '+/', '-_'), '=');
+    $templatePkce = $pkceVerifier === '__REQUIRED_PKCE_VERIFIER__';
     if (($authorizePositive['path'] ?? null) === ($authorizeNegative['path'] ?? null)
-        || !str_contains((string) ($authorizePositive['path'] ?? ''), 'code_challenge=__REQUIRED_PKCE_CHALLENGE__')
-        || !str_contains((string) ($authorizeNegative['path'] ?? ''), 'code_challenge=__REQUIRED_PKCE_CHALLENGE__')
+        || ($templatePkce
+            ? (($authorizePositiveQuery['code_challenge'] ?? null) !== '__REQUIRED_PKCE_CHALLENGE__'
+                || ($authorizeNegativeQuery['code_challenge'] ?? null) !== '__REQUIRED_PKCE_CHALLENGE__'
+                || $wrongPkceVerifier !== '__REQUIRED_WRONG_PKCE_VERIFIER__')
+            : (!is_string($authorizePositiveQuery['code_challenge'] ?? null)
+                || ($authorizePositiveQuery['code_challenge'] ?? null) !== ($authorizeNegativeQuery['code_challenge'] ?? null)
+                || ($authorizePositiveQuery['code_challenge'] ?? null) !== $pkceChallenge
+                || !is_string($authorizePositiveQuery['redirect_uri'] ?? null)
+                || ($authorizePositiveQuery['redirect_uri'] ?? null) !== ($authorizeNegativeQuery['redirect_uri'] ?? null)
+                || ($authorizePositiveQuery['redirect_uri'] ?? null) !== ($pkcePositive['body']['redirect_uri'] ?? null)
+                || !in_array($authorizePositiveQuery['redirect_uri'] ?? null, $step('create OAuth client with distinct public code and database ID')['body']['redirect_uris'] ?? [], true)))
         || (($authorizePositive['capture']['oauth_request']['sensitive'] ?? null) !== true)
         || (($authorizeNegative['capture']['oauth_request_wrong']['sensitive'] ?? null) !== true)
         || ($pkcePositive['proof'] ?? null) !== 'allow' || ($pkcePositive['target'] ?? null) !== 'sandiam'
         || ($pkcePositive['auth'] ?? null) !== 'service_client' || ($pkcePositive['path'] ?? null) !== '/api/sand-iam/v1/oauth/token'
-        || ($pkcePositive['expect_http'] ?? null) !== 200 || (($pkcePositive['body']['code_verifier'] ?? null) !== '__REQUIRED_PKCE_VERIFIER__')
+        || ($pkcePositive['expect_http'] ?? null) !== 200
+        || (!$templatePkce && preg_match('/^[A-Za-z0-9._~-]{43,128}$/', $pkceVerifier) !== 1)
         || (($pkcePositive['body']['code'] ?? null) !== '${oauth_code}') || (($pkcePositive['capture']['oauth_access_token']['path'] ?? null) !== 'access_token')
         || ($pkceNegative['proof'] ?? null) !== 'deny' || ($pkceNegative['target'] ?? null) !== 'sandiam'
         || ($pkceNegative['auth'] ?? null) !== 'service_client' || ($pkceNegative['path'] ?? null) !== '/api/sand-iam/v1/oauth/token'
-        || ($pkceNegative['expect_http'] ?? null) !== 400 || (($pkceNegative['body']['code_verifier'] ?? null) !== '__REQUIRED_WRONG_PKCE_VERIFIER__')
+        || ($pkceNegative['expect_http'] ?? null) !== 400
+        || (!$templatePkce && preg_match('/^[A-Za-z0-9._~-]{43,128}$/', $wrongPkceVerifier) !== 1)
+        || (!$templatePkce && hash_equals($pkceVerifier, $wrongPkceVerifier))
         || (($pkceNegative['body']['code'] ?? null) !== '${oauth_code_wrong}')) {
         throw new RuntimeException('Chain5 OAuth PKCE 正反例必须使用独立授权码并固定 token 端点结果。');
     }
@@ -786,8 +1244,9 @@ function liveValidateOAuthCasApiGovernanceProtocol(array $chain): void
         || (($casDisable['body']['id'] ?? null) !== '${cas_service_id}')
         || ($casDenied['target'] ?? null) !== 'sandiam' || ($casDenied['auth'] ?? null) !== 'service_client'
         || !str_starts_with((string) ($casDenied['path'] ?? ''), '/api/sand-iam/v1/cas/serviceValidate?')
+        || ($casDenied['expect_http'] ?? null) !== 200
         || (($casDenied['assert']['headers']['content-type']['contains'] ?? null) !== 'application/xml')
-        || (($casDenied['assert']['body']['contains'] ?? null) !== '<cas:authenticationFailure>')) {
+        || (($casDenied['assert']['body']['contains'] ?? null) !== '<cas:authenticationFailure')) {
         throw new RuntimeException('Chain5 CAS 必须由 ticket 回调、XML serviceValidate 和停用后的 XML 拒绝构成，userinfo 或无关 API 不能代替。');
     }
     $oauthAllow = $step('OAuth userinfo allows this-run access token');
@@ -828,9 +1287,15 @@ function liveValidateOAuthCasApiGovernanceProtocol(array $chain): void
     $appDeny = $step('application session denies revoked policy API invocation');
     $catalogCode = $catalog['body']['code'] ?? null;
     foreach ([$simulateAllow, $simulateDeny] as $simulation) {
-        if (($simulation['body']['application_id'] ?? null) !== '__REQUIRED_APPLICATION_ID__'
-            || ($simulation['body']['identity_id'] ?? null) !== '__REQUIRED_APPLICATION_IDENTITY_ID__'
-            || ($simulation['body']['resource_code'] ?? null) !== '__REQUIRED_RESOURCE_CODE__'
+        if (($templateScope
+                ? (($simulation['body']['application_id'] ?? null) !== '__REQUIRED_APPLICATION_ID__'
+                    || ($simulation['body']['identity_id'] ?? null) !== '__REQUIRED_APPLICATION_IDENTITY_ID__'
+                    || ($simulation['body']['resource_code'] ?? null) !== '__REQUIRED_RESOURCE_CODE__')
+                : (($simulation['body']['application_id'] ?? null) !== ($catalog['body']['application_id'] ?? null)
+                    || ($simulation['body']['identity_id'] ?? null) !== ($policyCreate['body']['identity_id'] ?? null)
+                    || !is_string($simulation['body']['resource_code'] ?? null)
+                    || trim((string) ($simulation['body']['resource_code'] ?? '')) === ''
+                    || ($simulation['body']['resource_code'] ?? null) !== ($simulateAllow['body']['resource_code'] ?? null)))
             || ($simulation['body']['action'] ?? null) !== ($catalog['body']['action'] ?? null)
             || ($simulation['body']['operation'] ?? null) !== ($catalog['body']['operation'] ?? null)) {
             throw new RuntimeException('Chain5 策略 simulate 必须绑定本轮业务资源、身份、动作和 catalog 操作。');
@@ -843,29 +1308,272 @@ function liveValidateOAuthCasApiGovernanceProtocol(array $chain): void
             throw new RuntimeException('Chain5 应用 allow/deny 必须调用本轮 catalog API 并返回同一 api_code。');
         }
     }
+    $providerAllow = $step('provider route allows');
+    $providerDeny = $step('provider route deny');
+    $routeDisable = $step('disable route');
+    $routeTemplate = (string) ($routeApply['body']['manifest']['routes'][0]['path'] ?? '');
+    $providerPath = (string) ($providerAllow['path'] ?? '');
+    $routePattern = '~^' . preg_replace('/\\\\\\{[A-Za-z][A-Za-z0-9_]*\\\\\\}/', '[^/?#]+', preg_quote($routeTemplate, '~')) . '$~D';
+    $providerPathMatches = (
+        $routeTemplate === '__REQUIRED_PROVIDER_ROUTE_TEMPLATE__'
+        && $providerPath === '__REQUIRED_PROVIDER_ROUTE_PATH__'
+    ) || @preg_match($routePattern, $providerPath) === 1;
+    if (($targets['business_app']['kind'] ?? null) !== 'business_app'
+        || ($providerAllow['target'] ?? null) !== 'business_app'
+        || ($providerAllow['auth'] ?? null) !== 'application_user'
+        || ($providerAllow['method'] ?? null) !== 'POST'
+        || ($providerAllow['write'] ?? null) !== true
+        || ($providerAllow['request_id'] ?? null) !== '${prefix}chain5-provider-allow'
+        || ($providerAllow['body'] ?? null) !== []
+        || $routeTemplate === ''
+        || $providerPath === ''
+        || !$providerPathMatches
+        || (($providerAllow['assert']['json']['allowed'] ?? null) !== true)
+        || (($providerAllow['assert']['json']['authorization.api_code'] ?? null) !== '${prefix}chain5-api')
+        || (($providerAllow['assert']['json']['authorization.request_id'] ?? null) !== '${prefix}chain5-provider-allow')
+        || (($providerAllow['capture']['business_audit_allow_id']['path'] ?? null) !== 'business_audit_id')
+        || (($providerAllow['capture']['business_item_id']['path'] ?? null) !== 'item.id')
+        || ($routeDisable['path'] ?? null) !== '/app/sand-iam/admin/api-route-binding/disable'
+        || (($routeDisable['body']['id'] ?? null) !== '${route_binding_id}')
+        || ($providerDeny['target'] ?? null) !== 'business_app'
+        || ($providerDeny['auth'] ?? null) !== 'application_user'
+        || ($providerDeny['method'] ?? null) !== 'POST'
+        || ($providerDeny['write'] ?? null) !== true
+        || ($providerDeny['request_id'] ?? null) !== '${prefix}chain5-provider-route-disabled'
+        || ($providerDeny['path'] ?? null) !== $providerPath
+        || ($providerDeny['body'] ?? null) !== []
+        || (($providerDeny['assert']['json']['allowed'] ?? null) !== false)
+        || (($providerDeny['assert']['json']['error'] ?? null) !== 'SAND_IAM_ROUTE_NOT_REGISTERED')
+        || (($providerDeny['capture']['business_audit_deny_id']['path'] ?? null) !== 'business_audit_id')) {
+        throw new RuntimeException('Chain5 真实业务路由必须使用 application_user 经过已登记 Webman 路由，回传同一 api_code/request_id，并在绑定停用后以固定错误拒绝。');
+    }
     $cleanup = $chain['cleanup']['steps'] ?? [];
     $cleanupIds = array_column(is_array($cleanup) ? $cleanup : [], 'id');
-    if ($cleanupIds !== ['controlled cleanup OAuth CAS API governance fixture', 'zero residual OAuth CAS API governance fixture']) {
-        throw new RuntimeException('Chain5 必须以受控 cleanup 和 status 零残留查询收口。');
+    if ($cleanupIds !== [
+        'controlled cleanup complete C05 business audit',
+        'zero residual complete C05 business audit',
+        'controlled cleanup partial C05 business audit',
+        'zero residual partial C05 business audit',
+        'controlled cleanup OAuth CAS API governance fixture',
+        'zero residual OAuth CAS API governance fixture',
+    ]) {
+        throw new RuntimeException('Chain5 必须分别清理真实业务审计和 SandIAM 夹具，并以各自零残留查询收口。');
     }
-    $cleanupAction = $cleanup[0] ?? [];
-    $cleanupStatus = $cleanup[1] ?? [];
+    $cleanupAction = $cleanup[4] ?? [];
+    $cleanupStatus = $cleanup[5] ?? [];
     $statusPath = (string) ($cleanupStatus['path'] ?? '');
-    if (($cleanupAction['body']['application_id'] ?? null) !== '__REQUIRED_APPLICATION_ID__'
-        || ($cleanupAction['body']['environment_id'] ?? null) !== '__REQUIRED_ENVIRONMENT_ID__'
-        || ($cleanupAction['body']['resource_id'] ?? null) !== '__REQUIRED_RESOURCE_ID__'
-        || ($cleanupAction['body']['identity_id'] ?? null) !== '__REQUIRED_APPLICATION_IDENTITY_ID__'
-        || !str_contains($statusPath, 'application_id=__REQUIRED_APPLICATION_ID__')
-        || !str_contains($statusPath, 'environment_id=__REQUIRED_ENVIRONMENT_ID__')
-        || !str_contains($statusPath, 'resource_id=__REQUIRED_RESOURCE_ID__')
-        || !str_contains($statusPath, 'identity_id=__REQUIRED_APPLICATION_IDENTITY_ID__')) {
+    parse_str((string) parse_url($statusPath, PHP_URL_QUERY), $statusQuery);
+    $environmentId = filter_var($cleanupAction['body']['environment_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+    if ($templateScope
+        ? (($cleanupAction['body']['application_id'] ?? null) !== '__REQUIRED_APPLICATION_ID__'
+            || ($cleanupAction['body']['environment_id'] ?? null) !== '__REQUIRED_ENVIRONMENT_ID__'
+            || ($cleanupAction['body']['resource_id'] ?? null) !== '__REQUIRED_RESOURCE_ID__'
+            || ($cleanupAction['body']['identity_id'] ?? null) !== '__REQUIRED_APPLICATION_IDENTITY_ID__'
+            || ($statusQuery['application_id'] ?? null) !== '__REQUIRED_APPLICATION_ID__'
+            || ($statusQuery['environment_id'] ?? null) !== '__REQUIRED_ENVIRONMENT_ID__'
+            || ($statusQuery['resource_id'] ?? null) !== '__REQUIRED_RESOURCE_ID__'
+            || ($statusQuery['identity_id'] ?? null) !== '__REQUIRED_APPLICATION_IDENTITY_ID__')
+        : (($cleanupAction['body']['application_id'] ?? null) !== ($catalog['body']['application_id'] ?? null)
+            || ($cleanupAction['body']['resource_id'] ?? null) !== ($catalog['body']['resource_id'] ?? null)
+            || ($cleanupAction['body']['identity_id'] ?? null) !== ($policyCreate['body']['identity_id'] ?? null)
+            || $environmentId === false
+            || (string) ($statusQuery['application_id'] ?? '') !== (string) ($cleanupAction['body']['application_id'] ?? '')
+            || (string) ($statusQuery['environment_id'] ?? '') !== (string) ($cleanupAction['body']['environment_id'] ?? '')
+            || (string) ($statusQuery['resource_id'] ?? '') !== (string) ($cleanupAction['body']['resource_id'] ?? '')
+            || (string) ($statusQuery['identity_id'] ?? '') !== (string) ($cleanupAction['body']['identity_id'] ?? ''))) {
         throw new RuntimeException('Chain5 cleanup/status 必须携带同一轮 application、environment、resource 和 identity 前置范围。');
     }
     $residualTypes = ['oauth_client', 'cas_service', 'api_resource', 'api_route_binding', 'policy', 'oauth_authorization_request', 'authorization_code', 'oauth_consent', 'oauth_grant', 'oauth_token', 'cas_login_request', 'cas_ticket', 'policy_version'];
-    foreach ($cleanup as $cleanupStep) {
+    foreach ([$cleanupAction, $cleanupStatus] as $cleanupStep) {
         $assertions = $cleanupStep['assert']['json'] ?? [];
         if (!is_array($assertions)) throw new RuntimeException('Chain5 cleanup/status 必须声明 13 类零残留断言。');
         foreach ($residualTypes as $type) if (($assertions['data.residual.' . $type] ?? null) !== 0) throw new RuntimeException('Chain5 cleanup/status 缺少 13 类对象的零残留断言。');
+    }
+}
+
+function liveValidateDelegationScopeProtocol(array $chain): void
+{
+    $byId = [];
+    foreach ($chain['steps'] as $step) {
+        if (is_array($step)) $byId[(string) ($step['id'] ?? '')] = $step;
+    }
+    foreach ([
+        'create delegation',
+        'scoped creates in scope environment',
+        'scoped in scope allow',
+        'same scoped out scope deny',
+        'audit same scoped out scope deny',
+        'independent out of scope admin deny',
+        'audit independent out of scope admin deny',
+        'audit scoped environment creation',
+        'audit this-run delegation creation',
+        'scoped disables in scope environment',
+        'audit scoped environment disable',
+        'disable delegation',
+        'audit this-run delegation disable',
+        'same scoped revoked deny',
+        'audit same scoped revoked deny',
+    ] as $id) {
+        if (!isset($byId[$id])) throw new RuntimeException("Chain6 缺少固定三角色委派步骤：{$id}。");
+    }
+
+    $create = $byId['create delegation'];
+    $environmentCreate = $byId['scoped creates in scope environment'];
+    $allow = $byId['scoped in scope allow'];
+    $scopeDeny = $byId['same scoped out scope deny'];
+    $thirdRoleDeny = $byId['independent out of scope admin deny'];
+    $environmentDisable = $byId['scoped disables in scope environment'];
+    $disable = $byId['disable delegation'];
+    $revokedDeny = $byId['same scoped revoked deny'];
+    $queryValue = static function (string $path, string $key): string {
+        parse_str((string) parse_url($path, PHP_URL_QUERY), $query);
+        return is_scalar($query[$key] ?? null) ? (string) $query[$key] : '';
+    };
+    $scopedAdminId = (string) ($create['body']['admin_user_id'] ?? '');
+    $inScopeApplicationId = (string) ($create['body']['application_id'] ?? '');
+    $outOfScopeApplicationId = $queryValue((string) ($scopeDeny['path'] ?? ''), 'id');
+    $outOfScopeAdminId = $queryValue((string) ($byId['audit independent out of scope admin deny']['path'] ?? ''), 'actor_ref');
+    $scopeIdentifiers = [
+        [$scopedAdminId, '__REQUIRED_SCOPED_ADMIN_ID__'],
+        [$inScopeApplicationId, '__REQUIRED_IN_SCOPE_APPLICATION_ID__'],
+        [$outOfScopeApplicationId, '__REQUIRED_OUT_OF_SCOPE_APPLICATION_ID__'],
+        [$outOfScopeAdminId, '__REQUIRED_OUT_OF_SCOPE_ADMIN_ID__'],
+    ];
+    foreach ($scopeIdentifiers as [$scopeIdentifier, $placeholder]) {
+        if (preg_match('/^[1-9][0-9]*$/', $scopeIdentifier) !== 1 && $scopeIdentifier !== $placeholder) {
+            throw new RuntimeException('Chain6 必须使用本轮真实管理员和应用编号。');
+        }
+    }
+    if ($inScopeApplicationId === $outOfScopeApplicationId || $scopedAdminId === $outOfScopeAdminId) {
+        throw new RuntimeException('Chain6 范围内和范围外管理员、应用必须相互独立。');
+    }
+    if (($create['auth'] ?? null) !== 'platform_admin'
+        || ($create['request_id'] ?? null) !== '${prefix}delegation-create'
+        || ((string) ($create['body']['admin_user_id'] ?? '') !== $scopedAdminId)
+        || ((string) ($create['body']['application_id'] ?? '') !== $inScopeApplicationId)
+        || ($environmentCreate['auth'] ?? null) !== 'scoped_admin'
+        || ($environmentCreate['request_id'] ?? null) !== '${prefix}delegation-env-create'
+        || ($environmentCreate['path'] ?? null) !== '/app/sand-iam/admin/environment/save'
+        || ((string) ($environmentCreate['body']['application_id'] ?? '') !== $inScopeApplicationId)
+        || (($environmentCreate['capture']['delegated_environment_id']['path'] ?? null) !== 'data.id')
+        || ($allow['auth'] ?? null) !== 'scoped_admin'
+        || ($allow['request_id'] ?? null) !== '${prefix}delegation-in-scope-allow'
+        || ($allow['path'] ?? null) !== '/app/sand-iam/admin/environment/read?id=${delegated_environment_id}'
+        || (($allow['assert']['json']['data.id'] ?? null) !== '${delegated_environment_id}')
+        || ($scopeDeny['auth'] ?? null) !== 'scoped_admin'
+        || ($scopeDeny['request_id'] ?? null) !== '${prefix}delegation-scope-deny'
+        || $queryValue((string) ($scopeDeny['path'] ?? ''), 'id') !== $outOfScopeApplicationId
+        || (($scopeDeny['assert']['body']['contains'] ?? null) !== 'SAND_IAM_APPLICATION_ACCESS_DENIED')
+        || ($thirdRoleDeny['auth'] ?? null) !== 'out_of_scope_admin'
+        || ($thirdRoleDeny['request_id'] ?? null) !== '${prefix}delegation-third-role-deny'
+        || $queryValue((string) ($thirdRoleDeny['path'] ?? ''), 'id') !== $inScopeApplicationId
+        || (($thirdRoleDeny['assert']['body']['contains'] ?? null) !== 'SAND_IAM_APPLICATION_ACCESS_DENIED')
+        || ($environmentDisable['auth'] ?? null) !== 'scoped_admin'
+        || ($environmentDisable['request_id'] ?? null) !== '${prefix}delegation-env-disable'
+        || ($environmentDisable['path'] ?? null) !== '/app/sand-iam/admin/environment/disable'
+        || (($environmentDisable['body']['id'] ?? null) !== '${delegated_environment_id}')
+        || ($disable['auth'] ?? null) !== 'platform_admin'
+        || ($disable['request_id'] ?? null) !== '${prefix}delegation-disable'
+        || (($disable['body']['id'] ?? null) !== '${delegation_id}')
+        || ($revokedDeny['auth'] ?? null) !== 'scoped_admin'
+        || ($revokedDeny['request_id'] ?? null) !== '${prefix}delegation-revoked-deny'
+        || $queryValue((string) ($revokedDeny['path'] ?? ''), 'id') !== $inScopeApplicationId
+        || (($revokedDeny['assert']['body']['contains'] ?? null) !== 'SAND_IAM_APPLICATION_ACCESS_DENIED')) {
+        throw new RuntimeException('Chain6 必须由同一被委派管理员完成范围内允许、范围外拒绝和撤权后拒绝，并由独立范围外管理员证明第三角色边界。');
+    }
+
+    foreach ([
+        'audit scoped environment creation' => ['action' => 'environment.create', 'request' => '${prefix}delegation-env-create'],
+        'audit scoped environment disable' => ['action' => 'environment.disable', 'request' => '${prefix}delegation-env-disable'],
+    ] as $id => $expected) {
+        $audit = $byId[$id];
+        $contains = $audit['assert']['json_contains']['data.data']['contains'] ?? [];
+        if ($queryValue((string) ($audit['path'] ?? ''), 'actor_ref') !== $scopedAdminId
+            || !str_contains((string) ($audit['path'] ?? ''), 'action=' . $expected['action'])
+            || !str_contains((string) ($audit['path'] ?? ''), 'resource_id=${delegated_environment_id}')
+            || !str_contains((string) ($audit['path'] ?? ''), 'request_id=' . $expected['request'])
+            || (string) ($contains['actor_ref'] ?? '') !== $scopedAdminId
+            || ($contains['action'] ?? null) !== $expected['action']
+            || ($contains['resource_id'] ?? null) !== '${delegated_environment_id}'
+            || ($contains['request_id'] ?? null) !== $expected['request']
+            || ($contains['outcome'] ?? null) !== 'succeeded') {
+            throw new RuntimeException("Chain6 范围内业务写入追溯不完整：{$id}。");
+        }
+    }
+
+    foreach ([
+        'audit same scoped out scope deny' => ['actor' => $scopedAdminId, 'resource' => $outOfScopeApplicationId, 'request' => '${prefix}delegation-scope-deny'],
+        'audit independent out of scope admin deny' => ['actor' => $outOfScopeAdminId, 'resource' => $inScopeApplicationId, 'request' => '${prefix}delegation-third-role-deny'],
+        'audit same scoped revoked deny' => ['actor' => $scopedAdminId, 'resource' => $inScopeApplicationId, 'request' => '${prefix}delegation-revoked-deny'],
+    ] as $id => $expected) {
+        $audit = $byId[$id];
+        $contains = $audit['assert']['json_contains']['data.data']['contains'] ?? [];
+        if (($audit['auth'] ?? null) !== 'platform_admin'
+            || !str_contains((string) ($audit['path'] ?? ''), 'action=application.access')
+            || $queryValue((string) ($audit['path'] ?? ''), 'actor_ref') !== $expected['actor']
+            || $queryValue((string) ($audit['path'] ?? ''), 'resource_id') !== $expected['resource']
+            || !str_contains((string) ($audit['path'] ?? ''), 'request_id=' . $expected['request'])
+            || (string) ($contains['actor_ref'] ?? '') !== $expected['actor']
+            || (string) ($contains['resource_id'] ?? '') !== $expected['resource']
+            || ($contains['request_id'] ?? null) !== $expected['request']
+            || ($contains['outcome'] ?? null) !== 'denied') {
+            throw new RuntimeException("Chain6 拒绝追溯未绑定真实主体、应用和请求号：{$id}。");
+        }
+    }
+
+    foreach ([
+        'audit this-run delegation creation' => ['action' => 'admin_application_grant.create', 'request' => '${prefix}delegation-create'],
+        'audit this-run delegation disable' => ['action' => 'admin_application_grant.disable', 'request' => '${prefix}delegation-disable'],
+    ] as $id => $expected) {
+        $audit = $byId[$id];
+        $contains = $audit['assert']['json_contains']['data.data']['contains'] ?? [];
+        if (!str_contains((string) ($audit['path'] ?? ''), 'action=' . $expected['action'])
+            || !str_contains((string) ($audit['path'] ?? ''), 'resource_id=${delegation_id}')
+            || !str_contains((string) ($audit['path'] ?? ''), 'request_id=' . $expected['request'])
+            || ($contains['action'] ?? null) !== $expected['action']
+            || ($contains['resource_id'] ?? null) !== '${delegation_id}'
+            || ($contains['request_id'] ?? null) !== $expected['request']
+            || ($contains['outcome'] ?? null) !== 'succeeded') {
+            throw new RuntimeException("Chain6 委派生命周期追溯不完整：{$id}。");
+        }
+    }
+
+    $cleanup = $chain['cleanup']['steps'] ?? [];
+    $cleanupAction = is_array($cleanup) ? ($cleanup[0] ?? []) : [];
+    $cleanupStatus = is_array($cleanup) ? ($cleanup[1] ?? []) : [];
+    $partialCleanup = is_array($cleanup) ? ($cleanup[2] ?? []) : [];
+    $partialStatus = is_array($cleanup) ? ($cleanup[3] ?? []) : [];
+    if (array_column(is_array($cleanup) ? $cleanup : [], 'id') !== [
+            'controlled cleanup delegation',
+            'zero residual delegation',
+            'controlled cleanup interrupted delegation',
+            'zero residual interrupted delegation',
+        ]
+        || (string) ($cleanupAction['body']['application_id'] ?? '') !== $inScopeApplicationId
+        || (($cleanupAction['body']['object_ids']['environment'][0] ?? null) !== '${delegated_environment_id}')
+        || (($cleanupAction['body']['object_ids']['admin_application_grant'][0] ?? null) !== '${delegation_id}')
+        || (($cleanupAction['body']['object_request_ids']['environment'][0] ?? null) !== '${prefix}delegation-env-create')
+        || (($cleanupAction['body']['object_request_ids']['admin_application_grant'][0] ?? null) !== '${prefix}delegation-create')
+        || (($cleanupAction['assert']['json']['data.residual.environment'] ?? null) !== 0)
+        || (($cleanupAction['assert']['json']['data.residual.admin_application_grant'] ?? null) !== 0)
+        || (($cleanupAction['run_if_capture_ids'] ?? null) !== ['delegation_id', 'delegated_environment_id'])
+        || $queryValue((string) ($cleanupStatus['path'] ?? ''), 'application_id') !== $inScopeApplicationId
+        || !str_contains((string) ($cleanupStatus['path'] ?? ''), 'object_ids%5Benvironment%5D%5B%5D=${delegated_environment_id}')
+        || !str_contains((string) ($cleanupStatus['path'] ?? ''), 'object_ids%5Badmin_application_grant%5D%5B%5D=${delegation_id}')
+        || (($cleanupStatus['run_if_capture_ids'] ?? null) !== ['delegation_id', 'delegated_environment_id'])
+        || (($cleanupStatus['assert']['json']['data.residual.environment'] ?? null) !== 0)
+        || (($cleanupStatus['assert']['json']['data.residual.admin_application_grant'] ?? null) !== 0)
+        || (string) ($partialCleanup['body']['application_id'] ?? '') !== $inScopeApplicationId
+        || (($partialCleanup['body']['object_ids'] ?? null) !== ['admin_application_grant' => ['${delegation_id}']])
+        || (($partialCleanup['run_if_capture_ids'] ?? null) !== ['delegation_id'])
+        || (($partialCleanup['run_unless_capture_ids'] ?? null) !== ['delegated_environment_id'])
+        || (($partialCleanup['assert']['json']['data.residual.admin_application_grant'] ?? null) !== 0)
+        || $queryValue((string) ($partialStatus['path'] ?? ''), 'application_id') !== $inScopeApplicationId
+        || !str_contains((string) ($partialStatus['path'] ?? ''), 'object_ids%5Badmin_application_grant%5D%5B%5D=${delegation_id}')
+        || (($partialStatus['run_if_capture_ids'] ?? null) !== ['delegation_id'])
+        || (($partialStatus['run_unless_capture_ids'] ?? null) !== ['delegated_environment_id'])
+        || (($partialStatus['assert']['json']['data.residual.admin_application_grant'] ?? null) !== 0)) {
+        throw new RuntimeException('Chain6 必须分别受控清理完整委派写入与只创建委派的中断分支，并证明零残留。');
     }
 }
 
@@ -875,30 +1583,52 @@ function liveValidateWebhookDeliveryProtocol(array $chain, array $targets): void
     foreach ($chain['steps'] as $step) if (is_array($step)) $byId[(string) ($step['id'] ?? '')] = $step;
     foreach ([
         'create webhook',
-        'trigger dedicated acceptance event',
+        'configure controlled receiver',
+        'issue credential business event',
         'worker 500 recorded',
         'retry queues delivery',
         'receiver proves retry success',
         'audit delivery',
         'disable webhook',
+        'revoke event credential',
         'disabled is status two',
     ] as $id) {
         if (!isset($byId[$id])) throw new RuntimeException("Webhook live 链缺少固定协议步骤：{$id}。");
     }
-    $trigger = $byId['trigger dedicated acceptance event'];
-    if (($trigger['fixture_capture_ids'] ?? null) !== ['webhook_id']
-        || ($trigger['body']['chain_id'] ?? null) !== 'event-webhook-delivery'
-        || ($trigger['body']['request_id'] ?? null) !== '${prefix}chain7-event'
-        || ($trigger['capture']['delivery_id']['path'] ?? null) !== 'data.delivery_ids.0') {
-        throw new RuntimeException('Webhook 专用验收事件必须只绑定本轮端点，并捕获唯一 delivery_id。');
+    $create = $byId['create webhook'];
+    $webhookUrl = (string) ($create['body']['url'] ?? '');
+    if (($create['body']['event_types'] ?? null) !== ['credential.changed']
+        || ($create['capture']['webhook_secret']['sensitive'] ?? null) !== true
+        || !str_contains($webhookUrl, '/webhook/receive')
+        || !str_contains($webhookUrl, 'scope=${prefix}')
+        || (!str_contains($webhookUrl, '__REQUIRED_')
+            && !str_starts_with($webhookUrl, rtrim((string) ($targets['webhook_receiver']['base_url'] ?? ''), '/') . '/webhook/receive?'))) {
+        throw new RuntimeException('Webhook 必须订阅生产 credential.changed，并安全捕获一次性签名密钥。');
+    }
+    $configure = $byId['configure controlled receiver'];
+    if (($configure['target'] ?? null) !== 'webhook_receiver'
+        || ($configure['auth'] ?? null) !== 'none'
+        || ($configure['write'] ?? null) !== true
+        || ($configure['body']['secret'] ?? null) !== '${webhook_secret}'
+        || ($configure['body']['endpoint_id'] ?? null) !== '${webhook_id}'
+        || ($configure['capture']['receiver_config_id']['path'] ?? null) !== 'receiver_config_id') {
+        throw new RuntimeException('受控接收器必须在事件发生前绑定本轮端点、密钥与临时配置编号。');
+    }
+    $trigger = $byId['issue credential business event'];
+    if (($trigger['path'] ?? null) !== '/app/sand-iam/admin/credential/issue'
+        || ($trigger['request_id'] ?? null) !== '${prefix}chain7-credential-issue'
+        || ($trigger['capture']['credential_id']['path'] ?? null) !== 'data.id'
+        || ($trigger['capture']['credential_plaintext']['sensitive'] ?? null) !== true) {
+        throw new RuntimeException('Webhook 真实事件必须由本轮 credential.issue 业务变化触发。');
     }
     $failure = $byId['worker 500 recorded'];
     if (($failure['poll'] ?? null) !== ['max_attempts' => 12, 'interval_ms' => 1000]
         || !str_contains((string) ($failure['path'] ?? ''), 'webhook_endpoint_id=${webhook_id}')
-        || !str_contains((string) ($failure['path'] ?? ''), 'id=${delivery_id}')
+        || (($failure['capture']['delivery_id']['path'] ?? null) !== 'data.data.0.id')
+        || (($failure['assert']['json_contains']['data.data']['contains']['event_type'] ?? null) !== 'credential.changed')
         || (($failure['assert']['json_contains']['data.data']['contains']['response_status'] ?? null) !== 500)
         || (($failure['assert']['json_contains']['data.data']['contains']['status'] ?? null) !== 1)) {
-        throw new RuntimeException('Webhook 首次 500 必须以绑定 delivery 的有界只读轮询证明。');
+        throw new RuntimeException('Webhook 首次 500 必须以绑定端点和真实事件类型的有界只读轮询证明并捕获 delivery。');
     }
     $retry = $byId['retry queues delivery'];
     if (($retry['fixture_capture_ids'] ?? null) !== ['webhook_id', 'delivery_id']
@@ -913,13 +1643,15 @@ function liveValidateWebhookDeliveryProtocol(array $chain, array $targets): void
         || ($receiver['write'] ?? null) !== false
         || ($receiver['effect'] ?? null) !== 'non_persistent'
         || ($receiver['poll'] ?? null) !== ['max_attempts' => 12, 'interval_ms' => 1000]
-        || !str_contains((string) ($receiver['path'] ?? ''), 'endpoint_id=${webhook_id}')
-        || !str_contains((string) ($receiver['path'] ?? ''), 'delivery_id=${delivery_id}')
+        || !str_contains((string) ($receiver['path'] ?? ''), 'scope=${prefix}')
+        || (($receiver['assert']['json']['receiver_config_id'] ?? null) !== '${receiver_config_id}')
+        || (($receiver['assert']['json']['credential_id'] ?? null) !== '${credential_id}')
+        || (($receiver['assert']['json']['credential_issue_request_id'] ?? null) !== '${prefix}chain7-credential-issue')
         || (($receiver['assert']['json']['signature_verified'] ?? null) !== true)
         || (($receiver['assert']['json']['attempt_count'] ?? null) !== 2)
         || (($receiver['assert']['json']['first_status'] ?? null) !== 500)
         || (($receiver['assert']['json']['last_status'] ?? null) !== 204)) {
-        throw new RuntimeException('Webhook receiver 只能作非持久观测，且必须证明签名、500→retry→204 与本轮 endpoint/delivery 绑定。');
+        throw new RuntimeException('Webhook receiver 只能作非持久观测，且必须证明签名、真实凭证事件与 500→retry→204。');
     }
     $audit = $byId['audit delivery'];
     if (!str_contains((string) ($audit['path'] ?? ''), 'outcome=succeeded')
@@ -929,6 +1661,11 @@ function liveValidateWebhookDeliveryProtocol(array $chain, array $targets): void
     }
     $disable = $byId['disable webhook'];
     if (($disable['fixture_capture_ids'] ?? null) !== ['webhook_id']) throw new RuntimeException('Webhook 停用必须明确绑定本轮 endpoint。');
+    $revoke = $byId['revoke event credential'];
+    if (($revoke['fixture_capture_ids'] ?? null) !== ['credential_id']
+        || ($revoke['request_id'] ?? null) !== '${prefix}chain7-credential-revoke') {
+        throw new RuntimeException('触发真实事件的本轮凭证必须通过正常撤销语义失效。');
+    }
     $disabled = $byId['disabled is status two'];
     if (($disabled['assert']['json']['data.status'] ?? null) !== 2) throw new RuntimeException('Webhook 清理前必须证明 endpoint 已停用为 status=2。');
 }
@@ -1017,7 +1754,9 @@ function liveRun(string $chainId, array $chain, array $targets, array $authoriza
         }
         $poll = livePollDefinition($step);
         $polled = liveRunPoll(
-            static fn (): array => liveHttp($target, $step, $authorization, $prefix . 'live_' . (++$sequence), $cookieJar),
+            static function () use ($target, $step, $authorization, $prefix, &$sequence, $cookieJar): array {
+                return liveHttp($target, $step, $authorization, $prefix . 'live_' . (++$sequence), $cookieJar);
+            },
             static fn (array $response): array => liveCheckResponse($response, $step),
             $poll,
         );
@@ -1054,7 +1793,7 @@ function liveRun(string $chainId, array $chain, array $targets, array $authoriza
                 $value = liveTotpCode($value);
             }
             if (is_array($value) || $value === '') throw new RuntimeException('capture 必须是非空标量。');
-            $sensitive = preg_match('/(token|secret|password|ticket|code)/i', $name) === 1;
+            $sensitive = liveCaptureNameSensitive($name);
             if ($sensitive && ($source['sensitive'] ?? false) !== true) throw new RuntimeException('敏感 capture 必须明确标为 sensitive，且不会写入证据。');
             $variables[$name] = $value;
             if (!$sensitive && str_ends_with($name, '_id')) { $fixtures[] = (string) $value; $capturedIds[$name] = (string) $value; }
@@ -1063,13 +1802,32 @@ function liveRun(string $chainId, array $chain, array $targets, array $authoriza
     };
     $successful = true;
     $cleanupOk = true;
+    $unreconciledWriteOutcome = false;
     $cleanupPhysicalExecuted = 0;
     $cleanupStatusExecuted = 0;
+    $writeNeedsReconciliation = static function (array $step) use (&$variables): bool {
+        if (($step['write'] ?? null) !== true) return false;
+        $captureIds = $step['fixture_capture_ids'] ?? array_values(array_filter(
+            array_keys(is_array($step['capture'] ?? null) ? $step['capture'] : []),
+            static fn (string $name): bool => str_ends_with($name, '_id'),
+        ));
+        return is_array($captureIds)
+            && array_filter(
+                $captureIds,
+                static fn (mixed $id): bool => is_string($id)
+                    && (!isset($variables[$id]) || $variables[$id] === ''),
+            ) !== [];
+    };
     try {
         foreach ($chain['steps'] as $step) {
             try {
-                if (!$execute($step)) { $successful = false; break; }
+                if (!$execute($step)) {
+                    if ($writeNeedsReconciliation($step)) $unreconciledWriteOutcome = true;
+                    $successful = false;
+                    break;
+                }
             } catch (Throwable $exception) {
+                if ($writeNeedsReconciliation($step)) $unreconciledWriteOutcome = true;
                 $checks[] = ['label' => (string) ($step['id'] ?? 'step'), 'ok' => false, 'detail' => '业务步骤异常：' . $exception->getMessage()];
                 $successful = false;
                 break;
@@ -1090,6 +1848,7 @@ function liveRun(string $chainId, array $chain, array $targets, array $authoriza
                 if (($step['proof'] ?? null) === 'physical_cleanup') $cleanupPhysicalExecuted++;
                 if (($step['proof'] ?? null) === 'zero_residual') $cleanupStatusExecuted++;
             } catch (Throwable $exception) {
+                if ($writeNeedsReconciliation($step)) $unreconciledWriteOutcome = true;
                 $checks[] = ['label' => (string) ($step['id'] ?? 'cleanup'), 'ok' => false, 'detail' => '清理步骤异常：' . $exception->getMessage()];
                 $cleanupOk = false;
             }
@@ -1102,6 +1861,11 @@ function liveRun(string $chainId, array $chain, array $targets, array $authoriza
         $cleanupOk = false;
         $cleanupState = 'not_confirmed';
         $checks[] = ['label' => 'C01 cleanup confirmation', 'ok' => false, 'detail' => 'C01 未执行匹配的物理清理和零残留状态检查；夹具状态未确认。'];
+    }
+    if ($unreconciledWriteOutcome) {
+        $cleanupOk = false;
+        $cleanupState = 'not_confirmed';
+        $checks[] = ['label' => 'write outcome reconciliation', 'ok' => false, 'detail' => '写请求未返回全部夹具编号，无法证明自动清理覆盖了可能已提交的对象；夹具状态未确认。'];
     }
     $passed = count(array_filter($checks, static fn (array $check): bool => $check['ok']));
     $status = $successful && $cleanupOk && $passed === count($checks)

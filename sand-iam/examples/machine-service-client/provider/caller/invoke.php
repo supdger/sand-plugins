@@ -6,10 +6,14 @@ require_once dirname(__DIR__) . '/vendor/autoload.php';
 $document = $argv[1] ?? ''; ProviderProtocol::documentId($document);
 $iamUrl = rtrim((string)getenv('SAND_IAM_BASE_URL'), '/'); $org = trim((string)getenv('SAND_IAM_ORGANIZATION_CODE')); $app = trim((string)getenv('SAND_IAM_APPLICATION_CODE'));
 $credential = trim((string)getenv('SAND_IAM_WORKLOAD_CREDENTIAL')); $providerUrl = rtrim((string)getenv('PROVIDER_B_BASE_URL'), '/'); $key = trim((string)getenv('PROVIDER_B_IDEMPOTENCY_KEY'));
+$service = trim((string)getenv('PROVIDER_B_SERVICE_CODE')) ?: ProviderProtocol::SERVICE_CODE;
+$audience = trim((string)getenv('PROVIDER_B_AUDIENCE')) ?: ProviderProtocol::AUDIENCE;
+$action = trim((string)getenv('PROVIDER_B_ACTION')) ?: ProviderProtocol::ACTION;
 ProviderProtocol::idempotencyKey($key);
+ProviderProtocol::serviceCode($service); ProviderProtocol::audience($audience); ProviderProtocol::action($action);
 if ($iamUrl === '' || $org === '' || $app === '' || $credential === '' || $providerUrl === '') throw new RuntimeException('SandIAM、Provider 和凭证必须由部署环境注入');
 $requestId = 'provider-b-'.bin2hex(random_bytes(12));
-$context = (new SandIamClient($iamUrl, $org, $app))->issueContext($credential, ProviderProtocol::SERVICE_CODE, ProviderProtocol::AUDIENCE, [ProviderProtocol::ACTION], null, $requestId.'-issue');
+$context = (new SandIamClient($iamUrl, $org, $app))->issueContext($credential, $service, $audience, [$action], null, $requestId.'-issue');
 $result = post($providerUrl.'/provider/v1/documents/'.rawurlencode($document).'/process', ['X-Request-Id'=>$requestId, 'X-Sand-Iam-Context'=>$context['context'], 'Idempotency-Key'=>$key]);
 echo json_encode($result + ['request_id'=>$requestId,'context_id'=>$context['context_id']], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR).PHP_EOL;
 /** @param array<string,string> $headers @return array<string,mixed> */

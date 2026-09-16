@@ -43,16 +43,23 @@ final class SandIamManagementClient
         return $this->arrayData('POST', '/developer/onboarding/apply', ['manifest' => $operation->manifest, 'preview_hash' => $operation->previewHash, 'apply' => true], $operation->requestId, true);
     }
 
-    /** Route synchronization is an official onboarding-manifest phase, not a guessed standalone route. @param array<string,mixed> $manifest @return array<string,mixed> */
-    public function routeSyncPreview(array $manifest, string $requestId = ''): array
+    /** @param array<string,mixed> $manifest @return array<string,mixed> */
+    public function routeSyncPreview(array $manifest, bool $disableMissing = false, string $requestId = ''): array
     {
-        return $this->onboardingPreview($manifest, $requestId);
+        return $this->arrayData('POST', '/developer/route-manifest/preview', ['manifest' => $manifest, 'disable_missing' => $disableMissing], $requestId, false);
     }
 
     /** @return array<string,mixed> */
-    public function routeSyncApply(SandIamOnboardingOperation $operation): array
+    public function routeSyncApply(SandIamRouteSyncOperation $operation): array
     {
-        return $this->onboardingApply($operation);
+        if (preg_match('/^[a-f0-9]{64}$/D', $operation->previewHash) !== 1) throw new SandIamException('SAND_IAM_SDK_INVALID_ARGUMENT', '路由清单必须提供有效预检哈希', 0);
+        $this->assertRequestId($operation->requestId);
+        return $this->arrayData('POST', '/developer/route-manifest/apply', [
+            'manifest' => $operation->manifest,
+            'disable_missing' => $operation->disableMissing,
+            'preview_hash' => $operation->previewHash,
+            'apply' => true,
+        ], $operation->requestId, true);
     }
 
     /** @param array<string,mixed> $input @return array<string,mixed> */

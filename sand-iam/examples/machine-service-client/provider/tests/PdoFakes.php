@@ -2,7 +2,7 @@
 declare(strict_types=1);
 final class FakePdo extends PDO
 {
-    public mixed $body; public ?array $existing = null; public array $created = ['id'=>7]; public bool $auditFails = false; public array $auditBindings = [];
+    public mixed $body; public ?array $existing = null; public array $created = ['id'=>7]; public bool $auditFails = false; public array $auditBindings = []; public array $auditParams = [];
     public int $commits = 0; public int $rollbacks = 0; public int $processWrites = 0; public int $audits = 0; private bool $transaction = false;
     public function __construct(mixed $body) {$this->body=$body;}
     public function setAttribute(int $attribute, mixed $value): bool {return true;}
@@ -20,7 +20,7 @@ final class FakeStatement extends PDOStatement
     public function execute(?array $params=null):bool
     {
         $this->params=$params;
-        if(str_contains($this->sql,'provider_b_audit_log')){$this->db->auditBindings=$this->bound;++$this->db->audits;if($this->db->auditFails)throw new PDOException('audit fail');}
+        if(str_contains($this->sql,'provider_b_audit_log')){$this->db->auditBindings=$this->bound;$this->db->auditParams=$params??[];++$this->db->audits;if($this->db->auditFails)throw new PDOException('audit fail');}
         if(str_contains($this->sql,'INSERT INTO provider_b_document_process'))++$this->db->processWrites;
         return true;
     }

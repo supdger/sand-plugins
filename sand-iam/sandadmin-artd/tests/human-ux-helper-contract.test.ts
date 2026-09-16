@@ -122,6 +122,7 @@ import {
   describeOnboardingManifestError,
   describeSandIamObjectCodeError,
   parsePolicySimulation,
+  parseRouteManifestPreview,
   sandIamActionImpact,
   sandIamReferenceLabel,
   SAND_IAM_OBJECT_CODE_RULE,
@@ -912,9 +913,40 @@ assert.equal(
 assert.equal(
   describeOnboardingManifestError({
     format: "sand-iam.route-sync/v1",
-    operation_id: "x",
-  })?.includes("不能直接在这里导入") ?? false,
+    organization_code: "sand",
+    application_code: "lawyer",
+    environment_code: "production",
+    routes: [],
+  }),
+  null,
+);
+assert.equal(
+  describeOnboardingManifestError({
+    format: "sand-iam.route-sync/v1",
+    organization_code: "sand",
+  })?.includes("routes 列表") ?? false,
   true,
+);
+assert.equal(
+  parseRouteManifestPreview({
+    data: {
+      dry_run: true,
+      valid: false,
+      preview_hash: "a".repeat(64),
+      operation_id: "route-preview-1",
+      organization_id: 1,
+      application_id: 2,
+      changes: [],
+      problems: [
+        {
+          operation: "unbound",
+          method: "POST",
+          route_template: "/cases",
+        },
+      ],
+    },
+  })?.canApply,
+  false,
 );
 assert.equal(
   parsePolicySimulation({

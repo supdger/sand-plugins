@@ -178,7 +178,7 @@ try {
         && $existingStatus !== 0 && file_get_contents($existingPath) === $existingBytes
         && $symlinkStatus !== 0 && is_link($symlinkPath) && file_get_contents($symlinkTarget) === $symlinkBytes
         && count(array_filter($raceStatuses, static fn (int $status): bool => $status === 0)) === 1
-        && is_array($raceDocument) && ($raceDocument['schema'] ?? null) === 'sand-iam.casdoor-comparison/v1';
+        && is_array($raceDocument) && ($raceDocument['schema'] ?? null) === 'sand-iam.casdoor-comparison/v2';
     if (!$passed) throw new RuntimeException('candidate-bound templates were not complete and fail-closed');
 } finally {
     $removeTree($seed);

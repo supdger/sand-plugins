@@ -1021,7 +1021,7 @@ CREATE TABLE IF NOT EXISTS sand_iam_auth_challenge (
     update_time timestamp(0) without time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
     delete_time timestamp(0) without time zone NULL,
     CONSTRAINT uk_sand_iam_auth_challenge_token UNIQUE (token_hash),
-    CONSTRAINT ck_sand_iam_auth_challenge_identity CHECK ((purpose = 'webauthn_auth' AND identity_id IS NULL) OR (purpose <> 'webauthn_auth' AND identity_id IS NOT NULL)),
+    CONSTRAINT ck_sand_iam_auth_challenge_identity CHECK (purpose = 'webauthn_auth' OR identity_id IS NOT NULL),
     CONSTRAINT fk_sand_iam_auth_challenge_identity_application FOREIGN KEY (identity_id, application_id) REFERENCES sand_iam_identity(id, application_id) ON DELETE RESTRICT
 );
 CREATE INDEX IF NOT EXISTS idx_sand_iam_auth_challenge_active ON sand_iam_auth_challenge (application_id, purpose, status, expire_time);

@@ -194,6 +194,18 @@ $checks = [
                 && $expectFailure($wrongShape) && $expectFailure($wrongEnvironment) && $expectFailure($wrongArguments);
         });
     },
+    'real worktree provenance fails closed when Git is unavailable' => static function () use ($tool): bool {
+        $output = [];
+        $command = 'PATH=' . escapeshellarg('/private/tmp/sand-iam-no-git-path')
+            . ' ' . escapeshellarg(PHP_BINARY)
+            . ' ' . escapeshellarg($tool)
+            . ' 2>&1';
+        exec($command, $output, $status);
+        $text = implode(PHP_EOL, $output);
+        return $status !== 0
+            && str_contains($text, '[FAIL] eligible release payload is clean, tracked, and matches HEAD Git blobs')
+            && !str_contains($text, '[PASS] eligible release payload is clean, tracked, and matches HEAD Git blobs');
+    },
     'tool fails closed for missing, malformed, mismatched, or host-incompatible support metadata' => static function () use ($root, $runToolAt, $withTemporarilyReplacedFixtureFile): bool {
         return sandIamWithIsolatedFixture($root, static function (string $fixtureRoot) use ($runToolAt, $withTemporarilyReplacedFixtureFile): bool {
             $runTool = static fn (array $arguments): array => $runToolAt($fixtureRoot, $arguments);

@@ -8,6 +8,7 @@ declare(strict_types=1);
 $package = dirname(__DIR__);
 $checks = [
     $package . '/app/middleware/PortalSensitiveResponseMiddleware.php' => [
+        'use Webman\Http\Response;',
         'catch (ApiException $exception)',
         "withHeader('Cache-Control', 'no-store')",
         "withHeader('Pragma', 'no-cache')",

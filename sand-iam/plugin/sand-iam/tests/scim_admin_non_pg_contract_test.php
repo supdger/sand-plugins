@@ -67,6 +67,13 @@ $checks = [
     ],
     $package . '/app/api/controller/ScimController.php' => [
         'listResponse',
+        'users(Request $request, string $provider)',
+        'user(Request $request, string $provider, string $id)',
+        'groups(Request $request, string $provider)',
+        'group(Request $request,string $provider,string $id)',
+        'private function guard(callable $callback): Response',
+        "catch (ApiException \$exception)",
+        "'WWW-Authenticate', 'Bearer'",
         "withHeader('ETag'",
         "withHeader('Location'",
         "'meta']['location'",
@@ -97,6 +104,12 @@ foreach ($checks as $file => $fragments) {
 $dto = file_get_contents($package . '/app/admin/controller/IdentityProviderController.php');
 if ($dto === false || str_contains($dto, "'encrypted_config' =>")) {
     fwrite(STDERR, "provider management DTO may expose encrypted_config\n");
+    exit(1);
+}
+
+$scimController = file_get_contents($package . '/app/api/controller/ScimController.php');
+if ($scimController === false || str_contains($scimController, "->param('provider'")) {
+    fwrite(STDERR, "SCIM controller must receive Webman route parameters through action arguments\n");
     exit(1);
 }
 

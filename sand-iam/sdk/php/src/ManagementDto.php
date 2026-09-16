@@ -16,6 +16,18 @@ final class SandIamOnboardingOperation
     }
 }
 
+final class SandIamRouteSyncOperation
+{
+    /** @param array<string,mixed> $manifest */
+    public function __construct(
+        public readonly array $manifest,
+        public readonly string $previewHash,
+        public readonly string $requestId,
+        public readonly bool $disableMissing = false,
+    ) {
+    }
+}
+
 final class SandIamCredentialIssueInput
 {
     public function __construct(

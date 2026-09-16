@@ -21,11 +21,32 @@ $route = (string) file_get_contents($example . '/config/route.php');
 foreach (['ApplicationAuthorizationMiddleware', "'entity_scope'", "'resolver'", "'collection'", 'resolvedWorkItem', 'findManyOrFail'] as $needle) quickstartAssert(str_contains($route, $needle), "Webman entity guard example missing {$needle}");
 $repository = (string) file_get_contents($example . '/app/WorkItemRepository.php');
 foreach (['SELECT id, organization_id, owner_identity_id', 'business_work_item', 'prepare('] as $needle) quickstartAssert(str_contains($repository, $needle), "repository is not loading database-owned entity fields: {$needle}");
+$c05Provider = $root . '/tools/fixtures/c05-webman-route-provider';
+foreach ([
+    'config/autoload.php',
+    'config/route.php',
+    'app/WorkItemRepository.php',
+    'app/BusinessAuditWriter.php',
+    'app/controller/WorkItemController.php',
+    'app/controller/AcceptanceCleanupController.php',
+    'app/middleware/AuthorizationProblemMiddleware.php',
+] as $file) quickstartAssert(is_file($c05Provider . '/' . $file), "C05 Webman route provider file missing: {$file}");
+$c05Autoload = (string) file_get_contents($c05Provider . '/config/autoload.php');
+foreach (['spl_autoload_register', "plugin\\\\SandIamC05Business\\\\", 'dirname(__DIR__)'] as $needle) quickstartAssert(str_contains($c05Autoload, $needle), "C05 Webman route provider autoload is incomplete: {$needle}");
+$c05Route = (string) file_get_contents($c05Provider . '/config/route.php');
+foreach(["require_once __DIR__ . '/autoload.php'", 'I_CONFIRM_C05_TEMPORARY_ROUTE_PROVIDER', '/sand-iam-c05/v1/work-items/{id}/inspect', 'new WorkItemController()', 'new AcceptanceCleanupController()', 'ApplicationAuthorizationMiddleware', "'entity_scope'", "'resolver'"] as $needle) quickstartAssert(str_contains($c05Route, $needle), "C05 Webman route provider is not bound to the real authorization middleware: {$needle}");
+quickstartAssert(strpos($c05Route, 'AuthorizationProblemMiddleware::class') < strpos($c05Route, 'ApplicationAuthorizationMiddleware::class'), 'C05 denial response middleware must wrap the SandIAM authorization middleware');
+$c05ProblemMiddleware = (string) file_get_contents($c05Provider . '/app/middleware/AuthorizationProblemMiddleware.php');
+foreach (['$response = $handler($request)', '$response->exception()', 'instanceof ApiException', "SAND_IAM_ROUTE_NOT_REGISTERED')"] as $needle) quickstartAssert(str_contains($c05ProblemMiddleware, $needle), "C05 denial audit does not inspect the exact exception response returned by Webman: {$needle}");
+$c05AuditWriter = (string) file_get_contents($c05Provider . '/app/BusinessAuditWriter.php');
+quickstartAssert(str_contains($c05AuditWriter, "], 'id')"), 'C05 PostgreSQL audit insert does not identify its generated identity column');
+$c05Cleanup = (string) file_get_contents($c05Provider . '/app/controller/AcceptanceCleanupController.php');
+foreach (['authenticatedPrincipal', 'I_CONFIRM_DELETE_ONLY_C05_BUSINESS_AUDIT', "where('action', 'c05.route.inspect')", "where('work_item_id'"] as $needle) quickstartAssert(str_contains($c05Cleanup, $needle), "C05 business audit cleanup is not narrowly scoped: {$needle}");
 
 require_once $root . '/sdk/php/src/SandIamException.php';
 require_once $root . '/sdk/php/src/AuthorizationDenied.php';
 require_once $root . '/sdk/php/src/SandIamClient.php';
-$client = new SandIamClient('https://iam.example.test', $config['organization_code'], $config['application_code'], 3, static fn (): array => ['status' => 200, 'body' => json_encode(['data' => ['allowed' => true, 'code' => 'allowed', 'policy_ids' => [1], 'scope' => ['equals' => ['organization_id' => 1001]], 'application_id' => 1, 'identity_id' => 2, 'api_code' => 'work_item.detail', 'api_version' => 'v1', 'resource_code' => 'work_item', 'action' => 'work_item.read', 'operation' => 'read', 'risk_level' => 'medium']], JSON_THROW_ON_ERROR)]);
+$client = new SandIamClient('https://iam.example.test', $config['organization_code'], $config['application_code'], 3, static fn (): array => ['status' => 200, 'body' => json_encode(['data' => ['allowed' => true, 'code' => 'allowed', 'policy_ids' => [1], 'scope' => ['equals' => ['organization_id' => 1001]], 'application_id' => 1, 'identity_id' => 2, 'api_code' => 'work_item.detail', 'api_version' => 'v1', 'resource_code' => 'work_item', 'action' => 'work_item.read', 'operation' => 'read', 'risk_level' => 'medium', 'scope_checked' => true]], JSON_THROW_ON_ERROR)]);
 $decision = $client->authorizeEntity('test-token-from-environment-only', $config['actions']['WORK_ITEM_READ'], (object) ['organization_id' => 1001], static fn (object $workItem): array => ['organization_id' => $workItem->organization_id], [], 'v1', 'quickstart-sdk-001');
 quickstartAssert(($decision['allowed'] ?? false) === true, 'PHP SDK could not consume generated configuration');
 $integrationGuide = (string) file_get_contents($root . '/docs/user-guide/application-integration.md');

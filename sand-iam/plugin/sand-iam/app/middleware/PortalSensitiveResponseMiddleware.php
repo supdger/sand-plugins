@@ -8,7 +8,7 @@ use plugin\SandIam\app\service\RequestId;
 use plugin\sandadmin\exception\ApiException;
 use support\Log;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** Prevent browsers and intermediaries from retaining portal identities, tokens, or authentication failures. */
 final class PortalSensitiveResponseMiddleware

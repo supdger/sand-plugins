@@ -16,7 +16,7 @@
     "ext-json": "*",
     "ext-pdo": "*",
     "ext-pdo_pgsql": "*",
-    "sand/iam-sdk": "*"
+    "sand/iam-sdk": "dev-main"
   },
   "autoload": {
     "psr-4": {

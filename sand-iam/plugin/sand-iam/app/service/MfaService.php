@@ -536,7 +536,11 @@ final class MfaService
                     $identity = Identity::where('id', (int) $factor->identity_id)->where('application_id', (int) $application->id)->where('status', 1)->lock(true)->find();
                     if ($identity === null) throw new ApiException('SAND_IAM_AUTHENTICATION_FAILED', 401);
                     $this->verifyAssertion($application, $identity, $this->decrypt((string) $challenge->encrypted_challenge), $payload, $factor);
-                    $challenge->save(['status' => 2, 'consumed_time' => $this->now()]);
+                    $challenge->save([
+                        'identity_id' => (int) $identity->id,
+                        'status' => 2,
+                        'consumed_time' => $this->now(),
+                    ]);
                     $tokens = $humanAuth->issueSessionAfterMfaInTransaction($application, $identity, $ip, (string) ($payload['user_agent'] ?? ''), $requestId);
                     $this->audit($application, $identity, 'identity.passkey_auth_finish', 'mfa_challenge', (int) $challenge->id, 'succeeded', $requestId);
                     return [

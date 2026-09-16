@@ -99,14 +99,38 @@ $releaseArtifactFiles = static function () use ($root): array {
     return sandIamPayloadFilePaths($root, true);
 };
 
+$hasGitMetadataAncestor = static function (string $path): bool {
+    $current = realpath($path);
+    if (!is_string($current)) {
+        return false;
+    }
+    while (true) {
+        $metadata = $current . '/.git';
+        if (is_dir($metadata) || is_file($metadata)) {
+            return true;
+        }
+        $parent = dirname($current);
+        if ($parent === $current) {
+            return false;
+        }
+        $current = $parent;
+    }
+};
+
 /**
  * @param list<string> $directories
  * @return array<string,array<string,string>>|null Relative directory => relative file => SHA-256.
  */
-$cleanGitPayloadMaps = static function (array $directories) use ($root): ?array {
+$cleanGitPayloadMaps = static function (array $directories) use ($root, $hasGitMetadataAncestor): ?array {
     $status = [];
     exec('git -C ' . escapeshellarg($root) . ' status --porcelain=v1 --untracked-files=all -- . 2>&1', $status, $statusCode);
-    if ($statusCode !== 0 || $status !== []) {
+    if ($statusCode !== 0) {
+        if ($hasGitMetadataAncestor($root)) {
+            throw new RuntimeException('cannot inspect Git payload source');
+        }
+        return null;
+    }
+    if ($status !== []) {
         return null;
     }
     $revision = [];
@@ -341,8 +365,11 @@ $assert('generated lifecycle separates full install from guarded 0.7.1 to 0.7.2 
             throw new RuntimeException('update replays historical migration ' . $name);
         }
     }
-    if ($updateMigrationNames !== ['039_service_grant_nullable_data_class.pgsql']) {
-        throw new RuntimeException('0.7.2 update manifest must contain only 039');
+    if ($updateMigrationNames !== [
+        '039_service_grant_nullable_data_class.pgsql',
+        '040_passkey_auth_challenge_identity.pgsql',
+    ]) {
+        throw new RuntimeException('0.7.2 update manifest must contain only 039 and 040');
     }
     $preflight = file_get_contents($root . '/lifecycle/update-071-to-072-preflight.pgsql');
     if (!is_string($preflight) || !str_contains($update, '-- lifecycle source: lifecycle/update-071-to-072-preflight.pgsql')
@@ -353,11 +380,11 @@ $assert('generated lifecycle separates full install from guarded 0.7.1 to 0.7.2 
     foreach ($updateMigrationNames as $name) {
         $source = file_get_contents($root . '/migrations/' . $name);
         $payload = is_string($source) ? $collapse($source) : '';
-        if ($name === '039_service_grant_nullable_data_class.pgsql') {
+        if (in_array($name, $updateMigrationNames, true)) {
             $beginOffset = strpos($payload, "\nBEGIN;");
             $commitOffset = strrpos($payload, "\nCOMMIT;");
             if ($beginOffset === false || $commitOffset === false || $beginOffset >= $commitOffset) {
-                throw new RuntimeException('039 has no composable outer transaction');
+                throw new RuntimeException($name . ' has no composable outer transaction');
             }
             $payload = rtrim(
                 substr($payload, 0, $beginOffset + 1)
@@ -370,7 +397,7 @@ $assert('generated lifecycle separates full install from guarded 0.7.1 to 0.7.2 
     }
     if (!str_contains($update, "\nBEGIN;\n-- lifecycle source: lifecycle/update-071-to-072-preflight.pgsql")
         || !str_ends_with($update, "COMMIT;\n")) {
-        throw new RuntimeException('0.7.2 update must compose preflight and 039 under one explicit transaction');
+        throw new RuntimeException('0.7.2 update must compose preflight, 039 and 040 under one explicit transaction');
     }
     if (!str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_security_operation')
         || !str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_application_business_action')) {
@@ -482,7 +509,7 @@ $assert('published 0.6.0 migration 021 remains byte-immutable in root and packag
     return true;
 });
 
-$assert('migration ledger catalogs the published baseline and 037/038/039 self-register with exact checksums', static function () use ($root, $manifestMigrationNames): bool {
+$assert('migration ledger catalogs the published baseline and 037/038/039/040 self-register with exact checksums', static function () use ($root, $manifestMigrationNames): bool {
     $ledger = (string) file_get_contents($root . '/migrations/035_schema_migration_ledger.pgsql');
     if ($ledger === '' || !str_contains($ledger, 'CREATE TABLE IF NOT EXISTS sand_iam_schema_migration')
         || !str_contains($ledger, 'migration_file varchar(160) PRIMARY KEY')
@@ -499,7 +526,7 @@ $assert('migration ledger catalogs the published baseline and 037/038/039 self-r
         return false;
     }
     foreach ($manifestMigrationNames as $name) {
-        if ($name === '039_service_grant_nullable_data_class.pgsql') {
+        if (in_array($name, ['039_service_grant_nullable_data_class.pgsql', '040_passkey_auth_challenge_identity.pgsql'], true)) {
             continue;
         }
         if (!str_contains($ledger, "'{$name}'")) {
@@ -537,6 +564,16 @@ $assert('migration ledger catalogs the published baseline and 037/038/039 self-r
         || !str_contains($nullableDataClass, '(SELECT count(*) FROM sand_iam_schema_migration) <> 40')
         || !str_contains($nullableDataClass, 'ALTER COLUMN data_class DROP NOT NULL')
         || !str_contains($nullableDataClass, "package_version <> '0.7.2'")) {
+        return false;
+    }
+    $passkeyChallengeIdentity = (string) file_get_contents($root . '/migrations/040_passkey_auth_challenge_identity.pgsql');
+    if ($passkeyChallengeIdentity === ''
+        || preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $passkeyChallengeIdentity, $passkeyChallengeChecksum) !== 1
+        || hash('sha256', str_replace($passkeyChallengeChecksum[1], '__SELF_SHA256__', $passkeyChallengeIdentity)) !== $passkeyChallengeChecksum[1]
+        || !str_contains($passkeyChallengeIdentity, "SELECT '040_passkey_auth_challenge_identity.pgsql', 40")
+        || !str_contains($passkeyChallengeIdentity, '(SELECT count(*) FROM sand_iam_schema_migration) <> 41')
+        || !str_contains($passkeyChallengeIdentity, "CHECK (purpose = 'webauthn_auth' OR identity_id IS NOT NULL)")
+        || !str_contains($passkeyChallengeIdentity, "package_version <> '0.7.2'")) {
         return false;
     }
     return str_contains($ledger, 'migration ledger checksum or package-version conflict; refusing to continue')
@@ -856,19 +893,22 @@ $assert('release build contract locks toolchain and reviewed runtime payloads', 
     return isset($payload['plugin/sand-iam/vendor/autoload.php'], $payload['sdk/typescript/dist/index.js']);
 });
 
-$assert('eligible release payload is clean, tracked, and matches HEAD Git blobs', static function () use ($root, $releaseArtifactFiles): bool {
+$assert('eligible release payload is clean, tracked, and matches HEAD Git blobs', static function () use ($root, $releaseArtifactFiles, $hasGitMetadataAncestor): bool {
     $workspace = $root;
     $output = [];
     exec('git -C ' . escapeshellarg($workspace) . ' rev-parse --show-toplevel 2>&1', $output, $status);
     $gitRoot = $status === 0 ? trim(implode("\n", $output)) : '';
-    if ($gitRoot === '' || !is_dir($gitRoot)) {
+    if ($status !== 0) {
         // Isolated non-Git fixtures test package semantics; formal candidate
         // construction always performs this gate against a real Git commit.
-        return true;
+        return !$hasGitMetadataAncestor($root);
     }
+    if ($gitRoot === '' || !is_dir($gitRoot)) return false;
     $rootPath = realpath($root);
     $gitRootPath = realpath($gitRoot);
-    if (!is_string($rootPath) || !is_string($gitRootPath) || ($rootPath !== $gitRootPath && !str_starts_with($rootPath, $gitRootPath . '/'))) return false;
+    if (!is_string($rootPath) || !is_string($gitRootPath) || ($rootPath !== $gitRootPath && !str_starts_with($rootPath, $gitRootPath . '/'))) {
+        throw new RuntimeException('resolved package root is outside the Git worktree');
+    }
     $sourcePrefix = $rootPath === $gitRootPath ? '' : substr($rootPath, strlen($gitRootPath) + 1);
     $dirty = [];
     exec('git -C ' . escapeshellarg($gitRootPath) . ' status --porcelain=v1 --untracked-files=all -- ' . escapeshellarg($sourcePrefix === '' ? '.' : $sourcePrefix) . ' 2>&1', $dirty, $dirtyStatus);
@@ -877,7 +917,9 @@ $assert('eligible release payload is clean, tracked, and matches HEAD Git blobs'
         $path = ($sourcePrefix === '' ? '' : $sourcePrefix . '/') . $relative;
         $tracked = [];
         exec('git -C ' . escapeshellarg($gitRootPath) . ' ls-files --error-unmatch -- ' . escapeshellarg($path) . ' 2>&1', $tracked, $trackedStatus);
-        if ($trackedStatus !== 0) return false;
+        if ($trackedStatus !== 0) {
+            throw new RuntimeException('eligible release payload is not tracked by Git: ' . $relative);
+        }
     }
     return true;
 });

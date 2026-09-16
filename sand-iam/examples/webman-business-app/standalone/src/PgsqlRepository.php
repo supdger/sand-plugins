@@ -33,7 +33,7 @@ final class PgsqlRepository implements Repository
         return $this->item($statement->fetch(PDO::FETCH_ASSOC));
     }
 
-    public function close(int $id, callable $authorize, AuditWriter $auditWriter, string $requestId): WorkItem
+    public function close(int $id, callable $authorize, AuditWriter $auditWriter, string $action, string $requestId): WorkItem
     {
         $this->database->beginTransaction();
         try {
@@ -53,7 +53,7 @@ final class PgsqlRepository implements Repository
             if ($update->rowCount() !== 1) throw new RuntimeException('work item changed concurrently');
 
             $closed = new WorkItem($item->id, $item->organizationId, $item->ownerIdentityId, 'closed', $item->version + 1);
-            $auditWriter->writeSuccess($this->database, 'standalone_work_item.close', $closed, $actorReference, $requestId);
+            $auditWriter->writeSuccess($this->database, $action, $closed, $actorReference, $requestId);
             $this->database->commit();
             return $closed;
         } catch (\Throwable $exception) {

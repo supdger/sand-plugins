@@ -150,8 +150,9 @@ namespace {
     $synchronizer = new RouteBindingSynchronizer();
     $preview = $synchronizer->synchronize($manifest, disableMissing: true, operationId: 'acceptance-run-0001');
     routeBindingSyncAssert($preview['dry_run'] === true && $preview['valid'] === true, 'preview should be valid and dry-run by default');
+    routeBindingSyncAssert(preg_match('/^[a-f0-9]{64}$/D', (string) ($preview['preview_hash'] ?? '')) === 1, 'preview hash is missing or malformed');
     $normalizedPreview = $synchronizer->synchronizeNormalized(RouteSyncManifest::normalize($manifest), disableMissing: true, operationId: 'acceptance-run-0001');
-    routeBindingSyncAssert($normalizedPreview['dry_run'] === true && $normalizedPreview['valid'] === true && $normalizedPreview['changes'] === $preview['changes'], 'normalized route manifest did not follow the same strict synchronization plan');
+    routeBindingSyncAssert($normalizedPreview['dry_run'] === true && $normalizedPreview['valid'] === true && $normalizedPreview['changes'] === $preview['changes'] && $normalizedPreview['preview_hash'] === $preview['preview_hash'], 'normalized route manifest did not follow the same strict synchronization plan');
     routeBindingSyncAssert($preview['summary'] === ['新增' => 1, '更新' => 1, '停用' => 1, '保留外部绑定' => 2, '冲突' => 0, '未绑定' => 0, '忽略未标记路由' => 1], 'preview summary is incomplete or not human-readable');
     routeBindingSyncAssert($preview['operation_id'] === 'acceptance-run-0001', 'operation ID was not retained in the sync preview');
     routeBindingSyncAssert(in_array('SAND_IAM_ROUTE_SYNC_EXTERNAL_BINDING_UNCHANGED', array_column($preview['changes'], 'code'), true), 'manual or OpenAPI binding was not explicitly preserved');
@@ -168,10 +169,24 @@ namespace {
         routeBindingSyncAssert(\think\facade\Db::$snapshots === [], 'failed batch leaked its transaction');
     }
     \plugin\SandIam\app\service\AuditWriter::$failAt = null;
-    $applied = $synchronizer->synchronize($manifest, apply: true, disableMissing: true, operationId: 'acceptance-run-0001');
+    try {
+        $synchronizer->synchronize($manifest, apply: true, disableMissing: true, operationId: 'acceptance-run-0001', expectedPreviewHash: str_repeat('0', 64));
+        routeBindingSyncAssert(false, 'apply accepted a stale preview hash');
+    } catch (ApiException $exception) {
+        routeBindingSyncAssert(str_starts_with($exception->getMessage(), 'SAND_IAM_ROUTE_SYNC_PREVIEW_STALE'), 'stale preview hash returned the wrong error');
+    }
+    routeBindingSyncAssert(serialize([ApiRouteBinding::$rows, \plugin\SandIam\app\service\AuditWriter::$records]) === $beforeFailure, 'stale preview rejection changed route or audit state');
+    $applied = $synchronizer->synchronize($manifest, apply: true, disableMissing: true, operationId: 'acceptance-run-0001', expectedPreviewHash: $preview['preview_hash']);
     routeBindingSyncAssert($applied['dry_run'] === false && (int) ApiRouteBinding::$rows[1]->status === 2, 'apply did not actually disable the missing route_scan binding');
     routeBindingSyncAssert((string) ApiRouteBinding::$rows[3]->source === 'openapi' && (string) ApiRouteBinding::$rows[4]->source === 'manual' && (int) ApiRouteBinding::$rows[5]->status === 1, 'apply took ownership of manual or OpenAPI bindings');
     routeBindingSyncAssert(count(ApiRouteBinding::$rows) === 7 && (string) ApiRouteBinding::$rows[6]->source === 'route_scan', 'apply did not create a new route_scan binding');
+    $createdChange = array_values(array_filter($applied['changes'], static fn (array $change): bool => $change['operation'] === 'create'))[0] ?? null;
+    routeBindingSyncAssert(
+        is_array($createdChange)
+            && (int) ($createdChange['binding_id'] ?? 0) === (int) ApiRouteBinding::$rows[6]->id
+            && str_starts_with((string) ($createdChange['audit_request_id'] ?? ''), 'acceptance-run-0001.'),
+        'apply result did not return the created binding ID and traceable audit request ID',
+    );
     $auditRequestIds = array_map(static fn (array $record): string => (string) $record[8], \plugin\SandIam\app\service\AuditWriter::$records);
     routeBindingSyncAssert(count($auditRequestIds) === count(array_unique($auditRequestIds)) && count($auditRequestIds) === 3, 'route sync audit child request IDs are not unique per binding write');
 

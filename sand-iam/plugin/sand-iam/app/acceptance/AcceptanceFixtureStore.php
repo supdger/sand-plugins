@@ -49,8 +49,9 @@ interface AcceptanceFixtureStore
     public function organizationApplicationEnvironmentUniverse(string $prefix, bool $lock): array;
 
     /**
-     * The MFA verification audit is only valid when its actor, application
-     * and challenge resource all belong to the submitted acceptance identity.
+     * The password-MFA or passkey verification audit is only valid when its
+     * actor, application and challenge resource all belong to the submitted
+     * acceptance identity.
      */
     public function mfaLoginChallengeAuditExists(int $applicationId, int $identityId, string $requestId, string $prefix): bool;
 
@@ -67,6 +68,35 @@ interface AcceptanceFixtureStore
 
     /** @return list<array<string,mixed>> */
     public function identityGroupRoles(string $prefix, int $applicationId, bool $lock): array;
+
+    /**
+     * Returns the full run/resource/identity set derived from the submitted
+     * acceptance connector. The caller supplies connector ids only; derived
+     * ids are discovered under lock so an interrupted run cannot hide rows.
+     *
+     * @param list<int> $connectorIds
+     * @return array<string,list<array<string,mixed>>>
+     */
+    public function directorySyncArtifacts(array $connectorIds, int $applicationId, bool $lock): array;
+
+    /**
+     * Returns rows and invitations derived from the submitted import jobs.
+     * Direct invitations stay caller-captured roots; import-created
+     * invitations are discovered through immutable import-row relationships.
+     *
+     * @param list<int> $importJobIds
+     * @return array<string,list<array<string,mixed>>>
+     */
+    public function identityLifecycleArtifacts(array $importJobIds, int $applicationId, bool $lock): array;
+
+    /**
+     * Discovers the mounted SCIM token, user and binding universe owned by the
+     * submitted provider roots.
+     *
+     * @param list<int> $providerIds
+     * @return array<string,list<array<string,mixed>>>
+     */
+    public function scimArtifacts(array $providerIds, int $applicationId, bool $lock): array;
 
     /**
      * @param list<int> $credentialIds
@@ -123,6 +153,16 @@ interface AcceptanceFixtureStore
      * @return array<string,list<array<string,mixed>>>
      */
     public function oauthCasApiGovernanceUniverse(string $prefix, int $applicationId, int $resourceId, int $identityId, bool $lock): array;
+
+    /**
+     * Returns every prefixed action/resource and every identity-bound policy
+     * derived from those resources for the standalone non-AI consumer chain.
+     * Policy versions are discovered from the policy relationship, never from
+     * caller-submitted version ids.
+     *
+     * @return array<string,list<array<string,mixed>>>
+     */
+    public function nonAiBusinessConsumerUniverse(string $prefix, int $applicationId, int $identityId, bool $lock): array;
 
     /**
      * Detaches only versions derived from this submitted policy set. The store

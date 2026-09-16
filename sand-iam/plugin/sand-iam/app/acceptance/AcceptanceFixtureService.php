@@ -16,7 +16,7 @@ final class AcceptanceFixtureService
     public const PREFIX_PATTERN = '/^sand_iam_acceptance_[a-f0-9]{16}_$/';
     public const REQUEST_ID_PATTERN = '/^sand_iam_acceptance_[a-f0-9]{16}_[A-Za-z0-9][A-Za-z0-9_.:-]{0,58}$/';
     public const CONFIRMATION = 'I_CONFIRM_DELETE_ONLY_THIS_ACCEPTANCE_FIXTURE';
-    private const WEBHOOK_FIXTURE_EVENT_TYPE = 'acceptance.fixture.event';
+    private const WEBHOOK_ACCEPTANCE_EVENT_TYPE = 'credential.changed';
 
     /** @var array<string,array{types:list<string>,purge_order:list<string>,revoke_order?:list<string>,actions:array<string,string>,scope_types?:list<string>,partial_types?:bool}> */
     private const CHAINS = [
@@ -30,21 +30,44 @@ final class AcceptanceFixtureService
             ],
         ],
         'delegation-scope' => [
-            'types' => ['admin_application_grant'],
-            'purge_order' => ['admin_application_grant'],
-            'actions' => ['admin_application_grant' => 'admin_application_grant.create'],
+            'types' => ['environment', 'admin_application_grant'],
+            'purge_order' => ['environment', 'admin_application_grant'],
+            'revoke_order' => ['environment', 'admin_application_grant'],
+            'actions' => [
+                'environment' => 'environment.create',
+                'admin_application_grant' => 'admin_application_grant.create',
+            ],
+            'partial_types' => true,
         ],
         'identity-group-role-policy' => [
             // Roles, resources and policies are approved prerequisites. This
             // cleanup owns only the identity, group and captured relation rows.
-            'types' => ['identity', 'identity_group', 'identity_group_member', 'identity_group_role'],
-            'purge_order' => ['identity_group_role', 'identity_group_member', 'identity_group', 'identity'],
-            'revoke_order' => ['identity_group_role', 'identity_group_member', 'identity_group', 'identity'],
+            'types' => [
+                'identity', 'identity_group', 'identity_group_member', 'identity_group_role',
+                'identity_invitation', 'identity_import_job', 'identity_provider', 'sync_connector',
+            ],
+            'purge_order' => [
+                'identity_group_role', 'identity_group_member',
+                'sync_resource', 'directory_identity', 'sync_run', 'sync_connector',
+                'identity_import_row', 'import_invitation', 'identity_invitation', 'identity_import_job',
+                'provisioning_event', 'scim_resource', 'identity_binding', 'scim_token',
+                'scim_identity', 'identity_provider_application', 'identity_provider',
+                'identity_group', 'identity',
+            ],
+            'revoke_order' => [
+                'identity_group_role', 'identity_group_member', 'sync_connector',
+                'identity_invitation', 'identity_import_job', 'identity_group', 'identity',
+                'identity_provider',
+            ],
             'actions' => [
                 'identity' => 'identity.create',
                 'identity_group' => 'identity_group.create',
                 'identity_group_member' => 'identity_group.member_add',
                 'identity_group_role' => 'identity_group_role.grant',
+                'identity_invitation' => 'identity_invitation.create',
+                'identity_import_job' => 'identity_import.preview',
+                'identity_provider' => 'identity_provider.create',
+                'sync_connector' => 'sync_connector.create',
             ],
             'partial_types' => true,
         ],
@@ -53,13 +76,15 @@ final class AcceptanceFixtureService
             // registration API. Its authentication rows are derived from the
             // captured, prefixed identity so a caller cannot select only a
             // convenient subset of sessions, refresh tokens or MFA material.
-            'types' => ['identity', 'auth_session', 'mfa_factor'],
-            'purge_order' => ['mfa_recovery_code', 'mfa_factor', 'auth_refresh_token', 'auth_session', 'identity_auth', 'identity'],
+            'types' => ['auth_policy', 'identity', 'auth_session', 'mfa_factor'],
+            'purge_order' => ['auth_challenge', 'auth_verification', 'mfa_recovery_code', 'mfa_factor', 'webauthn_credential', 'auth_refresh_token', 'auth_session', 'identity_auth', 'identity', 'auth_policy'],
             'revoke_order' => ['identity'],
             'actions' => [
+                'auth_policy' => 'auth_policy.create',
                 'identity' => 'identity.register',
                 'mfa_factor' => 'identity.totp_start',
             ],
+            'partial_types' => true,
         ],
         'workload-credential-invocation' => [
             'types' => ['credential', 'service_grant'],
@@ -75,17 +100,19 @@ final class AcceptanceFixtureService
             'partial_types' => true,
         ],
         'event-webhook-delivery' => [
-            // An endpoint may legitimately receive no event before an
-            // interrupted acceptance run. A delivery, when present, must be
-            // the complete same-run endpoint set, never a caller-selected
-            // subset.
-            'types' => ['webhook_endpoint', 'webhook_delivery'],
-            'purge_order' => ['webhook_delivery', 'webhook_endpoint'],
-            'revoke_order' => ['webhook_endpoint'],
+            // Credential issuance is the production event source. The
+            // environment and workload client are approved prerequisites.
+            'types' => ['credential', 'webhook_endpoint', 'webhook_delivery'],
+            'purge_order' => ['webhook_delivery', 'credential', 'webhook_endpoint'],
+            'revoke_order' => ['credential', 'webhook_endpoint'],
             'actions' => [
+                'credential' => 'credential.issue',
                 'webhook_endpoint' => 'webhook.create',
-                'webhook_delivery' => 'webhook.delivery_enqueue',
+                // Production outbox rows are owned through their
+                // credential.changed envelope, not a fixture enqueue audit.
+                'webhook_delivery' => 'credential.issue',
             ],
+            'scope_types' => ['environment', 'workload_client'],
             'partial_types' => true,
         ],
         'oauth-cas-api-governance' => [
@@ -103,23 +130,39 @@ final class AcceptanceFixtureService
                 'oauth_client' => 'oauth_client.create',
                 'cas_service' => 'cas_service.create',
                 'api_resource' => 'api_resource.create',
-                'api_route_binding' => 'api_route_binding.create',
+                'api_route_binding' => 'api_route.observe',
                 'policy' => 'policy.create',
             ],
             'scope_types' => ['environment', 'resource', 'identity'],
         ],
+        'non-ai-business-consumer' => [
+            'types' => ['application_business_action', 'resource', 'api_resource', 'api_route_binding', 'policy'],
+            'purge_order' => ['api_route_binding', 'api_resource', 'policy_version', 'policy', 'resource', 'application_business_action'],
+            'revoke_order' => ['api_route_binding', 'api_resource', 'policy', 'resource', 'application_business_action'],
+            'actions' => [
+                'application_business_action' => 'application_business_action.create',
+                'resource' => 'resource.create',
+                'api_resource' => 'api_resource.create',
+                'api_route_binding' => 'api_route.observe',
+                'policy' => 'policy.create',
+            ],
+            'scope_types' => ['identity'],
+            'partial_types' => true,
+        ],
     ];
     private const C01_V2 = [
-        'types' => ['organization', 'application', 'environment', 'admin_application_grant'],
+        'types' => ['organization', 'application', 'environment', 'application_experience', 'admin_organization_grant', 'admin_application_grant'],
         // Audit rows keep restrictive references to their organization and
         // application. C01 v2 therefore removes only disposable children and
         // retains the two audited anchors in disabled state.
-        'purge_order' => ['admin_application_grant', 'environment'],
-        'revoke_order' => ['admin_application_grant', 'environment', 'application', 'organization'],
+        'purge_order' => ['admin_application_grant', 'admin_organization_grant', 'application_experience', 'environment'],
+        'revoke_order' => ['admin_application_grant', 'admin_organization_grant', 'application_experience', 'environment', 'application', 'organization'],
         'actions' => [
             'organization' => 'organization.create',
             'application' => 'application.create',
             'environment' => 'environment.create',
+            'application_experience' => 'application_experience.create',
+            'admin_organization_grant' => 'admin_organization_grant.create',
             'admin_application_grant' => 'admin_application_grant.create',
         ],
     ];
@@ -193,7 +236,7 @@ final class AcceptanceFixtureService
                     $fingerprint,
                     function () use ($request, $adminId, &$failureContext): array {
                         $records = $this->verifiedRecords($request, true, true);
-                        if ($request['chain_id'] === 'human-auth-session-mfa') {
+                        if ($request['chain_id'] === 'human-auth-session-mfa' && !$request['partial_recovery']) {
                             $beforeDrain = $this->humanAuthDrainSnapshot($records);
                             try {
                                 $this->assertHumanAuthDrained($records);
@@ -291,6 +334,7 @@ final class AcceptanceFixtureService
         $scopeIds = [];
         $expectedRoleId = null;
         $scopedAdminId = null;
+        $organizationScopedAdminId = null;
         $creatorAdminId = null;
         foreach ($spec['scope_types'] ?? [] as $type) {
             $scopeIds[$type] = $this->positiveId($payload[$type . '_id'] ?? null, $this->scopeLabel($type));
@@ -306,7 +350,13 @@ final class AcceptanceFixtureService
                 'organization',
                 'application,organization',
                 'application,environment,organization',
+                'application,application_experience,environment,organization',
+                'admin_organization_grant,application,environment,organization',
+                'admin_organization_grant,application,application_experience,environment,organization',
                 'admin_application_grant,application,environment,organization',
+                'admin_application_grant,application,application_experience,environment,organization',
+                'admin_application_grant,admin_organization_grant,application,environment,organization',
+                'admin_application_grant,admin_organization_grant,application,application_experience,environment,organization',
             ];
             if (!in_array(implode(',', $submittedTypes), $closedStages, true)) {
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: C01 仅允许组织、组织加应用、完整层级或完整层级加委派的闭合清理集合', 400);
@@ -318,6 +368,11 @@ final class AcceptanceFixtureService
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: C01 父级范围必须与已创建的闭合对象集合精确对应', 400);
             }
             $rawC01ObjectIds = $payload['object_ids'] ?? null;
+            if (is_array($rawC01ObjectIds) && array_key_exists('admin_organization_grant', $rawC01ObjectIds)) {
+                $organizationScopedAdminId = $this->positiveId($payload['organization_scoped_admin_id'] ?? null, '受委派组织后台管理员');
+            } elseif (array_key_exists('organization_scoped_admin_id', $payload)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: C01 未创建组织委派时不得提交受委派组织后台管理员', 400);
+            }
             if (is_array($rawC01ObjectIds) && array_key_exists('admin_application_grant', $rawC01ObjectIds)) {
                 $scopedAdminId = $this->positiveId($payload['scoped_admin_id'] ?? null, '受委派后台管理员');
             } elseif (array_key_exists('scoped_admin_id', $payload)) {
@@ -345,6 +400,13 @@ final class AcceptanceFixtureService
             if (!is_array($values) || !array_is_list($values) || $values === []) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 每种对象都必须提交非空编号列表', 400);
             $ids = array_map(fn (mixed $id): int => $this->positiveId($id, $type), $values);
             if (count(array_unique($ids)) !== count($ids)) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 对象编号不得重复', 400);
+            if ($chainId === 'human-auth-session-mfa' && $type === 'auth_session') {
+                $sortedSessionIds = $ids;
+                sort($sortedSessionIds);
+                if ($ids !== $sortedSessionIds) {
+                    throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 登录验收会话必须按编号升序提交，以保持编号、请求和签发动作三元组对齐', 400);
+                }
+            }
             $requestIds = $inputRequestIds[$type] ?? null;
             if (!is_array($requestIds) || !array_is_list($requestIds) || count($requestIds) !== count($ids)) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 每个对象必须对应一个创建请求编号', 400);
             $pairs = [];
@@ -361,13 +423,20 @@ final class AcceptanceFixtureService
         $allowedChainThreeRegistrationPair = $chainId === 'human-auth-session-mfa'
             && ($objectRequestIds['identity'][0] ?? null) === ($objectRequestIds['auth_session'][0] ?? null)
             && count($allObjectRequestIds) === count(array_unique($allObjectRequestIds)) + 1;
-        if ((!$allowedChainThreeRegistrationPair && count(array_unique($allObjectRequestIds)) !== count($allObjectRequestIds)) || in_array($requestId, $allObjectRequestIds, true)) {
+        $allowedWebhookEventPair = $chainId === 'event-webhook-delivery'
+            && count($objectRequestIds['credential'] ?? []) === 1
+            && count($objectRequestIds['webhook_delivery'] ?? []) === 1
+            && $objectRequestIds['credential'][0] === $objectRequestIds['webhook_delivery'][0]
+            && count($allObjectRequestIds) === count(array_unique($allObjectRequestIds)) + 1;
+        if ((!$allowedChainThreeRegistrationPair && !$allowedWebhookEventPair && count(array_unique($allObjectRequestIds)) !== count($allObjectRequestIds)) || in_array($requestId, $allObjectRequestIds, true)) {
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 每次创建和清理都必须使用各自唯一的请求编号', 400);
         }
         $invocationRequestIds = [];
         $deliveryRetryRequestIds = [];
         $humanAuthActionRequestIds = [];
         $humanAuthSessionActions = [];
+        $humanAuthRegistrationRequestId = '';
+        $partialRecovery = false;
         if ($chainId === 'workload-credential-invocation') {
             $hasCredential = isset($objectIds['credential']);
             $hasGrant = isset($objectIds['service_grant']);
@@ -387,10 +456,14 @@ final class AcceptanceFixtureService
             }
         }
         if ($chainId === 'event-webhook-delivery') {
+            $hasCredential = isset($objectIds['credential']);
             $hasEndpoint = isset($objectIds['webhook_endpoint']);
             $hasDelivery = isset($objectIds['webhook_delivery']);
             if (!$hasEndpoint) {
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 清理 Webhook 投递时必须同时提交本轮端点', 400);
+            }
+            if ($hasDelivery && !$hasCredential) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 清理真实事件投递时必须同时提交触发事件的本轮凭证', 400);
             }
             $rawRetryRequestIds = $payload['delivery_retry_request_ids'] ?? [];
             if ($hasDelivery) {
@@ -418,22 +491,75 @@ final class AcceptanceFixtureService
             $hasIdentity = isset($objectIds['identity']);
             $hasGroup = isset($objectIds['identity_group']);
             $expectedRoleId = $this->positiveId($payload['role_id'] ?? null, '预置角色');
+            $rawPartialRecovery = $payload['partial_recovery'] ?? false;
+            if (!in_array($rawPartialRecovery, [false, true, 0, 1, '0', '1'], true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: partial_recovery 必须是布尔值', 400);
+            }
+            $partialRecovery = in_array($rawPartialRecovery, [true, 1, '1'], true);
+            if ($partialRecovery
+                && !isset($objectIds['identity_import_job'])
+                && !isset($objectIds['identity_provider'])
+                && !isset($objectIds['sync_connector'])) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: C02 中断恢复必须包含导入任务、身份源或目录连接', 400);
+            }
             if (isset($objectIds['identity_group_member']) && (!$hasIdentity || !$hasGroup)) {
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 清理用户组成员关系时必须同时提交本轮身份和用户组', 400);
             }
             if (isset($objectIds['identity_group_role']) && !$hasGroup) {
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 清理用户组角色关系时必须同时提交本轮用户组', 400);
             }
+            if (!isset($objectIds['sync_connector'])) {
+                $directoryTypes = ['sync_resource', 'directory_identity', 'sync_run', 'sync_connector'];
+                $spec['purge_order'] = array_values(array_diff($spec['purge_order'], $directoryTypes));
+                $spec['revoke_order'] = array_values(array_diff($spec['revoke_order'], $directoryTypes));
+            }
+            if (!isset($objectIds['identity_invitation']) && !isset($objectIds['identity_import_job'])) {
+                $lifecycleTypes = ['identity_import_row', 'import_invitation', 'identity_invitation', 'identity_import_job'];
+                $spec['purge_order'] = array_values(array_diff($spec['purge_order'], $lifecycleTypes));
+                $spec['revoke_order'] = array_values(array_diff($spec['revoke_order'], $lifecycleTypes));
+            }
+            if (!isset($objectIds['identity_provider'])) {
+                $scimTypes = [
+                    'provisioning_event', 'scim_resource', 'identity_binding', 'scim_token',
+                    'scim_identity', 'identity_provider_application', 'identity_provider',
+                ];
+                $spec['purge_order'] = array_values(array_diff($spec['purge_order'], $scimTypes));
+                $spec['revoke_order'] = array_values(array_diff($spec['revoke_order'], $scimTypes));
+            }
         }
         if ($chainId === 'human-auth-session-mfa') {
-            if (count($objectIds['identity'] ?? []) !== 1 || count($objectIds['mfa_factor'] ?? []) !== 1 || count($objectIds['auth_session'] ?? []) !== 3) {
-                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 登录验收每轮必须清理一个受控身份、三条会话和一个 MFA 因子', 400);
+            $sessionCount = count($objectIds['auth_session'] ?? []);
+            $factorCount = count($objectIds['mfa_factor'] ?? []);
+            $identityCount = count($objectIds['identity'] ?? []);
+            if (count($objectIds['auth_policy'] ?? []) !== 1
+                || $identityCount > 1
+                || ($identityCount === 0 && ($sessionCount !== 0 || $factorCount !== 0))
+                || ($identityCount === 1 && ($sessionCount < 1 || $sessionCount > 3 || $factorCount > 1))) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 登录验收恢复必须包含认证策略，并仅允许零个身份或一个身份及其一至三条会话、至多一个 MFA 因子', 400);
             }
-            $rawActionIds = $payload['human_auth_action_request_ids'] ?? null;
+            $rawPartialRecovery = $payload['partial_recovery'] ?? false;
+            if (!in_array($rawPartialRecovery, [false, true, 0, 1, '0', '1'], true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: partial_recovery 必须是布尔值', 400);
+            }
+            $partialRecovery = in_array($rawPartialRecovery, [true, 1, '1'], true);
+            $completeFixture = $identityCount === 1 && $sessionCount === 3 && $factorCount === 1;
+            if (!$completeFixture && !$partialRecovery) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 未完成登录链必须明确 partial_recovery', 400);
+            }
+            $humanAuthRegistrationRequestId = $this->requestId(
+                $payload['human_auth_registration_request_id']
+                    ?? ($objectRequestIds['identity'][0] ?? null),
+                '登录验收注册',
+            );
+            $this->assertRequestPrefix($humanAuthRegistrationRequestId, $prefix, '登录验收注册');
+            $rawActionIds = $payload['human_auth_action_request_ids'] ?? [];
             $actionNames = is_array($rawActionIds) ? array_keys($rawActionIds) : [];
             sort($actionNames);
-            if (!is_array($rawActionIds) || $actionNames !== ['mfa_confirm', 'mfa_login_verify', 'mfa_revoke', 'session_revoke']) {
-                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 登录验收必须提交 MFA 绑定、MFA 撤销和会话撤销的本轮请求编号', 400);
+            $expectedActionNames = $completeFixture && !$partialRecovery
+                ? ['mfa_confirm', 'mfa_login_verify', 'mfa_revoke', 'session_revoke']
+                : [];
+            if (!is_array($rawActionIds) || $actionNames !== $expectedActionNames) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 登录验收必须按完整或失败恢复阶段提交精确动作请求编号', 400);
             }
             foreach ($rawActionIds as $name => $value) {
                 $values = $name === 'session_revoke' ? $value : [$value];
@@ -455,20 +581,31 @@ final class AcceptanceFixtureService
                 }
                 $humanAuthActionRequestIds[$name] = $name === 'session_revoke' ? $normalized : $normalized[0];
             }
-            $rawSessionActions = $payload['human_auth_session_actions'] ?? null;
-            if (!is_array($rawSessionActions) || !array_is_list($rawSessionActions) || count($rawSessionActions) !== count($objectIds['auth_session'])) {
+            $rawSessionActions = $payload['human_auth_session_actions'] ?? [];
+            if (!is_array($rawSessionActions) || !array_is_list($rawSessionActions) || count($rawSessionActions) !== $sessionCount) {
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 每个受控会话必须声明实际签发动作', 400);
             }
-            $actionMultiset = $rawSessionActions;
-            sort($actionMultiset);
-            if ($actionMultiset !== ['identity.login', 'identity.mfa_login', 'identity.register']) {
-                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 登录验收必须恰好声明注册、普通登录和 MFA 验证各一条会话', 400);
+            $followUpSessionActions = array_slice($rawSessionActions, 1);
+            $sortedFollowUpSessionActions = array_values(array_unique($followUpSessionActions));
+            sort($sortedFollowUpSessionActions);
+            $expectedCompleteFollowUpActions = ['identity.login', 'identity.mfa_login'];
+            sort($expectedCompleteFollowUpActions);
+            if ($sessionCount > 0 && (
+                ($rawSessionActions[0] ?? null) !== 'identity.register'
+                || in_array('identity.register', $followUpSessionActions, true)
+                || count($followUpSessionActions) !== count($sortedFollowUpSessionActions)
+                || ($sessionCount === 3 && $sortedFollowUpSessionActions !== $expectedCompleteFollowUpActions)
+                || (!$partialRecovery && $rawSessionActions !== ['identity.register', 'identity.login', 'identity.mfa_login'])
+            )) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 登录验收首个会话必须来自注册，完整三会话必须分别包含普通登录和 MFA 登录', 400);
             }
             foreach ($rawSessionActions as $offset => $action) {
                 if (!is_string($action) || !in_array($action, ['identity.register', 'identity.login', 'identity.mfa_login'], true)) {
                     throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 会话签发动作不属于冻结认证契约', 400);
                 }
-                if ($action === 'identity.mfa_login' && ($objectRequestIds['auth_session'][$offset] ?? null) !== $humanAuthActionRequestIds['mfa_login_verify']) {
+                if ($action === 'identity.mfa_login'
+                    && !$partialRecovery
+                    && ($objectRequestIds['auth_session'][$offset] ?? null) !== $humanAuthActionRequestIds['mfa_login_verify']) {
                     throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: MFA 会话必须绑定 MFA challenge 验证请求编号', 400);
                 }
                 $humanAuthSessionActions[] = $action;
@@ -479,6 +616,21 @@ final class AcceptanceFixtureService
                 if (!isset($scopeIds[$type])) {
                     throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: OAuth/CAS 接口治理验收缺少冻结的应用范围对象', 400);
                 }
+            }
+        }
+        if ($chainId === 'non-ai-business-consumer' && !isset($scopeIds['identity'])) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 独立业务应用验收缺少冻结的登录身份', 400);
+        }
+        if ($chainId === 'non-ai-business-consumer') {
+            $hasAction = isset($objectIds['application_business_action']);
+            $hasResource = isset($objectIds['resource']);
+            $hasApiResource = isset($objectIds['api_resource']);
+            $hasRouteBinding = isset($objectIds['api_route_binding']);
+            $hasPolicy = isset($objectIds['policy']);
+            if (($hasApiResource && (!$hasAction || !$hasResource))
+                || ($hasRouteBinding && !$hasApiResource)
+                || ($hasPolicy && (!$hasAction || !$hasResource))) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OBJECTS_INVALID: 独立业务应用清理必须包含每个已创建接口、路由或策略依赖的动作和资源', 400);
             }
         }
         return [
@@ -495,8 +647,11 @@ final class AcceptanceFixtureService
             'delivery_retry_request_ids' => $deliveryRetryRequestIds,
             'human_auth_action_request_ids' => $humanAuthActionRequestIds,
             'human_auth_session_actions' => $humanAuthSessionActions,
+            'human_auth_registration_request_id' => $humanAuthRegistrationRequestId,
+            'partial_recovery' => in_array($chainId, ['human-auth-session-mfa', 'identity-group-role-policy'], true) ? $partialRecovery : false,
             'expected_role_id' => $expectedRoleId,
             'scoped_admin_id' => $scopedAdminId,
+            'organization_scoped_admin_id' => $organizationScopedAdminId,
             'creator_admin_id' => $creatorAdminId,
             'prefix' => $prefix,
         ];
@@ -530,6 +685,9 @@ final class AcceptanceFixtureService
         if ($request['chain_id'] === 'oauth-cas-api-governance') {
             $this->verifiedOAuthCasApiGovernanceScope($request, $lock);
         }
+        if ($request['chain_id'] === 'non-ai-business-consumer') {
+            $this->verifiedNonAiBusinessConsumerScope($request, $lock);
+        }
         if ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2) {
             $universe = $this->store->organizationApplicationEnvironmentUniverse($request['prefix'], $lock);
             foreach ($request['spec']['types'] as $type) {
@@ -556,7 +714,9 @@ final class AcceptanceFixtureService
             foreach ($request['object_ids'][$type] as $offset => $id) {
                 $recordExists = array_filter($records[$type] ?? [], static fn (array $row): bool => (int) ($row['id'] ?? 0) === $id) !== [];
                 if (!$requirePresent && !$recordExists) continue;
-                $this->assertCreationAudit($request, $type, $id, $request['object_request_ids'][$type][$offset], $records[$type] ?? []);
+                if (!($request['chain_id'] === 'event-webhook-delivery' && $type === 'webhook_delivery')) {
+                    $this->assertCreationAudit($request, $type, $id, $request['object_request_ids'][$type][$offset], $records[$type] ?? []);
+                }
             }
         }
         if ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2 && $requirePresent) {
@@ -576,8 +736,16 @@ final class AcceptanceFixtureService
         if ($request['chain_id'] === 'event-webhook-delivery') {
             $records += $this->verifiedWebhookDeliveries($request, $lock, $requirePresent, $records);
         }
+        if ($request['chain_id'] === 'identity-group-role-policy') {
+            $records += $this->verifiedDirectorySyncArtifacts($request, $lock, $requirePresent, $records);
+            $records += $this->verifiedIdentityLifecycleArtifacts($request, $lock, $requirePresent, $records);
+            $records += $this->verifiedScimArtifacts($request, $lock, $requirePresent, $records);
+        }
         if ($request['chain_id'] === 'oauth-cas-api-governance') {
             $records += $this->verifiedOAuthCasApiGovernanceArtifacts($request, $lock, $requirePresent, $records);
+        }
+        if ($request['chain_id'] === 'non-ai-business-consumer') {
+            $records += $this->verifiedNonAiBusinessConsumerArtifacts($request, $lock, $requirePresent, $records);
         }
         return $records;
     }
@@ -590,7 +758,30 @@ final class AcceptanceFixtureService
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 指定接入应用不属于客户主体边界', 400);
         }
 
-        $identityIds = $request['object_ids']['identity'];
+        $policyIds = $request['object_ids']['auth_policy'];
+        $policyRows = $this->store->records('auth_policy', $policyIds, $lock, '');
+        if ($requirePresent && count($policyRows) !== 1) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_NOT_FOUND: 本轮受控认证策略不存在或已被清理', 400);
+        }
+        foreach ($policyRows as $row) $this->assertRecordBoundary($request, 'auth_policy', $row);
+        if ($requirePresent) {
+            $this->assertAuditIds('auth_policy.create', 'auth_policy', $request['object_request_ids']['auth_policy'][0], $policyIds, $request['prefix'], '认证策略创建');
+        }
+
+        $identityIds = $request['object_ids']['identity'] ?? [];
+        $identityRequestId = $request['human_auth_registration_request_id'];
+        $discoveredIdentityIds = $this->store->allCreationAuditIds(
+            'identity.register',
+            'identity',
+            $identityRequestId,
+            $request['prefix'],
+        );
+        if ($discoveredIdentityIds !== $identityIds) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: 登录验收当前前缀身份全集与提交集合不一致，拒绝遗漏或额外身份', 400);
+        }
+        if ($identityIds === []) {
+            return ['auth_policy' => $policyRows];
+        }
         $identityRows = $this->store->records('identity', $identityIds, $lock, $request['prefix']);
         if ($requirePresent && count($identityRows) !== count($identityIds)) {
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_NOT_FOUND: 本轮受控应用用户不存在或已被清理', 400);
@@ -598,14 +789,14 @@ final class AcceptanceFixtureService
         foreach ($identityRows as $row) $this->assertRecordBoundary($request, 'identity', $row);
 
         $artifacts = $this->store->humanAuthArtifacts($identityIds, $request['application_id'], $lock);
-        foreach (['identity_auth', 'auth_session', 'auth_refresh_token', 'mfa_factor', 'mfa_recovery_code'] as $type) {
+        foreach (['identity_auth', 'auth_verification', 'auth_challenge', 'auth_session', 'auth_refresh_token', 'mfa_factor', 'mfa_recovery_code', 'webauthn_credential'] as $type) {
             if (!is_array($artifacts[$type] ?? null)) {
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: 登录验收对象查询未返回完整关系集合', 400);
             }
         }
         $expectedSessions = $request['object_ids']['auth_session'];
         $actualSessions = $this->sortedIds($artifacts['auth_session']);
-        $expectedFactors = $request['object_ids']['mfa_factor'];
+        $expectedFactors = $request['object_ids']['mfa_factor'] ?? [];
         $actualFactors = $this->sortedIds($artifacts['mfa_factor']);
         if ($requirePresent && ($actualSessions !== $expectedSessions || $actualFactors !== $expectedFactors)) {
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: 登录会话或 MFA 因子的完整本轮集合与提交编号不一致', 400);
@@ -613,6 +804,16 @@ final class AcceptanceFixtureService
         foreach ($artifacts['identity_auth'] as $row) {
             if ((int) ($row['application_id'] ?? 0) !== $request['application_id'] || !in_array((int) ($row['identity_id'] ?? 0), $identityIds, true)) {
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 认证凭据不属于本轮应用用户', 400);
+            }
+        }
+        foreach ($artifacts['auth_challenge'] as $row) {
+            if ((int) ($row['application_id'] ?? 0) !== $request['application_id'] || !in_array((int) ($row['identity_id'] ?? 0), $identityIds, true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 认证 challenge 不属于本轮应用用户', 400);
+            }
+        }
+        foreach ($artifacts['auth_verification'] as $row) {
+            if ((int) ($row['application_id'] ?? 0) !== $request['application_id'] || !in_array((int) ($row['identity_id'] ?? 0), $identityIds, true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 验证码记录不属于本轮应用用户', 400);
             }
         }
         if ($requirePresent && count($artifacts['identity_auth']) !== 1) {
@@ -626,6 +827,11 @@ final class AcceptanceFixtureService
         foreach ($artifacts['mfa_factor'] as $row) {
             if ((int) ($row['application_id'] ?? 0) !== $request['application_id'] || !in_array((int) ($row['identity_id'] ?? 0), $identityIds, true)) {
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: MFA 因子不属于本轮应用用户', 400);
+            }
+        }
+        foreach ($artifacts['webauthn_credential'] as $row) {
+            if ((int) ($row['application_id'] ?? 0) !== $request['application_id'] || !in_array((int) ($row['identity_id'] ?? 0), $identityIds, true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 通行密钥不属于本轮应用用户', 400);
             }
         }
         foreach ($artifacts['auth_refresh_token'] as $row) {
@@ -659,17 +865,23 @@ final class AcceptanceFixtureService
                 } else {
                     throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 会话签发动作与注册请求不匹配', 400);
                 }
-                $sessionRevokeRequestId = $request['human_auth_action_request_ids']['session_revoke'][$offset] ?? null;
-                if (!is_string($sessionRevokeRequestId)) {
-                    throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 受控会话缺少对应撤销请求编号', 400);
+                if (!$request['partial_recovery']) {
+                    $sessionRevokeRequestId = $request['human_auth_action_request_ids']['session_revoke'][$offset] ?? null;
+                    if (!is_string($sessionRevokeRequestId)) {
+                        throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_REQUESTS_INVALID: 受控会话缺少对应撤销请求编号', 400);
+                    }
+                    $this->assertAuditIds('identity.session_revoke', 'auth_session', $sessionRevokeRequestId, [(int) $sessionId], $request['prefix'], '会话撤销');
                 }
-                $this->assertAuditIds('identity.session_revoke', 'auth_session', $sessionRevokeRequestId, [(int) $sessionId], $request['prefix'], '会话撤销');
             }
-            $this->assertAuditIds('identity.totp_start', 'mfa_factor', $request['object_request_ids']['mfa_factor'][0], $expectedFactors, $request['prefix'], 'MFA 绑定开始');
-            $this->assertAuditIds('identity.totp_confirm', 'mfa_factor', $request['human_auth_action_request_ids']['mfa_confirm'], $expectedFactors, $request['prefix'], 'MFA 绑定确认');
-            $this->assertAuditIds('identity.mfa_revoke', 'mfa_factor', $request['human_auth_action_request_ids']['mfa_revoke'], $expectedFactors, $request['prefix'], 'MFA 撤销');
+            if ($expectedFactors !== []) {
+                $this->assertAuditIds('identity.totp_start', 'mfa_factor', $request['object_request_ids']['mfa_factor'][0], $expectedFactors, $request['prefix'], 'MFA 绑定开始');
+            }
+            if (!$request['partial_recovery']) {
+                $this->assertAuditIds('identity.totp_confirm', 'mfa_factor', $request['human_auth_action_request_ids']['mfa_confirm'], $expectedFactors, $request['prefix'], 'MFA 绑定确认');
+                $this->assertAuditIds('identity.mfa_revoke', 'mfa_factor', $request['human_auth_action_request_ids']['mfa_revoke'], $expectedFactors, $request['prefix'], 'MFA 撤销');
+            }
         }
-        return ['identity' => $identityRows] + $artifacts;
+        return ['auth_policy' => $policyRows, 'identity' => $identityRows] + $artifacts;
     }
 
     /** @param list<array<string,mixed>> $rows @return list<int> */
@@ -704,13 +916,23 @@ final class AcceptanceFixtureService
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_DRAIN_REQUIRED: 受控 MFA 因子仍在绑定或启用，必须先通过 MFA 撤销接口完成失效', 409);
             }
         }
+        foreach ($records['webauthn_credential'] ?? [] as $credential) {
+            if ((int) ($credential['status'] ?? 0) !== 2 || empty($credential['revoked_time'])) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_DRAIN_REQUIRED: 受控通行密钥仍在使用，必须先通过通行密钥撤销接口完成失效', 409);
+            }
+        }
+        foreach ($records['auth_verification'] ?? [] as $verification) {
+            if ((int) ($verification['status'] ?? 0) === 1) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_DRAIN_REQUIRED: 受控验证码仍可使用，必须先完成或失效后再清理', 409);
+            }
+        }
     }
 
     /** @param array<string,list<array<string,mixed>>> $records @return array<string,array<int,array<string,int|string|null>>> */
     private function humanAuthDrainSnapshot(array $records): array
     {
         $snapshot = [];
-        foreach (['identity_auth', 'auth_session', 'auth_refresh_token', 'mfa_factor', 'mfa_recovery_code'] as $type) {
+        foreach (['identity_auth', 'auth_verification', 'auth_challenge', 'auth_session', 'auth_refresh_token', 'mfa_factor', 'mfa_recovery_code', 'webauthn_credential'] as $type) {
             $rows = $records[$type] ?? [];
             $byId = [];
             foreach ($rows as $row) {
@@ -777,13 +999,26 @@ final class AcceptanceFixtureService
     {
         $endpointIds = $request['object_ids']['webhook_endpoint'] ?? [];
         if ($endpointIds === []) return ['webhook_delivery' => []];
+        $credentialIds = $request['object_ids']['credential'] ?? [];
+        $credentialRequestIds = $request['object_request_ids']['credential'] ?? [];
         $actual = $this->store->webhookDeliveries($endpointIds, $request['application_id'], $lock);
         foreach ($actual as $row) {
+            $payload = $row['payload'] ?? null;
+            if (is_string($payload)) $payload = json_decode($payload, true);
+            $data = is_array($payload) && is_array($payload['data'] ?? null) ? $payload['data'] : [];
             if ((int) ($row['application_id'] ?? 0) !== $request['application_id']
                 || !in_array((int) ($row['webhook_endpoint_id'] ?? 0), $endpointIds, true)
-                || !str_starts_with((string) ($row['event_id'] ?? ''), $request['prefix'])
-                || (string) ($row['event_type'] ?? '') !== self::WEBHOOK_FIXTURE_EVENT_TYPE) {
-                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: Webhook 投递不属于本轮端点、应用或固定前缀', 400);
+                || !str_starts_with((string) ($row['event_id'] ?? ''), 'evt_')
+                || (string) ($row['event_type'] ?? '') !== self::WEBHOOK_ACCEPTANCE_EVENT_TYPE
+                || !is_array($payload)
+                || ($payload['type'] ?? null) !== self::WEBHOOK_ACCEPTANCE_EVENT_TYPE
+                || (int) ($payload['application_id'] ?? 0) !== $request['application_id']
+                || ($data['action'] ?? null) !== 'credential.issue'
+                || ($data['outcome'] ?? null) !== 'succeeded'
+                || ($data['resource_type'] ?? null) !== 'credential'
+                || !in_array((int) ($data['resource_id'] ?? 0), $credentialIds, true)
+                || !in_array((string) ($data['request_id'] ?? ''), $credentialRequestIds, true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: Webhook 投递不属于本轮真实凭证事件、端点或应用', 400);
             }
             $lockedUntil = (string) ($row['locked_until'] ?? '');
             if ((int) ($row['status'] ?? 0) === 2 || ($lockedUntil !== '' && $lockedUntil > date('Y-m-d H:i:s'))) {
@@ -808,7 +1043,9 @@ final class AcceptanceFixtureService
             if ($requirePresent && (!is_int($offset) || !isset($request['object_request_ids']['webhook_delivery'][$offset]))) {
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: Webhook 投递缺少本轮事件请求绑定', 400);
             }
-            if ($requirePresent) $this->assertCreationAudit($request, 'webhook_delivery', $id, $request['object_request_ids']['webhook_delivery'][$offset], $actual);
+            if ($requirePresent && $request['object_request_ids']['webhook_delivery'][$offset] !== ($request['object_request_ids']['credential'][0] ?? null)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: Webhook 投递未绑定触发它的本轮凭证签发请求', 400);
+            }
         }
         if ($requirePresent && $actualIds !== []) {
             $workerAudits = $this->store->webhookDeliveryAuditIds($actualIds);
@@ -837,14 +1074,28 @@ final class AcceptanceFixtureService
             if ($audited !== [$groupId]) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: 用户组成员关系并非由本轮精确请求创建，拒绝清理历史关系', 400);
             return;
         }
-        $audited = $this->store->creationAuditIds(
-            $request['spec']['actions'][$type],
-            $type,
-            $objectRequestId,
-            [$id],
-            $request['prefix'],
-        );
-        if ($audited !== [$id]) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: 对象并非由本轮验收请求创建，拒绝清理预置或历史数据', 400);
+        $audited = [];
+        foreach ($this->creationAuditActions($request, $type) as $action) {
+            array_push($audited, ...$this->store->creationAuditIds(
+                $action,
+                $type,
+                $objectRequestId,
+                [$id],
+                $request['prefix'],
+            ));
+        }
+        $audited = array_values(array_unique($audited));
+        sort($audited);
+        if ($audited !== [$id]) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: 对象并非由本轮验收请求创建，拒绝清理预置或历史数据（' . $type . '）', 400);
+    }
+
+    /** @param array<string,mixed> $request @return list<string> */
+    private function creationAuditActions(array $request, string $type): array
+    {
+        if (($request['chain_id'] ?? null) === 'non-ai-business-consumer' && $type === 'api_route_binding') {
+            return ['api_route_binding.create', 'api_route.observe'];
+        }
+        return [(string) $request['spec']['actions'][$type]];
     }
 
     /** @param array<string,mixed> $request @param array<string,list<array<string,mixed>>> $records */
@@ -914,10 +1165,35 @@ final class AcceptanceFixtureService
         if ($type === 'organization' && (int) ($row['id'] ?? 0) !== $request['organization_id']) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 客户主体边界不匹配', 400);
         if ($type === 'application' && ((int) ($row['id'] ?? 0) !== $request['application_id'] || (int) ($row['organization_id'] ?? 0) !== $request['organization_id'])) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 接入应用边界不匹配', 400);
         if ($type === 'environment' && (int) ($row['application_id'] ?? 0) !== $request['application_id']) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 应用环境边界不匹配', 400);
+        if ($type === 'application_experience' && (int) ($row['application_id'] ?? 0) !== $request['application_id']) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 登录体验不属于指定接入应用', 400);
+        if ($type === 'auth_policy' && (int) ($row['application_id'] ?? 0) !== $request['application_id']) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 认证策略不属于指定接入应用', 400);
+        if ($type === 'admin_organization_grant' && ((int) ($row['organization_id'] ?? 0) !== $request['organization_id'] || ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2 && (int) ($row['admin_user_id'] ?? 0) !== $request['organization_scoped_admin_id']))) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 组织管理委派不属于指定客户主体或受委派后台管理员', 400);
         if ($type === 'admin_application_grant' && ((int) ($row['application_id'] ?? 0) !== $request['application_id'] || ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2 && (int) ($row['admin_user_id'] ?? 0) !== $request['scoped_admin_id']))) throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 管理委派不属于指定接入应用或受委派后台管理员', 400);
         if (in_array($type, ['identity', 'identity_group', 'identity_group_member', 'identity_group_role'], true)
             && (int) ($row['application_id'] ?? 0) !== $request['application_id']) {
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 身份、用户组或关系不属于指定接入应用', 400);
+        }
+        if (in_array($type, ['sync_connector', 'sync_run', 'sync_resource', 'directory_identity'], true)
+            && (int) ($row['application_id'] ?? 0) !== $request['application_id']) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 目录同步对象不属于指定接入应用', 400);
+        }
+        if (in_array($type, ['identity_invitation', 'identity_import_job', 'identity_import_row', 'import_invitation'], true)
+            && (int) ($row['application_id'] ?? 0) !== $request['application_id']) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 邀请或导入对象不属于指定接入应用', 400);
+        }
+        if (in_array($type, ['identity_provider', 'identity_provider_application', 'scim_token', 'scim_resource', 'identity_binding', 'provisioning_event', 'scim_identity'], true)
+            && (int) ($row['application_id'] ?? 0) !== $request['application_id']) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: SCIM 对象不属于指定接入应用', 400);
+        }
+        if ($type === 'identity_provider'
+            && ((int) ($row['organization_id'] ?? 0) !== $request['organization_id']
+                || !str_starts_with((string) ($row['code'] ?? ''), $request['prefix']))) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: SCIM 身份源不属于本轮客户主体、应用或验收前缀', 400);
+        }
+        if ($type === 'sync_connector'
+            && (!str_starts_with((string) ($row['code'] ?? ''), $request['prefix'])
+                || (int) ($row['organization_id'] ?? 0) !== $request['organization_id'])) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 目录连接不属于本轮客户主体、应用或验收前缀', 400);
         }
         if ($type === 'credential') {
             if ((int) ($row['workload_client_id'] ?? 0) !== ($request['scope_ids']['workload_client'] ?? 0)
@@ -936,9 +1212,8 @@ final class AcceptanceFixtureService
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: Webhook 端点不属于指定应用或本轮验收前缀', 400);
         }
         if ($type === 'webhook_delivery'
-            && ((int) ($row['application_id'] ?? 0) !== $request['application_id']
-                || !str_starts_with((string) ($row['event_id'] ?? ''), $request['prefix']))) {
-            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: Webhook 投递不属于指定应用或本轮事件前缀', 400);
+            && (int) ($row['application_id'] ?? 0) !== $request['application_id']) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: Webhook 投递不属于指定应用', 400);
         }
         if ($type === 'oauth_client'
             && ((int) ($row['application_id'] ?? 0) !== $request['application_id']
@@ -952,7 +1227,9 @@ final class AcceptanceFixtureService
         }
         if ($type === 'api_resource'
             && ((int) ($row['application_id'] ?? 0) !== $request['application_id']
-                || (int) ($row['resource_id'] ?? 0) !== ($request['scope_ids']['resource'] ?? 0)
+                || ($request['chain_id'] === 'non-ai-business-consumer'
+                    ? !in_array((int) ($row['resource_id'] ?? 0), $request['object_ids']['resource'] ?? [], true)
+                    : (int) ($row['resource_id'] ?? 0) !== ($request['scope_ids']['resource'] ?? 0))
                 || !str_starts_with((string) ($row['code'] ?? ''), $request['prefix']))) {
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 接口目录不属于指定应用、资源或本轮验收前缀', 400);
         }
@@ -963,9 +1240,22 @@ final class AcceptanceFixtureService
         }
         if ($type === 'policy'
             && ((int) ($row['application_id'] ?? 0) !== $request['application_id']
-                || (int) ($row['resource_id'] ?? 0) !== ($request['scope_ids']['resource'] ?? 0)
+                || ($request['chain_id'] === 'non-ai-business-consumer'
+                    ? !in_array((int) ($row['resource_id'] ?? 0), $request['object_ids']['resource'] ?? [], true)
+                    : (int) ($row['resource_id'] ?? 0) !== ($request['scope_ids']['resource'] ?? 0))
                 || (int) ($row['identity_id'] ?? 0) !== ($request['scope_ids']['identity'] ?? 0))) {
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 策略不属于本轮应用身份和业务资源边界', 400);
+        }
+        if ($type === 'application_business_action'
+            && ((int) ($row['application_id'] ?? 0) !== $request['application_id']
+                || !str_starts_with((string) ($row['code'] ?? ''), $request['prefix']))) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 业务动作不属于指定应用或本轮验收前缀', 400);
+        }
+        if ($type === 'resource'
+            && $request['chain_id'] === 'non-ai-business-consumer'
+            && ((int) ($row['application_id'] ?? 0) !== $request['application_id']
+                || !str_starts_with((string) ($row['code'] ?? ''), $request['prefix']))) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 业务资源不属于指定应用或本轮验收前缀', 400);
         }
     }
 
@@ -993,9 +1283,15 @@ final class AcceptanceFixtureService
     /** @param array<string,mixed> $request */
     private function verifiedWebhookScope(array $request, bool $lock): void
     {
+        $organization = $this->exactScopeRecord('organization', $request['organization_id'], $lock);
         $application = $this->exactScopeRecord('application', $request['application_id'], $lock);
-        if ((int) ($application['organization_id'] ?? 0) !== $request['organization_id']) {
-            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: Webhook 接入应用不属于指定客户主体', 400);
+        $environment = $this->exactScopeRecord('environment', $request['scope_ids']['environment'], $lock);
+        $client = $this->exactScopeRecord('workload_client', $request['scope_ids']['workload_client'], $lock);
+        if ((int) ($organization['id'] ?? 0) !== $request['organization_id']
+            || (int) ($application['organization_id'] ?? 0) !== $request['organization_id']
+            || (int) ($environment['application_id'] ?? 0) !== $request['application_id']
+            || (int) ($client['environment_id'] ?? 0) !== $request['scope_ids']['environment']) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: Webhook 接入应用、环境或调用身份归属不匹配', 400);
         }
     }
 
@@ -1016,6 +1312,168 @@ final class AcceptanceFixtureService
             || (int) ($identity['application_id'] ?? 0) !== $request['application_id']) {
             throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: OAuth/CAS 接口治理的客户主体、启用应用、可清理环境、资源或身份归属不匹配', 400);
         }
+    }
+
+    /** @param array<string,mixed> $request */
+    private function verifiedNonAiBusinessConsumerScope(array $request, bool $lock): void
+    {
+        $organization = $this->exactScopeRecord('organization', $request['organization_id'], $lock);
+        $application = $this->exactScopeRecord('application', $request['application_id'], $lock);
+        $identity = $this->exactScopeRecord('identity', $request['scope_ids']['identity'], $lock);
+        if ((int) ($application['organization_id'] ?? 0) !== (int) ($organization['id'] ?? 0)
+            || (int) ($application['status'] ?? 0) !== 1
+            || (int) ($identity['application_id'] ?? 0) !== $request['application_id']
+            || (int) ($identity['status'] ?? 0) !== 1) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 独立业务应用的客户主体、启用应用或登录身份归属不匹配', 400);
+        }
+    }
+
+    /** @param array<string,mixed> $request @param array<string,list<array<string,mixed>>> $records @return array<string,list<array<string,mixed>>> */
+    private function verifiedDirectorySyncArtifacts(array $request, bool $lock, bool $requirePresent, array $records): array
+    {
+        $connectorIds = $request['object_ids']['sync_connector'] ?? [];
+        $artifacts = $this->store->directorySyncArtifacts($connectorIds, $request['application_id'], $lock);
+        if ($connectorIds === []) return $artifacts;
+        $runIds = $this->sortedIds($artifacts['sync_run'] ?? []);
+        $identityIds = $this->sortedIds($artifacts['directory_identity'] ?? []);
+        foreach ($artifacts['sync_run'] ?? [] as $row) {
+            if (!in_array((int) ($row['sync_connector_id'] ?? 0), $connectorIds, true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 同步运行不属于本轮目录连接', 400);
+            }
+        }
+        $referencedIdentities = [];
+        foreach ($artifacts['sync_resource'] ?? [] as $row) {
+            $identityId = (int) ($row['identity_id'] ?? 0);
+            $runId = (int) ($row['last_seen_run_id'] ?? 0);
+            if (!in_array((int) ($row['sync_connector_id'] ?? 0), $connectorIds, true)
+                || !in_array($identityId, $identityIds, true)
+                || ($runId > 0 && !in_array($runId, $runIds, true))) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 同步资源未完整归属本轮目录连接、运行或身份', 400);
+            }
+            $referencedIdentities[$identityId] = true;
+        }
+        if ($requirePresent && !$request['partial_recovery']
+            && ($runIds === [] || $referencedIdentities === [] || array_keys($referencedIdentities) !== $identityIds)) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: 目录同步验收必须包含真实运行、同步资源和派生身份全集', 400);
+        }
+        foreach ($artifacts['directory_identity'] ?? [] as $row) {
+            if (!str_starts_with((string) ($row['code'] ?? ''), 'sync_')) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 派生身份不符合目录同步身份边界', 400);
+            }
+        }
+        return $artifacts;
+    }
+
+    /** @param array<string,mixed> $request @param array<string,list<array<string,mixed>>> $records @return array<string,list<array<string,mixed>>> */
+    private function verifiedIdentityLifecycleArtifacts(array $request, bool $lock, bool $requirePresent, array $records): array
+    {
+        $jobIds = $request['object_ids']['identity_import_job'] ?? [];
+        $artifacts = $this->store->identityLifecycleArtifacts($jobIds, $request['application_id'], $lock);
+        if ($jobIds === []) return $artifacts;
+        $rowIds = $this->sortedIds($artifacts['identity_import_row'] ?? []);
+        $invitationIds = $this->sortedIds($artifacts['import_invitation'] ?? []);
+        foreach ($artifacts['identity_import_row'] ?? [] as $row) {
+            if (!in_array((int) ($row['import_job_id'] ?? 0), $jobIds, true)
+                || (($row['result_invitation_id'] ?? null) !== null
+                    && !in_array((int) $row['result_invitation_id'], $invitationIds, true))) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 导入行未完整归属本轮任务或派生邀请', 400);
+            }
+        }
+        if ($requirePresent && !$request['partial_recovery'] && ($rowIds === [] || $invitationIds === [])) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: 导入验收必须包含实际导入行及其派生邀请', 400);
+        }
+        return $artifacts;
+    }
+
+    /** @param array<string,mixed> $request @param array<string,list<array<string,mixed>>> $records @return array<string,list<array<string,mixed>>> */
+    private function verifiedScimArtifacts(array $request, bool $lock, bool $requirePresent, array $records): array
+    {
+        $providerIds = $request['object_ids']['identity_provider'] ?? [];
+        $artifacts = $this->store->scimArtifacts($providerIds, $request['application_id'], $lock);
+        if ($providerIds === []) return $artifacts;
+        $identityIds = $this->sortedIds($artifacts['scim_identity'] ?? []);
+        $resourceIds = $this->sortedIds($artifacts['scim_resource'] ?? []);
+        foreach (['identity_provider_application', 'scim_token', 'scim_resource', 'identity_binding', 'provisioning_event'] as $type) {
+            foreach ($artifacts[$type] ?? [] as $row) {
+                if (!in_array((int) ($row['identity_provider_id'] ?? 0), $providerIds, true)) {
+                    throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: SCIM 派生对象不属于本轮身份源', 400);
+                }
+            }
+        }
+        foreach ($artifacts['scim_resource'] ?? [] as $row) {
+            if (!in_array((int) ($row['identity_id'] ?? 0), $identityIds, true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: SCIM 资源未归属本轮派生身份', 400);
+            }
+        }
+        foreach ($artifacts['identity_binding'] ?? [] as $row) {
+            if (!in_array((int) ($row['identity_id'] ?? 0), $identityIds, true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: SCIM 绑定未归属本轮派生身份', 400);
+            }
+        }
+        foreach ($artifacts['provisioning_event'] ?? [] as $row) {
+            $resourceId = (int) ($row['scim_resource_id'] ?? 0);
+            if ($resourceId > 0 && !in_array($resourceId, $resourceIds, true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: SCIM 事件未归属本轮资源', 400);
+            }
+        }
+        if ($requirePresent && !$request['partial_recovery']
+            && (count($artifacts['identity_provider_application'] ?? []) !== count($providerIds)
+                || count($artifacts['scim_token'] ?? []) !== count($providerIds)
+                || $identityIds === []
+                || $resourceIds === []
+                || count($artifacts['identity_binding'] ?? []) !== count($identityIds))) {
+            throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: SCIM 验收必须包含挂载、令牌、用户资源、绑定和派生身份全集', 400);
+        }
+        return $artifacts;
+    }
+
+    /** @param array<string,mixed> $request @param array<string,list<array<string,mixed>>> $records @return array<string,list<array<string,mixed>>> */
+    private function verifiedNonAiBusinessConsumerArtifacts(array $request, bool $lock, bool $requirePresent, array $records): array
+    {
+        $universe = $this->store->nonAiBusinessConsumerUniverse(
+            $request['prefix'],
+            $request['application_id'],
+            $request['scope_ids']['identity'],
+            $lock,
+        );
+        foreach (['application_business_action', 'resource', 'api_resource', 'api_route_binding', 'policy'] as $type) {
+            $actualIds = $this->sortedIds($universe[$type] ?? []);
+            $submittedIds = $this->sortedIds(array_map(static fn (int $id): array => ['id' => $id], $request['object_ids'][$type] ?? []));
+            if ($requirePresent && $actualIds !== $submittedIds) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SET_DENIED: 独立业务应用同前缀对象全集与提交集合不一致（' . $type . '），拒绝写入', 400);
+            }
+            if (!$requirePresent) $records[$type] = $universe[$type] ?? [];
+        }
+        foreach ([
+            'application_business_action',
+            'resource',
+            'api_resource',
+            'api_route_binding',
+            'policy',
+        ] as $type) {
+            $submittedIds = $requirePresent
+                ? $this->sortedIds($records[$type] ?? [])
+                : $this->sortedIds(array_map(static fn (int $id): array => ['id' => $id], $request['object_ids'][$type] ?? []));
+            $actualIds = [];
+            foreach ($request['object_request_ids'][$type] ?? [] as $requestId) {
+                foreach ($this->creationAuditActions($request, $type) as $action) {
+                    array_push($actualIds, ...$this->store->allCreationAuditIds($action, $type, $requestId, $request['prefix']));
+                }
+            }
+            $actualIds = array_values(array_unique($actualIds));
+            sort($actualIds);
+            if ($actualIds !== $submittedIds) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: 独立业务应用创建审计与提交对象集不一致', 400);
+            }
+        }
+        $policyIds = $request['object_ids']['policy'] ?? [];
+        foreach ($universe['policy_version'] ?? [] as $row) {
+            if ((int) ($row['application_id'] ?? 0) !== $request['application_id']
+                || !in_array((int) ($row['policy_id'] ?? 0), $policyIds, true)) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: 独立业务应用策略版本不属于本轮策略或应用', 400);
+            }
+        }
+        return ['policy_version' => $universe['policy_version'] ?? []];
     }
 
     /** @param array<string,mixed> $request @param array<string,list<array<string,mixed>>> $records @return array<string,list<array<string,mixed>>> */
@@ -1039,7 +1497,7 @@ final class AcceptanceFixtureService
             'oauth_client' => ['action' => 'oauth_client.create', 'resource_type' => 'oauth_client'],
             'cas_service' => ['action' => 'cas_service.create', 'resource_type' => 'cas_service'],
             'api_resource' => ['action' => 'api_resource.create', 'resource_type' => 'api_resource'],
-            'api_route_binding' => ['action' => 'api_route_binding.create', 'resource_type' => 'api_route_binding'],
+            'api_route_binding' => ['action' => 'api_route.observe', 'resource_type' => 'api_route_binding'],
             'policy' => ['action' => 'policy.create', 'resource_type' => 'policy'],
         ] as $type => $audit) {
             $requestIds = $request['object_request_ids'][$type] ?? [];
@@ -1050,11 +1508,13 @@ final class AcceptanceFixtureService
             $submittedIds = $requirePresent
                 ? $this->sortedIds($records[$type] ?? [])
                 : $this->sortedIds(array_map(static fn (int $id): array => ['id' => $id], $request['object_ids'][$type] ?? []));
+            $actualIds = [];
             foreach ($requestIds as $requestId) {
-                $actualIds = $this->store->allCreationAuditIds($audit['action'], $audit['resource_type'], $requestId, $request['prefix']);
-                if ($actualIds !== $submittedIds) {
-                    throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: OAuth/CAS 接口治理创建审计与提交对象集不一致', 400);
-                }
+                array_push($actualIds, ...$this->store->allCreationAuditIds($audit['action'], $audit['resource_type'], $requestId, $request['prefix']));
+            }
+            sort($actualIds);
+            if ($actualIds !== $submittedIds) {
+                throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED: OAuth/CAS 接口治理创建审计与提交对象集不一致（' . $type . '）', 400);
             }
         }
         $artifacts = $universe;
@@ -1105,7 +1565,7 @@ final class AcceptanceFixtureService
         if ($request['chain_id'] === 'organization-application-environment' && $request['contract_version'] === 2) {
             $universe = $this->store->organizationApplicationEnvironmentUniverse($request['prefix'], false);
             $residual = [];
-            foreach (['environment', 'admin_application_grant'] as $type) {
+            foreach (['environment', 'application_experience', 'admin_organization_grant', 'admin_application_grant'] as $type) {
                 $residual[$type] = count($universe[$type] ?? []);
             }
             $activeBusinessResidual = 0;
@@ -1118,19 +1578,55 @@ final class AcceptanceFixtureService
         $residual = [];
         foreach (array_keys($request['object_ids']) as $type) $residual[$type] = count($this->store->records($type, $request['object_ids'][$type], false, $request['prefix']));
         if ($request['chain_id'] === 'human-auth-session-mfa') {
-            $artifacts = $this->store->humanAuthArtifacts($request['object_ids']['identity'], $request['application_id'], false);
-            foreach (['identity_auth', 'auth_session', 'auth_refresh_token', 'mfa_factor', 'mfa_recovery_code'] as $type) {
-                $residual[$type] = count($artifacts[$type] ?? []);
+            $identityIds = $request['object_ids']['identity'] ?? [];
+            $identityRequestId = $request['human_auth_registration_request_id'];
+            $discoveredIdentityIds = $this->store->allCreationAuditIds(
+                'identity.register',
+                'identity',
+                $identityRequestId,
+                $request['prefix'],
+            );
+            $residual['identity'] = count($this->store->records('identity', $discoveredIdentityIds, false, $request['prefix']));
+            if ($identityIds !== []) {
+                $artifacts = $this->store->humanAuthArtifacts($identityIds, $request['application_id'], false);
+                foreach (['identity_auth', 'auth_verification', 'auth_challenge', 'auth_session', 'auth_refresh_token', 'mfa_factor', 'mfa_recovery_code', 'webauthn_credential'] as $type) {
+                    $residual[$type] = count($artifacts[$type] ?? []);
+                }
             }
         }
         if ($request['chain_id'] === 'identity-group-role-policy') {
             $residual['identity_group_member'] = count($this->store->identityGroupMembers($request['prefix'], $request['application_id'], false));
             $residual['identity_group_role'] = count($this->store->identityGroupRoles($request['prefix'], $request['application_id'], false));
+            $syncArtifacts = $this->store->directorySyncArtifacts(
+                $request['object_ids']['sync_connector'] ?? [],
+                $request['application_id'],
+                false,
+            );
+            foreach (['sync_run', 'sync_resource', 'directory_identity'] as $type) {
+                $residual[$type] = count($syncArtifacts[$type] ?? []);
+            }
+            $lifecycleArtifacts = $this->store->identityLifecycleArtifacts(
+                $request['object_ids']['identity_import_job'] ?? [],
+                $request['application_id'],
+                false,
+            );
+            foreach (['identity_import_row', 'import_invitation'] as $type) {
+                $residual[$type] = count($lifecycleArtifacts[$type] ?? []);
+            }
+            $scimArtifacts = $this->store->scimArtifacts(
+                $request['object_ids']['identity_provider'] ?? [],
+                $request['application_id'],
+                false,
+            );
+            foreach (['identity_provider_application', 'scim_token', 'scim_resource', 'identity_binding', 'provisioning_event', 'scim_identity'] as $type) {
+                $residual[$type] = count($scimArtifacts[$type] ?? []);
+            }
         }
         if ($request['chain_id'] === 'event-webhook-delivery') {
             $endpointIds = $request['object_ids']['webhook_endpoint'] ?? [];
             $actualDeliveries = $endpointIds === [] ? [] : $this->store->webhookDeliveries($endpointIds, $request['application_id'], false);
             $residual['webhook_delivery'] = count($actualDeliveries);
+            $residual['credential'] = count($this->store->records('credential', $request['object_ids']['credential'] ?? [], false, $request['prefix']));
             $residual['webhook_endpoint'] = count($this->store->records('webhook_endpoint', $endpointIds, false, $request['prefix']));
         }
         if ($request['chain_id'] === 'oauth-cas-api-governance') {
@@ -1144,9 +1640,23 @@ final class AcceptanceFixtureService
                 $residual[$type] = count($records[$type] ?? []) === 0 ? 0 : count($this->store->records($type, $this->sortedIds($records[$type]), false, ''));
             }
         }
-        foreach (['service_quota_bucket', 'service_invocation_operation'] as $type) {
-            $ids = array_values(array_filter(array_map(static fn (array $row): int => (int) ($row['id'] ?? 0), $records[$type] ?? [])));
-            $residual[$type] = $ids === [] ? 0 : count($this->store->records($type, $ids, false, ''));
+        if ($request['chain_id'] === 'non-ai-business-consumer') {
+            $universe = $this->store->nonAiBusinessConsumerUniverse(
+                $request['prefix'], $request['application_id'], $request['scope_ids']['identity'], false,
+            );
+            foreach (['application_business_action', 'resource', 'api_resource', 'api_route_binding', 'policy'] as $type) {
+                $residual[$type] = count($universe[$type] ?? []);
+            }
+            $policyVersionIds = $this->sortedIds($records['policy_version'] ?? []);
+            $residual['policy_version'] = $policyVersionIds === []
+                ? 0
+                : count($this->store->records('policy_version', $policyVersionIds, false, ''));
+        }
+        if ($request['chain_id'] === 'workload-credential-invocation') {
+            foreach (['service_quota_bucket', 'service_invocation_operation'] as $type) {
+                $ids = array_values(array_filter(array_map(static fn (array $row): int => (int) ($row['id'] ?? 0), $records[$type] ?? [])));
+                $residual[$type] = $ids === [] ? 0 : count($this->store->records($type, $ids, false, ''));
+            }
         }
         return $residual;
     }
@@ -1175,7 +1685,7 @@ final class AcceptanceFixtureService
     {
         $ids = $request['object_ids'];
         if ($request['chain_id'] === 'human-auth-session-mfa') {
-            foreach (['identity_auth', 'auth_session', 'auth_refresh_token', 'mfa_factor', 'mfa_recovery_code'] as $type) {
+            foreach (['identity_auth', 'auth_verification', 'auth_challenge', 'auth_session', 'auth_refresh_token', 'mfa_factor', 'mfa_recovery_code', 'webauthn_credential'] as $type) {
                 $ids[$type] = $this->sortedIds($records[$type] ?? []);
             }
         }
@@ -1184,6 +1694,20 @@ final class AcceptanceFixtureService
         }
         if ($request['chain_id'] === 'oauth-cas-api-governance') {
             foreach (['oauth_authorization_request', 'authorization_code', 'oauth_consent', 'oauth_grant', 'oauth_token', 'cas_login_request', 'cas_ticket', 'policy_version'] as $type) {
+                $ids[$type] = $this->sortedIds($records[$type] ?? []);
+            }
+        }
+        if ($request['chain_id'] === 'non-ai-business-consumer') {
+            $ids['policy_version'] = $this->sortedIds($records['policy_version'] ?? []);
+        }
+        if ($request['chain_id'] === 'identity-group-role-policy') {
+            foreach (['sync_run', 'sync_resource', 'directory_identity'] as $type) {
+                $ids[$type] = $this->sortedIds($records[$type] ?? []);
+            }
+            foreach (['identity_import_row', 'import_invitation'] as $type) {
+                $ids[$type] = $this->sortedIds($records[$type] ?? []);
+            }
+            foreach (['identity_provider_application', 'scim_token', 'scim_resource', 'identity_binding', 'provisioning_event', 'scim_identity'] as $type) {
                 $ids[$type] = $this->sortedIds($records[$type] ?? []);
             }
         }
@@ -1219,7 +1743,7 @@ final class AcceptanceFixtureService
                     // count-only audit context, never protocol field names.
                     // Keep the exception at the concrete child level: their
                     // descendants remain recursively inspected.
-                    $countOnlyTypes = ['identity_auth', 'auth_session', 'auth_refresh_token', 'mfa_factor', 'mfa_recovery_code', 'oauth_authorization_request', 'authorization_code', 'oauth_consent', 'oauth_grant', 'oauth_token', 'cas_login_request', 'cas_ticket'];
+                    $countOnlyTypes = ['identity_auth', 'auth_verification', 'auth_challenge', 'auth_session', 'auth_refresh_token', 'mfa_factor', 'mfa_recovery_code', 'webauthn_credential', 'oauth_authorization_request', 'authorization_code', 'oauth_consent', 'oauth_grant', 'oauth_token', 'cas_login_request', 'cas_ticket'];
                     $artifactCollection = is_array($item) && in_array($name, $countOnlyTypes, true);
                     $artifactCount = is_int($item) && $item >= 0 && in_array($name, $countOnlyTypes, true);
                     if (!$artifactCollection && !$artifactCount && preg_match('/(?:password|client[_-]?secret|(?:code[_-]?)?verifier|code[_-]?challenge|pkce|cas[_-]?ticket|authorization[_-]?code|csrf(?:[_-]?token)?|nonce|access[_-]?token|refresh[_-]?token|challenge[_-]?token|totp(?:[_-]?(?:secret|code))?|recovery[_-]?codes?|confirmation|request[_-]?id)/', $name) === 1) {
@@ -1293,6 +1817,7 @@ final class AcceptanceFixtureService
             'workload_client' => '服务调用身份',
             'service' => '平台服务',
             'service_action' => '服务动作',
+            'identity' => '登录身份',
             default => $type,
         };
     }

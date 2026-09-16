@@ -38,10 +38,13 @@
 
 - 正常升级路径为 `0.7.1 → 0.7.2`：先精确核验 `001–038` 的迁移账本、账本结构、
   `sand_iam_service_grant.data_class` 原始结构以及修订 038 的保留索引，再只执行
-  `039_service_grant_nullable_data_class.pgsql`。
+  `039_service_grant_nullable_data_class.pgsql` 和 `040_passkey_auth_challenge_identity.pgsql`。
 - `039` 解除 `data_class` 的非空约束并保留 `varchar(32)` 类型、`internal` 默认值、现有数据及
   检查约束，使持久化结构与公开接口中“空值表示授权不附加数据分级限制”的语义一致。
-- fresh install 直接创建相同的可空列；升级载荷不会重放 001–038，也不会修改已发布迁移文件。
+- `040` 允许匿名 Passkey 挑战在校验成功后绑定解析出的身份；其他认证挑战仍必须始终绑定身份，
+  使登录成功审计、会话和验收清理能引用同一真实 challenge。迁移核对 PostgreSQL 约束定义时
+  先移除类型转换再压缩空白，避免 `::text OR identity_id ...` 被合并成错误的类型名。
+- fresh install 直接创建相同的列和挑战约束；升级载荷不会重放 001–038，也不会修改已发布迁移文件。
 
 ## 0.7.1（待发布）
 

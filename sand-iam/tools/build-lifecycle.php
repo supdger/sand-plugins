@@ -57,6 +57,7 @@ $migrations = [
     '037_initialization_draft.pgsql',
     '038_auth_rate_limit_retention.pgsql',
     '039_service_grant_nullable_data_class.pgsql',
+    '040_passkey_auth_challenge_identity.pgsql',
 ];
 
 /** @return non-empty-string */
@@ -245,18 +246,22 @@ $installNames = array_slice($migrations, 4);
 $installSource = $base . migrationPayload($sourceDirectory, $installNames);
 // A SandPackage upgrade must never replay historical lifecycle input. 0.7.2
 // admits only a completed 0.7.1 ledger through 038, then applies the new 039
-// migration exactly once. The admission gate is lifecycle input rather
+// and 040 migrations exactly once. The admission gate is lifecycle input rather
 // than a new migration revision, so it cannot alter the published ledger.
 $updateNames = [
     '039_service_grant_nullable_data_class.pgsql',
+    '040_passkey_auth_challenge_identity.pgsql',
 ];
 $updatePreflight = readRequired($root . '/lifecycle/update-071-to-072-preflight.pgsql');
 $updateMigration = readRequired($sourceDirectory . '/039_service_grant_nullable_data_class.pgsql');
+$passkeyChallengeMigration = readRequired($sourceDirectory . '/040_passkey_auth_challenge_identity.pgsql');
 $updateSource = "BEGIN;\n"
     . "-- lifecycle source: lifecycle/update-071-to-072-preflight.pgsql\n"
     . rtrim($updatePreflight) . "\n"
     . "-- lifecycle source: migrations/039_service_grant_nullable_data_class.pgsql\n"
     . withoutOuterTransaction($updateMigration, $updateNames[0])
+    . "-- lifecycle source: migrations/040_passkey_auth_challenge_identity.pgsql\n"
+    . withoutOuterTransaction($passkeyChallengeMigration, $updateNames[1])
     . "COMMIT;\n";
 $permissions = controllerPermissions($package);
 $catalog = generatedPermissionCatalog(readRequired($sourceDirectory . '/021_admin_permission_catalog.pgsql'));

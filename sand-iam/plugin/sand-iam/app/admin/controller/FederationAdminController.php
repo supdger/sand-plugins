@@ -57,7 +57,7 @@ final class FederationAdminController
         $config = $request->post('config', []); $mapping = $request->post('attribute_mapping', []);
         if (!is_array($config) || !is_array($mapping)) throw new ApiException('SAND_IAM_FEDERATION_PROVIDER_CONFIGURATION_INVALID', 400);
         (new FederationService())->configureProvider((int) $provider->id, (string) $request->post('provider_type', ''), $config, $mapping, (string) $request->post('conflict_policy', 'reject'), $this->requestId($request));
-        return json(['id' => (int) $provider->id]);
+        return json(['code' => 200, 'msg' => '配置成功', 'data' => ['id' => (int) $provider->id]]);
     }
 
     #[Permission('SandIAM 身份源挂载应用', 'sand_iam:federation:mount')]
@@ -104,7 +104,9 @@ final class FederationAdminController
                 return ['resource_id' => $issued['id'], 'result' => $issued];
             },
         );
-        return json($result['result'])->withHeader('Cache-Control', 'no-store')->withHeader('Pragma', 'no-cache');
+        return json(['code' => 200, 'msg' => '签发成功', 'data' => $result['result']])
+            ->withHeader('Cache-Control', 'no-store')
+            ->withHeader('Pragma', 'no-cache');
     }
 
     #[Permission('SandIAM SCIM 令牌列表', 'sand_iam:scim:token_index')]
@@ -132,7 +134,8 @@ final class FederationAdminController
                 return ['resource_id' => $tokenId, 'result' => ['token_id' => $tokenId, 'revoked' => true]];
             },
         );
-        return json(['revoked' => true])->withHeader('Cache-Control', 'no-store');
+        return json(['code' => 200, 'msg' => '撤销成功', 'data' => ['revoked' => true]])
+            ->withHeader('Cache-Control', 'no-store');
     }
 
     private function assertProviderManage(Request $request, IdentityProvider $provider): void

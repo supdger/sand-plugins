@@ -1,16 +1,16 @@
 # SandIAM 终极能力差距与验收矩阵
 
-> 当前复核日期：2026-09-12；2026-09-08 仅为原子定义基线。状态只认当前源码、当前候选、自动测试和可定位的运行证据；“有表/有页面/能构建”不等于业务闭环通过。48 个 FLOW 原子的唯一名称、完成定义、证据边界和七链映射见[终极验收原子账本](sand-iam-terminal-acceptance-ledger.md)；用户体验硬门槛见[产品体验与闭环交付契约](sand-iam-product-experience-contract.md)。
+> 当前复核日期：2026-09-16；2026-09-08 仅为原子定义基线。状态只认当前源码、当前候选、自动测试和可定位的运行证据；“有表/有页面/能构建”不等于业务闭环通过。48 个 FLOW 原子的唯一名称、完成定义、证据边界和七链映射见[终极验收原子账本](sand-iam-terminal-acceptance-ledger.md)；用户体验硬门槛见[产品体验与闭环交付契约](sand-iam-product-experience-contract.md)。
 
 ## 1. 当前结论
 
-当前 A′ 已提交为 `61a7f13821980deca8479f9c9e5e872be92cf72a`，独立范围复核 ACCEPT，未 push；来源修复仍未提交。Astra 对来源修复最终 ACCEPT（P0/P1/P2=0），但主树 integrity 仅 **25/26**，clean/tracked 检查失败。v12 archive SHA `80293b633e22a9f81cd5aebf2f2b96889851df27ab113182c2b931a59f4ddddb` 内容自洽，却因 62 个 ignored 来源文件缺失于可追溯来源而正式 REJECT；Composer 58 与 TypeScript `dist` 4 已双隔离重建并完成锁校验。
+当前权威源码为未提交的 0.7.2 工作树；review-only v17 ZIP 有 689 项，SHA-256 为 `b214e3aefa6f2879f063fa97becd6116636ff84bda729a8bb83c749a70a3cdf8`，重复构建字节一致，package integrity **25/26**，唯一失败是 clean/tracked 来源。它不是正式发布候选，D01/D02 仍未通过。
 
-Endurance v2 已按 `write-gate begin --replace` 归档 checkpoint：v1 审计 **4P1 + 3P2**，v2 三批修复后由 Astra 工具最终 **ACCEPT（P0/P1/P2=0）**。该结果仅是离线 contract/tool 结构 ACCEPT；它受协作式可信环境边界约束，哈希链非签名，Git 未独立重建，collector/probe 真实性仍依赖受控环境、独立保管和可信对端。所有 fixture 均非 86400 秒，真实 24 小时尚未开始（**0**）；external validators fixture 修复的离线结构 ACCEPT 不代表 ready。发布仍 **0/10**，FLOW **28/48**，F/L/D 不变。
+Endurance v2 的历史离线 contract/tool 结构已由 Astra 验收，但所有 fixture 均短于 86400 秒，真实同一最终候选 24 小时仍未开始；该证据不使稳定性门槛通过。
 
-只读 demo 状态为 86 tables、迁移账本 38 rows、max revision 37、无038，runtime 仍为 0.7.0；复核时间窗口内未见可见写入，但该只读观察不能证明窗口外或此前无写入。两次测试选择器偏差已保留为证据限制。B′/C′/D′ 尚未执行，G 未授权。当前仍未完成宿主生命周期、浏览器、业务闭环、部署或线上验证。
+当前 demo 已使用同一 v17 完成 0.7.0→0.7.1→0.7.2、同版本安全拒绝、卸载和 fresh install；registry 为 `0.7.2/state=1`，SandIAM 表 86、迁移账本 40/max39，运行载荷与 v17 snapshot 一致。Webman captcha、Vite、后台登录和平台管理员 12/12 一级入口已通过，D03 与“安装升级”发布门槛据此通过。
 
-此前宿主同步、worker、401/503 和前端 200 的记录仍是历史证据，不构成当前宿主验收；本轮未重新验证宿主数据库状态。登录后 HTTP、标准外部 IdP/LDAP/NAS、三角色浏览器、业务闭环、备份恢复和部署均不得判定通过。SandAI 已单独完成 4/4 隔离生命周期，不可据此替代 SandIAM 宿主、浏览器或业务验收。
+平台管理员入口通过不替代客户主体管理员、应用管理员和独立应用用户的真实任务。标准外部 IdP/LDAP/NAS、四角色浏览器、七条业务链、备份恢复和部署仍不得判定通过；SandAI 的独立生命周期也不替代 SandIAM 的机器服务或非 AI 业务接入。
 
 本轮体验契约对应的源码已完成并通过静态检查；这不等于动态验收。直到以下条件在真实宿主逐项通过前，管理端不得称为“完成”：总览七个模块使用行业中立用途说明和五种用户状态；`/sand-iam/getting-started` 能按共同步骤和所选目标连续完成；所有可点击入口不出现 404；应用用户功能不伪装为后台配置；七条业务链均有允许、拒绝、审计、撤销或恢复与夹具清理证据。
 
@@ -33,7 +33,7 @@ Endurance v2 已按 `write-gate begin --replace` 归档 checkpoint：v1 审计 *
 | API/路由治理 | service/action 语义目录、API 目录、route binding、OpenAPI 导入及停用关闭失败已通过 PostgreSQL 集成 | 本地服务级通过，真实业务中间件闭环未验收 | 真实业务路由允许/拒绝、数据范围、策略模拟和决策解释 |
 | SDK/中间件 | PHP、TypeScript、Dart/Flutter SDK，Webman 中间件，CLI 与管理 OpenAPI 候选 | 自动测试通过，真实业务应用接入未验收 | 三套 SDK 与标准 OIDC 示例真实接入并完成允许/拒绝链路 |
 | 审计/Webhook | 签名/重试/幂等/轮换、固定事件目录和投递状态已通过 PostgreSQL 集成 | 本地服务级通过，并发 worker/真实 HTTPS/告警出口未验收 | 统一事件、Webhook 事务生产者、保留/归档/恢复和告警出口 |
-| 管理与自助体验 | 控制面页面在实施，自助 API 候选；UX-01 未验收 | 未闭环 | 平台管理员、应用管理员、终端用户三角色真实浏览器闭环；应用品牌、登录/注册/恢复编排完整 |
+| 管理与自助体验 | 控制面页面在实施，自助 API 候选；UX-01 未验收 | 未闭环 | 平台管理员、客户主体管理员、应用管理员、独立应用用户四角色真实浏览器闭环；应用品牌、登录/注册/恢复编排完整 |
 | SandAI/业务联调 | Adapter/fail-closed 契约；A-01 未开始 | 未闭环；L03 证据未来从 `sand_ai` 工作区回填，本轮不核验、不计分 | SandAI 真实 API 放行/拒绝/双侧审计；非 AI 应用 SDK 接入 |
 | 发布一致性 | A′ commit `61a7f138…` 已独立 ACCEPT 且未 push；v12 archive `80293b63…` 内容自洽；Composer 58、TS `dist` 4 双隔离重建/锁校验完成；Astra 来源修复 ACCEPT（P0/P1/P2=0） | 正式来源仍 REJECT（62 ignored 来源文件）；主树 integrity 25/26 仅 clean/tracked 失败；B′/C′/D′ 未执行 | 当前版本在空隔离宿主完成安装/连续升级/卸载、备份恢复、安全基线和发布包复核 |
 
@@ -55,6 +55,8 @@ Endurance v2 已按 `write-gate begin --replace` 归档 checkpoint：v1 审计 *
 | Webhook | `webhook`、`webhook_secret`、`webhook_delivery` |
 
 每个对象必须以 `organization_id` 或 `application_id` 明确边界；秘密只保存哈希或加密信封；安全事件追加写，不能软删除事实。
+
+C03 登录/MFA live 链自行创建本轮专用客户主体、应用和认证策略，不读取预置应用用户 Authorization。注册、普通登录和 MFA challenge 验证分别捕获本轮 token；失败恢复按组织、应用、认证策略、注册、登录、MFA 启动或 MFA 验证后的已捕获阶段选择唯一清理分支。清理端以 identity/application 发现完整认证派生集合，其中包括 `auth_challenge`，再按 challenge、恢复码、因子、刷新令牌、会话、认证凭据、身份和认证策略的外键顺序删除；应用和客户主体作为停用审计锚点保留，active residual 必须为零。完整成功链仍要求先通过正常撤销接口使三条会话和 MFA 因子失效；中断链必须显式使用 `partial_recovery`。
 
 ## 4. API 路由权威来源
 
@@ -114,16 +116,16 @@ Endurance v2 已按 `write-gate begin --replace` 归档 checkpoint：v1 审计 *
 | 模块实现 | **20/20** | [模块实现关口归位审计](sand-iam-module-implementation-gate-audit-2026-09-08.md)保持 P01–P20 名称和 20 项分母不变；P12–P20 的权威源码、migration、公开行为/契约和适用构建证据满足 P；P14、P19 已独立最终复核 ACCEPT |
 | 正式 FLOW 验收 | **0/7** | F01–F07 是真实页面、宿主 API、允许/拒绝、审计、撤销/恢复、清理零残留、同候选可重复复核七个纵向维度；它们独立于升级票据七项和七条业务链，当前均未全量通过 |
 | 本地业务闭环 | **0/4** | L01 管理员配置、L02 应用用户认证、L03 SandAI（证据未来从 `sand_ai` 工作区回填；本轮不核验、不计分）、L04 非 AI 业务应用均未形成当前完整证据 |
-| 可上线部署 | **0/8** | D01–D08 的干净可重建源码、完整插件包、当前宿主生命周期、标准客户端/外部系统、三角色 UI、备份恢复、安全并发、回滚发布均未通过 |
+| 可上线部署 | **1/8** | D03 当前宿主生命周期已通过；D01/D02、标准客户端/外部系统、四角色 UI、备份恢复、安全并发和回滚发布仍未通过 |
 
-因此完整目标为 **28/48（58.3%）**。本次仅对模块实现门槛归位：P14 的真实 service PostgreSQL 行为与 P19 的 `037` 迁移执行本轮均未在数据库重跑；真实供应商/目录、标准客户端、宿主 HTTP、浏览器、业务应用、恢复和部署仍分别留在 F/L/D，故 F **0/7**、L **0/4**、D **0/8** 不变。P20 已由自助模块自身的生产 service 公开行为测试计分，不借 P03/P04 认证/MFA 测试替代。三条可计时旅程及 Casdoor 对照规则见[开发者旅程验收](sand-iam-developer-journey-acceptance.md)。
+因此完整目标为 **29/48（60.4%）**：R **8/9**、P **20/20**、F **0/7**、L **0/4**、D **1/8**。D03 的生命周期证据不增加 F/L，也不使四角色、协议、业务接入、恢复、稳定性或发布包通过。三条可计时旅程及 Casdoor 对照规则见[开发者旅程验收](sand-iam-developer-journey-acceptance.md)。
 
 ### 6.1 当前阻断与独立待办
 
 - **静态复验：** 当前 0.7.2 未提交源码已完成 `0.7.1 → 0.7.2` 精确 preflight→039，既有 `001–038` 不变；PHP 非数据库测试 **177/177**、Dart **62/62**、发布卫生 **16/16**、包完整性 **25/26**。唯一包失败项是工作树尚未形成 clean tracked HEAD，不能据此生成正式来源候选；历史 interim ZIP 继续仅作历史摘要。
-- **动态 PostgreSQL：** 当前只读状态为 86 tables、迁移账本 38 rows、max revision 37、无038；runtime `state=1/stage=completed` 使 C 不适用。尚未完成隔离安装、升级、卸载或正常 SandPackage 生命周期，不能声称当前生命周期通过。
-- **产品端：** 当前演示宿主仍是 0.7.1 插件载荷；SandAdmin 后台前端依赖已修复并可启动，但 0.7.2 尚未受控同步或安装，因此该运行状态不能作为 0.7.2 宿主验收。旧实现记录和旧浏览器截图同样不计当前候选证据。
-- **宿主恢复：** runtime `state=1/stage=completed`，C 失败升级 recovery 不适用；只读 DB 为 86 tables、迁移账本 38 rows、max revision 37、无 038。D/E/H–L 未执行，候选替换、重试、数据库生命周期、浏览器、七链和部署均未通过，G 未授权。
+- **动态 PostgreSQL：** 当前 SandPackage 生命周期已通过；后续七链、四角色、协议互操作、并发和备份恢复仍须按各自授权与证据口径执行。
+- **产品端：** 当前 0.7.2 平台管理员登录及一级入口已通过；客户主体管理员、应用管理员、独立应用用户的多视口任务、角色边界、错误恢复和撤权仍未执行。
+- **业务链：** C01 管理 API 真实切片已在工作树源码和当前 demo 上通过 **13/13**，包括授权、越权拒绝、撤权立即生效、审计和零残留；浏览器维度与 clean 最终候选尚未补齐，因此不把该切片冒充完整 C01。fresh-install demo 仍缺少 C02–C07 所需的组织、应用、环境、身份、角色、资源、工作负载客户端和认证配置，必须通过正常业务 API 创建受控前置并精确清理；完整七链仍为 **0/7**。
 
 卡密签发、商业许可和设备激活继续归独立 SandLicense，边界见[终极产品目标](../product/sand-iam-terminal-product-goal.md)。
 

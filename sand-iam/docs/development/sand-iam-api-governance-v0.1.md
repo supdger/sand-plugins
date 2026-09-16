@@ -86,9 +86,12 @@ Content-Type: application/json
   "api_code": "record.detail",
   "api_version": "v1",
   "attributes": {
-    "organization_id": 42,
-    "owner_identity_id": 101,
+    "request_channel": "api",
     "record_state": "open"
+  },
+  "entity_attributes": {
+    "organization_id": 42,
+    "owner_identity_id": 101
   }
 }
 ```
@@ -108,14 +111,16 @@ Content-Type: application/json
   "resource_code": "record",
   "action": "record.read",
   "operation": "read",
-  "risk_level": "medium"
+  "risk_level": "medium",
+  "scope_checked": true
 }
 ```
 
 - 身份、应用、接口、资源、策略任一停用都必须拒绝。
 - 本地应用会话不能跨应用；OAuth 令牌同时校验 issuer、签名、过期时间、撤销状态、application、audience 和所需 scope。
 - 没有策略或路由冲突一律拒绝；允许和拒绝都进入 SandIAM 审计。
-- `scope` 是业务后端必须执行的限制，不是给前端自行决定是否安全的提示。
+- `attributes` 是策略选择上下文，`entity_attributes` 只能来自后端已加载的单个真实对象，二者不能用请求参数互相代替。
+- 传入 `entity_attributes` 后，SandIAM 复核 `scope`、记录 `scope.*` 审计并返回 `scope_checked=true`；范围不匹配返回正常 deny 决定。业务后端仍须把 `scope` 当作限制，不能交给前端决定是否安全。
 
 ## 4. Webman 中间件
 
@@ -162,7 +167,7 @@ Route::post('/api/example/v1/records/{id}/archive', [RecordController::class, 'a
 
 导出、批量修改和批量删除使用 `mode: 'collection'`，并由 resolver 返回完整已加载对象集合；集合内任一对象越权即默认拒绝，不能只校验第一条或把请求体的 ID/owner 当作对象属性。`list/read/update/delete/export/batch` 都按接口目录的 `operation` 进入同一 scope 审计。`create` 没有待加载的新对象时，resolver 必须加载可信的服务器侧父资源（如所属组织、项目或业务记录）预检；禁止先写入新对象再补做范围校验。
 
-非 Webman 的 PHP 业务端可使用 SDK 的 `authorizeEntity()` 或 `authorizeCollection()`：两者先调用 SandIAM 完成粗粒度授权，再只用已加载对象经属性回调产生的字段匹配 scope；批量任一对象不匹配即抛出 `SAND_IAM_RESOURCE_SCOPE_DENIED`。它用于无法挂载 Webman 中间件的接入方；需要 SandIAM 记录实体级 `scope.*` 审计时，仍应优先使用插件的 `EntityScopeGuard`。
+非 Webman 的 PHP 业务端可使用 SDK 的 `authorizeEntity()` 或 `authorizeCollection()`。`authorizeEntity()` 先从已加载对象解析实体属性，把它与路由属性分字段提交给 SandIAM；SandIAM 完成粗粒度授权后复核 scope，并用同一 request ID 写入 `scope.allowed` 或 `scope.denied`。SDK 只接受带 `scope_checked=true` 的允许结果，并在本地再次匹配返回的 scope；旧服务端或未确认复核的结果按协议错误关闭。`authorizeCollection()` 仍先做粗粒度授权，再对完整已加载集合逐项本地匹配，任一对象不匹配即抛出 `SAND_IAM_RESOURCE_SCOPE_DENIED`；需要逐对象 SandIAM `scope.*` 审计的批量路由应使用插件的 `EntityScopeGuard`。
 
 `application_code` 只在客户主体内唯一，因此远程 API、SDK 和中间件配置都使用 `organization_code + application_code`。只有本地应用会话可以从已验证会话反查应用；如果调用方同时提供代码，也必须与会话所属应用完全一致。
 

@@ -26,6 +26,10 @@ spl_autoload_register(static function (string $class): void {
     }
 }, true, true);
 
+if (class_exists(\Webman\Config::class) && function_exists('config')) {
+    \plugin\SandIam\app\support\PluginConfigAlias::load();
+}
+
 /**
  * 过渡期双向类别名：源码已改为 plugin\sandadmin。
  * - 新宿主只有 sandadmin 时，把残留的 saiadmin 引用别名过去；

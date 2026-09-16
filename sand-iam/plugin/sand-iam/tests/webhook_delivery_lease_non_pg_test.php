@@ -124,6 +124,10 @@ namespace {
         $result = $service->deliverBatch(1);
         if ($result[$attempts === 0 ? 'retried' : 'dead'] !== 1) throw new \RuntimeException('retry outcome changed');
     }
+    $webhookServiceSource = (string) file_get_contents(dirname(__DIR__) . '/app/service/WebhookService.php');
+    if (preg_match('/function retry\\b[\\s\\S]*?attempt_count\\s*[\'"]?\\s*=>\\s*0[\\s\\S]*?function deliver\\b/', $webhookServiceSource) === 1) {
+        throw new \RuntimeException('manual retry resets the cumulative delivery attempt number');
+    }
     seed(1);
     WebhookDelivery::$rows[1]->save(['status' => 2, 'locked_until' => date('Y-m-d H:i:s', Clock::$now - 1)]);
     NativeWebhookHttpAdapter::$send = static fn (): array => ['status' => 200, 'body' => 'ok'];

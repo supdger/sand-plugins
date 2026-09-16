@@ -8,7 +8,8 @@ SandAdmin 插件、不会创建数据库或表，也没有默认账号、token �
 1. 在已创建的**非生产** PostgreSQL 数据库中，经环境负责人授权后执行 `schema.pgsql`；它只创建
    `standalone_*` consumer 表，绝不创建 `sand_iam_*` 或 `sa_*` 表。
 2. 复制 `.env.example` 到受控环境变量注入方式，填写现有 PostgreSQL DSN、数据库账号、SandIAM 地址及已登记的
-   组织/应用代码。DSN 不是 `pgsql:`，缺少配置，或任一 consumer 表不存在时，应用会拒绝请求；不会自动建库、建表或补数据。
+   组织/应用代码及两个已登记的 API code。DSN 不是 `pgsql:`，缺少配置，API code 重复，或任一 consumer 表不存在时，
+   应用会拒绝请求；不会自动建库、建表或补数据。验收环境可为 API code 使用受控验收前缀，业务路由不因此变化。
 3. 在本目录执行 `composer install`。该命令会生成本地 `vendor/`；它是可再生依赖目录，已被 `.gitignore`
    排除，不能纳入源码或发布包。`composer.json` 使用本仓 PHP SDK 的本地 path repository；这不表示
    Composer Registry 已发布该 SDK。
@@ -22,7 +23,8 @@ SandAdmin 插件、不会创建数据库或表，也没有默认账号、token �
 - `POST /items/{id}/close`：要求 `Authorization: Bearer <应用用户 token>` 与 8–96 位 `X-Request-Id`。
   请求体只能为空对象，若含 `organization_id`、`owner_identity_id`、`scope` 或 `attributes` 会被拒绝。
 
-关闭操作在一个事务中对真实对象 `SELECT … FOR UPDATE`，用 SDK `authorizeEntity` 根据该对象的数据库组织/所有者字段授权，
+关闭操作在一个事务中对真实对象 `SELECT … FOR UPDATE`，用 SDK `authorizeEntity` 根据该对象的数据库组织/所有者字段授权；
+实体属性与路由属性分字段提交，SandIAM 用同一 request ID 记录粗粒度 `authorize.*` 和实体级 `scope.*` 审计，SDK 还会本地复核返回 scope。
 再用 `state='open' AND version=:version` 完成 `open → closed`。deny、网络故障、协议无效、并发变化和审计写入失败均回滚并拒绝；
 业务审计只存 SHA-256 截断引用，不存 access token、组织/所有者原值或秘密。read allow/deny、close deny、认证/撤销拒绝和
 授权异常均由独立 audit connection 写入，不会随 close 事务回滚；close allow 审计仍在业务事务中。

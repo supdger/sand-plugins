@@ -10,7 +10,7 @@ final class SandIamContextVerifier implements ContextVerifier
     {
         $client = new SandIamClient($config->iamBaseUrl, $config->organizationCode, $config->applicationCode);
         $this->verifyContext = $verifyContext ?? static fn(string $context, string $requestId): array =>
-            $client->verifyContext($context, ProviderProtocol::SERVICE_CODE, ProviderProtocol::AUDIENCE, [ProviderProtocol::ACTION], null, $requestId . '-verify');
+            $client->verifyContext($context, $config->serviceCode, $config->audience, [$config->action], null, $requestId . '-verify');
     }
     /** @return array<string,mixed> */
     public function verify(string $context, string $requestId): array

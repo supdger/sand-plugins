@@ -11,6 +11,8 @@ final class Controller
         private readonly Repository $repository,
         private readonly AuditWriter $auditWriter,
         private readonly mixed $authorize,
+        private readonly string $readApiCode = 'standalone_work_item.read',
+        private readonly string $closeApiCode = 'standalone_work_item.close',
     ) {}
 
     /** @param array<string,string> $headers @return array{status:int,body:array<string,mixed>} */
@@ -25,7 +27,7 @@ final class Controller
                 return $this->response(200, ['status' => 'ok']);
             }
             if (preg_match('#^/items/([1-9][0-9]*)$#', $path, $matches) === 1 && $method === 'GET') {
-                $action = 'standalone_work_item.read';
+                $action = $this->readApiCode;
                 $requestId = $this->requestId($headers);
                 $token = $this->bearerToken($headers);
                 $item = $this->repository->find($this->itemId($matches[1]));
@@ -34,7 +36,7 @@ final class Controller
                 return $this->itemResponse($item);
             }
             if (preg_match('#^/items/([1-9][0-9]*)/close$#', $path, $matches) === 1 && $method === 'POST') {
-                $action = 'standalone_work_item.close';
+                $action = $this->closeApiCode;
                 $requestId = $this->requestId($headers);
                 $this->assertSafeBody($body);
                 $token = $this->bearerToken($headers);
@@ -44,6 +46,7 @@ final class Controller
                     $id,
                     fn (WorkItem $loaded): string => ($this->authorize)($token, $loaded, $action, $requestId),
                     $this->auditWriter,
+                    $action,
                     $requestId,
                 );
                 return $this->itemResponse($item);

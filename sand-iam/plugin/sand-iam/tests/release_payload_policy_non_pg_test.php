@@ -76,6 +76,8 @@ $checks = [
     'PHP plural tests directory is excluded' => !in_array('plugin/sand-iam/tests/release_payload_policy_non_pg_test.php', $payload, true),
     'standalone consumer local Composer vendor tree is excluded without excluding shipped dependencies' => sandIamPayloadExcluded('examples/webman-business-app/standalone/vendor/autoload.php')
         && sandIamPayloadExcluded('examples/webman-business-app/standalone/vendor/acme/package/src/Consumer.php')
+        && sandIamPayloadExcluded('examples/machine-service-client/provider/vendor/autoload.php')
+        && sandIamPayloadExcluded('examples/machine-service-client/provider/vendor/acme/package/src/Provider.php')
         && !sandIamPayloadExcluded('plugin/sand-iam/vendor/autoload.php')
         && !sandIamPayloadExcluded('sdk/typescript/dist/index.js'),
     'public root README is included' => in_array('README.md', $payload, true),

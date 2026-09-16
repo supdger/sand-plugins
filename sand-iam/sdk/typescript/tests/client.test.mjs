@@ -348,6 +348,7 @@ for (const request of workloadRequests.slice(1)) {
 }
 
 const managementRequests = []
+const routePreviewHash = 'a'.repeat(64)
 const managementClient = new SandIamManagementClient({
   baseUrl: 'https://iam.example.test',
   administratorToken: () => 'sandadmin-session-token',
@@ -358,14 +359,17 @@ const managementClient = new SandIamManagementClient({
       ? [{ code: 'github_oauth2', name: 'GitHub OAuth 应用' }]
       : path.endsWith('/credential/issue')
         ? { id: 7, key_prefix: 'siam_wc_', credential: 'one-time-credential' }
+        : path.endsWith('/developer/route-manifest/preview')
+          ? { preview_hash: routePreviewHash }
         : { preview_hash: 'preview-1', route_sync: { created: 1 } }
     return new Response(JSON.stringify({ code: 200, data }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   },
 })
-const routePreview = await managementClient.routeSyncPreview({ operation_id: 'route-sync-op-1', route_manifest: { format: 'sand-iam.route-sync/v1' } }, 'management-preview-1')
-assert(routePreview.preview_hash === 'preview-1', 'route sync preview must use onboarding preview')
-const routeApply = await managementClient.routeSyncApply({ manifest: { operation_id: 'route-sync-op-1', route_manifest: { format: 'sand-iam.route-sync/v1' } }, previewHash: 'preview-1', requestId: 'management-apply-1' })
-assert(routeApply.route_sync.created === 1, 'route sync apply must use onboarding apply')
+const routeManifest = { format: 'sand-iam.route-sync/v1', organization_code: 'sand', application_code: 'app', environment_code: 'production', routes: [] }
+const routePreview = await managementClient.routeSyncPreview(routeManifest, true, 'management-preview-1')
+assert(routePreview.preview_hash === routePreviewHash, 'route sync preview must use the route-manifest preview endpoint')
+const routeApply = await managementClient.routeSyncApply({ manifest: routeManifest, previewHash: routePreviewHash, requestId: 'management-apply-1', disableMissing: true })
+assert(routeApply.route_sync.created === 1, 'route sync apply must use the route-manifest apply endpoint')
 const issuedCredential = await managementClient.credentialIssue({ workloadClientId: 7, name: 'production', requestId: 'credential-issue-1' })
 assert(issuedCredential instanceof SandIamCredentialResult && issuedCredential.secretAvailable && issuedCredential.revealSecretOnce() === 'one-time-credential', 'management client did not protect one-time credential handoff')
 assert(JSON.stringify(issuedCredential).includes('one-time-credential') === false, 'credential result JSON leaked one-time secret')

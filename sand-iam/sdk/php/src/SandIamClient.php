@@ -41,17 +41,37 @@ final class SandIamClient
         string $apiVersion = 'v1',
         string $requestId = '',
     ): array {
+        return $this->requestDecision($accessToken, $apiCode, $attributes, $apiVersion, $requestId);
+    }
+
+    /**
+     * @param array<string,mixed> $attributes
+     * @param array<string,mixed>|null $entityAttributes
+     * @return array<string,mixed>
+     */
+    private function requestDecision(
+        string $accessToken,
+        string $apiCode,
+        array $attributes,
+        string $apiVersion,
+        string $requestId,
+        ?array $entityAttributes = null,
+    ): array {
         if ($accessToken === '' || $apiCode === '') {
             throw new SandIamException('SAND_IAM_SDK_INVALID_ARGUMENT', '访问令牌和接口代码不能为空', 0);
         }
         $requestId = $requestId !== '' ? substr($requestId, 0, 96) : bin2hex(random_bytes(16));
-        $payload = json_encode([
+        $body = [
             'organization_code' => $this->organizationCode,
             'application_code' => $this->applicationCode,
             'api_code' => $apiCode,
             'api_version' => $apiVersion,
             'attributes' => $attributes,
-        ], JSON_THROW_ON_ERROR);
+        ];
+        if ($entityAttributes !== null) {
+            $body['entity_attributes'] = $entityAttributes;
+        }
+        $payload = json_encode($body, JSON_THROW_ON_ERROR);
         [$status, $response] = $this->send(
             rtrim($this->baseUrl, '/') . '/api/sand-iam/v1/authorization/decide',
             'POST',
@@ -214,8 +234,26 @@ final class SandIamClient
         string $apiVersion = 'v1',
         string $requestId = '',
     ): array {
-        $decision = $this->authorize($accessToken, $apiCode, $routeAttributes, $apiVersion, $requestId);
-        $this->assertEntityScope($decision, $entity, $attributeResolver);
+        $entityAttributes = $this->entityAttributes($entity, $attributeResolver);
+        $decision = $this->requestDecision(
+            $accessToken,
+            $apiCode,
+            $routeAttributes,
+            $apiVersion,
+            $requestId,
+            $entityAttributes,
+        );
+        if ($decision['allowed'] !== true) {
+            throw new AuthorizationDenied($decision);
+        }
+        if (($decision['scope_checked'] ?? null) !== true) {
+            throw new SandIamException(
+                'SAND_IAM_SDK_INVALID_RESPONSE',
+                'SandIAM 未确认实体数据范围复核',
+                200,
+            );
+        }
+        $this->assertScopeAttributes($decision, $entityAttributes);
         return $decision;
     }
 
@@ -646,8 +684,26 @@ final class SandIamClient
      */
     private function assertEntityScope(array $decision, object $entity, callable $attributeResolver): void
     {
+        $this->assertScopeAttributes($decision, $this->entityAttributes($entity, $attributeResolver));
+    }
+
+    /**
+     * @param callable(object):array<string,mixed> $attributeResolver
+     * @return array<string,mixed>
+     */
+    private function entityAttributes(object $entity, callable $attributeResolver): array
+    {
         $attributes = $attributeResolver($entity);
-        if (!is_array($attributes) || array_is_list($attributes) || !$this->scopeMatches((array) $decision['scope'], $attributes)) {
+        if (!is_array($attributes) || array_is_list($attributes)) {
+            throw new SandIamException('SAND_IAM_SDK_INVALID_ARGUMENT', '实体属性解析器必须返回 JSON 对象', 0);
+        }
+        return $attributes;
+    }
+
+    /** @param array<string,mixed> $decision @param array<string,mixed> $attributes */
+    private function assertScopeAttributes(array $decision, array $attributes): void
+    {
+        if (!$this->scopeMatches((array) $decision['scope'], $attributes)) {
             throw new AuthorizationDenied(array_replace($decision, ['code' => 'SAND_IAM_RESOURCE_SCOPE_DENIED']));
         }
     }

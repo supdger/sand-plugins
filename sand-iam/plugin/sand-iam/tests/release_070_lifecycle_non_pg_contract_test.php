@@ -242,7 +242,10 @@ $update = (string) file_get_contents($root . '/update.sql');
 $packageUpdate = (string) file_get_contents($package . '/update.sql');
 $uninstall = (string) file_get_contents($root . '/uninstall.sql');
 $packageUninstall = (string) file_get_contents($package . '/uninstall.sql');
-$expectedUpdate = ['039_service_grant_nullable_data_class.pgsql'];
+$expectedUpdate = [
+    '039_service_grant_nullable_data_class.pgsql',
+    '040_passkey_auth_challenge_identity.pgsql',
+];
 $updatePreflight = (string) file_get_contents($root . '/lifecycle/update-070-to-071-preflight.pgsql');
 preg_match_all("/\\('(sand_iam_[a-z0-9_]+)'\\)/", $updatePreflight, $preflightTableMatches);
 $preflightTables = array_values(array_unique($preflightTableMatches[1] ?? []));
@@ -288,19 +291,45 @@ sort($actualLedgerRows, SORT_STRING);
 release070Assert('0.7.1 preflight reproduces the exact immutable 001-037 ledger identities before 038',
     count($expectedLedgerRows) === 38
     && $actualLedgerRows === $expectedLedgerRows);
+release070Assert('0.7.1 and 0.7.2 preflights admit only the verified historical 035 checksum alias',
+    substr_count($updatePreflight, '4372ad7731e2dae60e51b7b2448a95971c5b22db06fc9678fb1d076d6e28ea25') === 1
+    && str_contains($updatePreflight, "recorded.migration_file = '035_schema_migration_ledger.pgsql'")
+    && str_contains($updatePreflight, 'recorded.revision = 35')
+    && str_contains($updatePreflight, "recorded.package_version = '0.7.0'")
+    && substr_count((string) file_get_contents($root . '/lifecycle/update-071-to-072-preflight.pgsql'), '4372ad7731e2dae60e51b7b2448a95971c5b22db06fc9678fb1d076d6e28ea25') === 1);
 release070Assert('fresh-install lifecycle is root/package identical and contains the 035-038 release migrations',
     hash('sha256', $install) === hash('sha256', $packageInstall)
     && str_contains($install, '-- lifecycle source: migrations/035_schema_migration_ledger.pgsql')
     && str_contains($install, '-- lifecycle source: migrations/036_acceptance_fixture_support.pgsql')
     && str_contains($install, '-- lifecycle source: migrations/037_initialization_draft.pgsql')
     && str_contains($install, '-- lifecycle source: migrations/038_auth_rate_limit_retention.pgsql'));
-release070Assert('0.7.1 to 0.7.2 update lifecycle is root/package identical, gates exact 001-038, then contains only immutable 039',
+release070Assert('generated lifecycle preserves 038 identity while using the PostgreSQL-compatible index arity check',
+    str_contains($retentionMigration, 'pg_get_indexdef(actual_index.indexrelid, 3, true) IS NULL')
+    && !str_contains($retentionMigration, 'actual_index.indnatts = 2 AND actual_index.indnkeyatts = 2')
+    && str_contains($install, 'actual_index.indnatts = 2 AND actual_index.indnkeyatts = 2')
+    && !str_contains($install, 'pg_get_indexdef(actual_index.indexrelid, 3, true) IS NULL'));
+$normalizeServiceGrantConstraint = static function (string $definition): string {
+    $normalized = preg_replace('/::[a-z_][a-z0-9_]*(\s+varying)?(\[\])?/i', '', strtolower($definition));
+    $normalized = preg_replace('/\s+/', '', (string) $normalized);
+    $normalized = str_replace(['(', ')'], '', (string) $normalized);
+    return preg_replace('/notvalid$/', '', $normalized) ?? '';
+};
+release070Assert('0.7.2 preflight admits only the exact historical NOT VALID service-grant constraint',
+    $normalizeServiceGrantConstraint("CHECK (data_class IS NULL OR data_class::text ~ '^[a-z0-9][a-z0-9._-]{1,31}$'::text) NOT VALID")
+        === "checkdata_classisnullordata_class~'^[a-z0-9][a-z0-9._-]{1,31}$'"
+    && $normalizeServiceGrantConstraint("CHECK (data_class IS NULL OR data_class::text ~ '^[A-Z]+$'::text) NOT VALID")
+        !== "checkdata_classisnullordata_class~'^[a-z0-9][a-z0-9._-]{1,31}$'");
+release070Assert('0.7.1 to 0.7.2 update lifecycle is root/package identical, gates exact 001-038, then contains only immutable 039 and 040',
     hash('sha256', $update) === hash('sha256', $packageUpdate)
     && release070PayloadSources($update) === $expectedUpdate
     && str_contains($update, '-- lifecycle source: lifecycle/update-071-to-072-preflight.pgsql')
     && strpos($update, '-- lifecycle source: lifecycle/update-071-to-072-preflight.pgsql') < strpos($update, '-- lifecycle source: migrations/039_service_grant_nullable_data_class.pgsql')
+    && strpos($update, '-- lifecycle source: migrations/039_service_grant_nullable_data_class.pgsql') < strpos($update, '-- lifecycle source: migrations/040_passkey_auth_challenge_identity.pgsql')
     && str_contains($update, 'requires exact 001-038 ledger identities before executing 039')
     && str_contains($update, 'requires the exact non-null service-grant data-class column')
+    && str_contains($update, 'AND NOT actual.convalidated')
+    && !str_contains($update, 'AND actual.convalidated')
+    && str_contains($update, "'notvalid$', ''")
     && !str_contains($update, '-- lifecycle source: migrations/037_initialization_draft.pgsql')
     && !str_contains($update, '-- lifecycle source: migrations/038_auth_rate_limit_retention.pgsql')
     && !str_contains($update, '-- lifecycle source: migrations/021_admin_permission_catalog.pgsql'));

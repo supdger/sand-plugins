@@ -1,6 +1,6 @@
 # SandIAM SCIM 2.0 API 契约 v0.1
 
-状态：IAM-T04 后端契约。路由前缀为 `/api/sand-iam/v1/scim/{provider}`；`provider` 是 identity provider 的 public code。请求使用 `Authorization: Bearer <SCIM token>`，响应均为 `application/scim+json`，错误响应带 `Cache-Control: no-store`；401 另带 `WWW-Authenticate: Bearer`。
+状态：IAM-T04 后端契约。路由前缀为 `/api/sand-iam/v1/scim/{provider}`；`provider` 是 identity provider 的 public code。请求使用 `Authorization: Bearer <SCIM token>`；带实体的 SCIM 请求发送 `Content-Type: application/scim+json`，客户端声明 `Accept: application/scim+json`。响应均为 `application/scim+json`，错误响应带 `Cache-Control: no-store`；401 另带 `WWW-Authenticate: Bearer`。
 
 令牌只属于一个已挂载的 application。管理端省略到期时间时固定签发 90 天；也可设未来一年内的 `YYYY-MM-DD HH:MM:SS`，但绝不创建永久 token。provider、organization、mount、application、令牌状态和过期时间会在认证时共同校验；历史 `expire_time=NULL` 记录同样拒绝认证，因此不同 application 的同一 organization provider 也不能混用令牌。
 

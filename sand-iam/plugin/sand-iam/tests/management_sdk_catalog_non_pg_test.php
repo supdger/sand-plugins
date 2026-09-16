@@ -25,6 +25,7 @@ foreach ([$catalog, $routes, $php, $phpDto, $typescript, $dart, $dartConstants, 
 
 $paths = [
     '/developer/onboarding/preview', '/developer/onboarding/apply',
+    '/developer/route-manifest/preview', '/developer/route-manifest/apply',
     '/policy/simulate', '/policy/rollback',
     '/credential/issue', '/credential/rotate', '/credential/revoke',
     '/identity-provider-preset/index', '/identity-provider-preset/draft',
@@ -37,8 +38,9 @@ foreach ($paths as $path) {
     managementSdkAssert(str_contains($dartConstants, $path), "Dart management SDK drifts from {$path}");
 }
 
-foreach ([$php, $typescript, $dart] as $source) {
-    managementSdkAssert(!str_contains($source, '/route-sync/'), 'SDK must not invent a standalone route-sync endpoint');
+foreach ([$php, $typescript, $dart . $dartConstants] as $source) {
+    managementSdkAssert(!str_contains($source, '/route-sync/'), 'SDK must use the published route-manifest endpoint name');
+    managementSdkAssert(str_contains($source, 'route-manifest/preview') && str_contains($source, 'route-manifest/apply'), 'SDK lacks route-manifest preview/apply');
     managementSdkAssert(str_contains($source, 'Cache-Control') && str_contains($source, 'no-store'), 'management SDK lacks no-store protection');
     managementSdkAssert(str_contains($source, 'SAND_IAM_SDK_REQUEST_ID_REQUIRED'), 'management SDK lacks explicit request-id rejection');
 }

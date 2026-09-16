@@ -30,6 +30,7 @@ final class FakeRepository implements Repository
 {
     public int $closeCalls = 0;
     public int $findCalls = 0;
+    public ?string $lastCloseAction = null;
 
     public function __construct(private WorkItem $item) {}
 
@@ -42,10 +43,11 @@ final class FakeRepository implements Repository
         return $this->item;
     }
 
-    public function close(int $id, callable $authorize, AuditWriter $auditWriter, string $requestId): WorkItem
+    public function close(int $id, callable $authorize, AuditWriter $auditWriter, string $action, string $requestId): WorkItem
     {
         $loaded = $this->find($id);
         $authorize($loaded);
+        $this->lastCloseAction = $action;
         $this->closeCalls++;
         return $this->item = new WorkItem($loaded->id, $loaded->organizationId, $loaded->ownerIdentityId, 'closed', $loaded->version + 1);
     }
@@ -146,5 +148,19 @@ $allowed = controller($allowedRepository, static fn (): string => '42')
     ->handle('POST', '/items/1/close', $headers, '{}');
 expect($allowed['status'] === 200 && $allowedRepository->closeCalls === 1, 'allowed close must update exactly once');
 expect(($allowed['body']['state'] ?? '') === 'closed' && ($allowed['body']['version'] ?? 0) === 2, 'allowed close result is invalid');
+
+$configuredRepository = new FakeRepository(new WorkItem(1, 101, 202, 'open', 1));
+$configuredAudit = new FakeAuditWriter();
+$configured = new Controller(
+    $configuredRepository,
+    $configuredAudit,
+    static fn (): string => '42',
+    'sand_iam_acceptance_0123456789abcdef_read',
+    'sand_iam_acceptance_0123456789abcdef_close',
+);
+$configuredRead = $configured->handle('GET', '/items/1', $headers, '');
+expect($configuredRead['status'] === 200 && $configuredAudit->events[0]['action'] === 'sand_iam_acceptance_0123456789abcdef_read', 'configured read API code was not used end to end');
+$configuredClose = $configured->handle('POST', '/items/1/close', $headers, '{}');
+expect($configuredClose['status'] === 200 && $configuredRepository->lastCloseAction === 'sand_iam_acceptance_0123456789abcdef_close', 'configured close API code was not used end to end');
 
 echo "offline standalone consumer tests: PASS\n";

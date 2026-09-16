@@ -22,6 +22,9 @@ $removeTree = static function (string $path) use (&$removeTree): void {
 $seed = tempnam('/private/tmp', 'sand-iam-casdoor-');
 if ($seed === false || !unlink($seed) || !mkdir($seed, 0700) || !mkdir($seed . '/evidence', 0700)) throw new RuntimeException('cannot create comparison fixture');
 try {
+    $archiveHash = str_repeat('a', 64);
+    $manifestHash = str_repeat('b', 64);
+    $environmentHash = str_repeat('c', 64);
     $journeyTargets = [
         'webman-api-governance' => [600, 6],
         'human-auth-mfa-business-api' => [400, 7],
@@ -34,28 +37,75 @@ try {
             foreach ([1, 2] as $round) {
                 $duration = $system === 'sandiam' ? $sandiamDuration + $round : $sandiamDuration + 101 + $round;
                 $operations = $system === 'sandiam' ? $sandiamOperations : $sandiamOperations + 1;
-                $evidencePath = 'evidence/' . $journeyId . '-' . $system . '-' . $round . '.json';
-                $evidenceBytes = json_encode(['journey' => $journeyId, 'system' => $system, 'round' => $round], JSON_THROW_ON_ERROR) . "\n";
-                file_put_contents($seed . '/' . $evidencePath, $evidenceBytes);
+                $startedAt = '2026-09-12T00:00:00Z';
+                $endedAt = gmdate('Y-m-d\TH:i:s\Z', strtotime($startedAt) + $duration);
+                $runDirectory = 'evidence/' . $journeyId . '/' . $system . '-' . $round;
+                if (!mkdir($seed . '/' . $runDirectory, 0700, true)) throw new RuntimeException('cannot create comparison run evidence directory');
+                $evidence = [];
+                $pathsByKind = [];
+                foreach (['browser', 'system', 'cleanup'] as $kind) {
+                    $relative = $runDirectory . '/' . $kind . '.json';
+                    $bytes = json_encode(['journey' => $journeyId, 'system' => $system, 'round' => $round, 'kind' => $kind], JSON_THROW_ON_ERROR) . "\n";
+                    file_put_contents($seed . '/' . $relative, $bytes);
+                    $evidence[] = ['kind' => $kind, 'path' => $relative, 'sha256' => hash('sha256', $bytes)];
+                    $pathsByKind[$kind] = $relative;
+                }
+                $structured = [
+                    'schema' => 'sand-iam.casdoor-comparison-evidence/v1',
+                    'journey' => $journeyId,
+                    'system' => $system,
+                    'round' => $round,
+                    'candidate_archive_sha256' => $archiveHash,
+                    'environment_fingerprint' => $environmentHash,
+                    'started_at' => $startedAt,
+                    'ended_at' => $endedAt,
+                    'metrics' => [
+                        'duration_seconds' => $duration,
+                        'manual_operations' => $operations,
+                        'commands' => 2,
+                        'recovery_attempts' => 0,
+                        'unresolved_failures' => 0,
+                        'business_code_change_points' => 1,
+                    ],
+                    'assertions' => [
+                        'completed' => true,
+                        'result_equivalent' => true,
+                        'security_equivalent' => true,
+                        'cleanup_verified' => true,
+                    ],
+                    'request_ids' => ['compare-' . $journeyId . '-' . $system . '-' . $round],
+                    'business_effect_refs' => ['business-effect-' . $journeyId . '-' . $system . '-' . $round],
+                    'audit_refs' => ['audit-' . $journeyId . '-' . $system . '-' . $round],
+                    'artifacts' => [
+                        'browser' => [$pathsByKind['browser']],
+                        'system' => [$pathsByKind['system']],
+                        'cleanup' => [$pathsByKind['cleanup']],
+                    ],
+                    'cleanup' => ['verified' => true, 'residual_count' => 0],
+                ];
+                $structuredPath = $runDirectory . '/structured.json';
+                $structuredBytes = json_encode($structured, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+                file_put_contents($seed . '/' . $structuredPath, $structuredBytes);
+                array_unshift($evidence, ['kind' => 'structured', 'path' => $structuredPath, 'sha256' => hash('sha256', $structuredBytes)]);
                 $runs[] = [
                     'system' => $system, 'round' => $round,
-                    'started_at' => '2026-09-12T00:00:00Z',
-                    'ended_at' => gmdate('Y-m-d\TH:i:s\Z', strtotime('2026-09-12T00:00:00Z') + $duration),
+                    'started_at' => $startedAt,
+                    'ended_at' => $endedAt,
                     'duration_seconds' => $duration, 'manual_operations' => $operations,
                     'commands' => 2, 'recovery_attempts' => 0, 'unresolved_failures' => 0,
                     'business_code_change_points' => 1, 'completed' => true,
                     'result_equivalent' => true, 'security_equivalent' => true, 'cleanup_verified' => true,
-                    'evidence' => [['path' => $evidencePath, 'sha256' => hash('sha256', $evidenceBytes)]],
+                    'evidence' => $evidence,
                 ];
             }
         }
         $journeys[] = ['id' => $journeyId, 'runs' => $runs];
     }
     $report = [
-        'schema' => 'sand-iam.casdoor-comparison/v1',
-        'candidate' => ['version' => '0.7.0', 'archive_sha256' => str_repeat('a', 64), 'artifact_manifest_sha256' => str_repeat('b', 64)],
+        'schema' => 'sand-iam.casdoor-comparison/v2',
+        'candidate' => ['version' => '0.7.0', 'archive_sha256' => $archiveHash, 'artifact_manifest_sha256' => $manifestHash],
         'reviewer' => ['id' => 'independent-reviewer-01', 'independent' => true, 'webman_experience' => true, 'conflict_statement' => 'I did not develop either tested integration.'],
-        'environment' => ['fingerprint' => str_repeat('c', 64), 'host' => 'fixture-host', 'browser' => 'fixture-browser', 'php' => '8.4', 'postgresql' => '18', 'network_profile' => 'same-local-profile'],
+        'environment' => ['fingerprint' => $environmentHash, 'host' => 'fixture-host', 'browser' => 'fixture-browser', 'php' => '8.4', 'postgresql' => '18', 'network_profile' => 'same-local-profile'],
         'journeys' => $journeys,
     ];
     $reportPath = $seed . '/report.json';
@@ -73,6 +123,28 @@ try {
     $uncleanReport['journeys'][0]['runs'][0]['cleanup_verified'] = false;
     file_put_contents($reportPath, json_encode($uncleanReport, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
     [$uncleanStatus, $uncleanOutput] = $run($reportPath);
+
+    $structuredPath = $seed . '/evidence/webman-api-governance/sandiam-1/structured.json';
+    $structuredBytes = (string) file_get_contents($structuredPath);
+    $structuredBinding = $validReport;
+    $structuredDocument = json_decode($structuredBytes, true, 512, JSON_THROW_ON_ERROR);
+    $structuredDocument['candidate_archive_sha256'] = str_repeat('d', 64);
+    $changedStructuredBytes = json_encode($structuredDocument, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+    file_put_contents($structuredPath, $changedStructuredBytes);
+    $structuredBinding['journeys'][0]['runs'][0]['evidence'][0]['sha256'] = hash('sha256', $changedStructuredBytes);
+    file_put_contents($reportPath, json_encode($structuredBinding, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+    [$structuredBindingStatus, $structuredBindingOutput] = $run($reportPath);
+    file_put_contents($structuredPath, $structuredBytes);
+
+    $missingSystemArtifact = $validReport;
+    $structuredDocument = json_decode($structuredBytes, true, 512, JSON_THROW_ON_ERROR);
+    $structuredDocument['artifacts']['system'] = [];
+    $changedStructuredBytes = json_encode($structuredDocument, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+    file_put_contents($structuredPath, $changedStructuredBytes);
+    $missingSystemArtifact['journeys'][0]['runs'][0]['evidence'][0]['sha256'] = hash('sha256', $changedStructuredBytes);
+    file_put_contents($reportPath, json_encode($missingSystemArtifact, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+    [$missingSystemArtifactStatus, $missingSystemArtifactOutput] = $run($reportPath);
+    file_put_contents($structuredPath, $structuredBytes);
 
     $report['journeys'][0]['runs'][0]['security_equivalent'] = false;
     file_put_contents($reportPath, json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
@@ -93,9 +165,11 @@ try {
     file_put_contents($reportPath, json_encode($invalidTimestampReport, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
     [$invalidTimestampStatus, $invalidTimestampOutput] = $run($reportPath);
 
-    $passed = $validStatus === 0 && str_contains($validOutput, '"runs_verified": 12')
+    $passed = $validStatus === 0 && str_contains($validOutput, '"runs_verified": 12') && str_contains($validOutput, '"evidence_files_verified": 48')
         && $tamperedEvidenceHashStatus !== 0 && str_contains($tamperedEvidenceHashOutput, 'evidence SHA-256 mismatch')
         && $uncleanStatus !== 0 && str_contains($uncleanOutput, 'did not prove cleanup_verified')
+        && $structuredBindingStatus !== 0 && str_contains($structuredBindingOutput, 'structured evidence binding mismatch')
+        && $missingSystemArtifactStatus !== 0 && str_contains($missingSystemArtifactOutput, 'structured artifact binding is invalid: system')
         && $unsafeStatus !== 0 && str_contains($unsafeOutput, 'did not prove security_equivalent')
         && $missingStatus !== 0 && str_contains($missingOutput, 'must contain exactly four runs')
         && $linkedStatus !== 0 && str_contains($linkedOutput, 'path contains a symbolic link')

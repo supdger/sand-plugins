@@ -39,6 +39,8 @@ $checks = [
         "(string) \$api->required_scope",
         'entityScopeGuard',
         "'request_id' => \$requestId",
+        "'scope_checked' => true",
+        'SAND_IAM_RESOURCE_SCOPE_DENIED',
     ],
     $package . '/app/middleware/ApplicationAuthorizationMiddleware.php' => [
         "param('sand_iam')",
@@ -60,6 +62,7 @@ $checks = [
         "post('organization_code'",
         "post('api_code'",
         "post('api_version'",
+        "post('entity_attributes'",
         "header('Authorization'",
         'RequestId::fromRequest',
     ],
@@ -70,6 +73,9 @@ $checks = [
         "'audience'",
         "'required_scope'",
         "'risk_level'",
+    ],
+    $package . '/app/admin/controller/ApiRouteBindingController.php' => [
+        "A-Za-z0-9._\\x7E",
     ],
     $package . '/config/route.php' => [
         "'api-resource' => ApiResourceController::class",
@@ -96,6 +102,11 @@ foreach ($checks as $file => $fragments) {
             exit(1);
         }
     }
+}
+
+if (preg_match('~^/[A-Za-z0-9._\x7E!$&\'()*+,;=:@%/{\}\[\]-]*$~', '/items/{id}') !== 1) {
+    fwrite(STDERR, "route template validator rejects a valid parameterized route\n");
+    exit(1);
 }
 
 $middleware = file_get_contents($package . '/app/middleware/ApplicationAuthorizationMiddleware.php');

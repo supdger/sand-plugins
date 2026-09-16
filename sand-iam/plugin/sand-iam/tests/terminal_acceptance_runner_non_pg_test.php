@@ -168,6 +168,10 @@ try {
             if (($target['kind'] ?? null) !== 'sandiam') terminalAcceptanceFail('SandIAM target kind is missing');
             continue;
         }
+        if ($name === 'business_app') {
+            if (($target['kind'] ?? null) !== 'business_app') terminalAcceptanceFail('Chain5 provider must be a credentialed business_app target');
+            continue;
+        }
         if (($target['kind'] ?? null) !== 'external') terminalAcceptanceFail("external target kind is missing: {$name}");
     }
     foreach ($examplePlan['chains'] as $id => $chain) foreach (array_merge($chain['steps'], $chain['cleanup']['steps']) as $step) {
@@ -185,14 +189,19 @@ try {
     $webhookStep = static function (string $id) use ($webhookSteps): array {
         return array_values(array_filter($webhookSteps, static fn (array $step): bool => ($step['id'] ?? '') === $id))[0] ?? [];
     };
-    $webhookTrigger = $webhookStep('trigger dedicated acceptance event');
+    $webhookTrigger = $webhookStep('issue credential business event');
+    $webhookConfigure = $webhookStep('configure controlled receiver');
     $webhookWorker = $webhookStep('worker 500 recorded');
-    $webhookStatus = $examplePlan['chains']['event-webhook-delivery']['cleanup']['steps'][1] ?? [];
-    if (($webhookTrigger['path'] ?? null) !== '/app/sand-iam/admin/acceptance-fixture/webhook-event'
-        || ($webhookWorker['path'] ?? null) !== '/app/sand-iam/admin/webhook/delivery/index?application_id=__REQUIRED_APPLICATION_ID__&webhook_endpoint_id=${webhook_id}&id=${delivery_id}&status=1'
+    $webhookStatus = array_values(array_filter($examplePlan['chains']['event-webhook-delivery']['cleanup']['steps'], static fn (array $step): bool => ($step['id'] ?? '') === 'zero residual real event webhook delivery'))[0] ?? [];
+    if (($webhookTrigger['path'] ?? null) !== '/app/sand-iam/admin/credential/issue'
+        || (($webhookTrigger['capture']['credential_plaintext']['sensitive'] ?? null) !== true)
+        || (($webhookConfigure['body']['secret'] ?? null) !== '${webhook_secret}')
+        || (($webhookConfigure['capture']['receiver_config_id']['path'] ?? null) !== 'receiver_config_id')
+        || ($webhookWorker['path'] ?? null) !== '/app/sand-iam/admin/webhook/delivery/index?application_id=__REQUIRED_APPLICATION_ID__&webhook_endpoint_id=${webhook_id}&status=1'
+        || (($webhookWorker['assert']['json_contains']['data.data']['contains']['event_type'] ?? null) !== 'credential.changed')
         || ($webhookRetry['path'] ?? null) !== '/app/sand-iam/admin/webhook/delivery/retry'
         || !str_starts_with((string) ($webhookStatus['path'] ?? ''), '/app/sand-iam/admin/acceptance-fixture/status?chain_id=event-webhook-delivery&request_id=${prefix}chain7-status&')) {
-        terminalAcceptanceFail('Chain7 trigger/worker/retry/status paths drifted from the frozen action contract');
+        terminalAcceptanceFail('Chain7 real event/receiver/worker/retry/status paths drifted from the frozen action contract');
     }
     $webhookAudit = $webhookStep('audit delivery');
     if (!str_contains((string) ($webhookAudit['path'] ?? ''), 'outcome=succeeded')
@@ -283,7 +292,7 @@ try {
         || !str_contains((string) ($mfaVerifyAudit['path'] ?? ''), 'action=identity.mfa_login_verify')
         || (($mfaVerifyAudit['assert']['json_contains']['data.data']['contains']['resource_type'] ?? null) !== 'mfa_challenge')
         || (($mfaVerifyAudit['assert']['json_contains']['data.data']['contains']['actor_ref'] ?? null) !== '${identity_id}')
-        || (($mfaVerifyAudit['assert']['json_contains']['data.data']['contains']['application_id'] ?? null) !== '__REQUIRED_APPLICATION_ID__')
+        || (($mfaVerifyAudit['assert']['json_contains']['data.data']['contains']['application_id'] ?? null) !== '${application_id}')
         || (($registrationDenied['auth_capture'] ?? null) !== 'registration_session_token')
         || (($loginDenied['auth_capture'] ?? null) !== 'login_session_token')
         || (($mfaDenied['auth_capture'] ?? null) !== 'mfa_login_session_token')
@@ -301,20 +310,52 @@ try {
     if (($delegationCreate['body']['admin_id'] ?? null) !== null || ($delegationCreate['body']['admin_user_id'] ?? null) !== '__REQUIRED_SCOPED_ADMIN_ID__') terminalAcceptanceFail('delegation must use real admin_user_id field');
     $groupChain = $examplePlan['chains']['identity-group-role-policy'];
     $groupCleanup = $groupChain['cleanup']['steps'] ?? [];
+    $groupCleanupById = [];
+    foreach ($groupCleanup as $step) if (is_string($step['id'] ?? null)) $groupCleanupById[$step['id']] = $step;
     $groupCleanupContracts = $examplePlan['preflight']['physical_cleanup']['evidence']['chains']['identity-group-role-policy']['action_contracts'] ?? null;
     if (($groupChain['cleanup']['api_available'] ?? null) !== true || isset($groupChain['manual_sql_cleanup'])
-        || count($groupCleanup) !== 8
+        || count($groupCleanup) !== 16
         || !is_array($groupCleanupContracts)
-        || count($groupCleanupContracts) !== 4
-        || (($groupCleanup[0]['proof'] ?? null) !== 'physical_cleanup')
-        || (($groupCleanup[1]['proof'] ?? null) !== 'zero_residual')
-        || (($groupCleanup[0]['body']['role_id'] ?? null) !== '__REQUIRED_ROLE_ID__')
-        || !str_contains((string) ($groupCleanup[1]['path'] ?? ''), 'role_id=__REQUIRED_ROLE_ID__')
-        || (($groupCleanup[0]['body']['object_ids']['identity_group_role'][0] ?? null) !== '${group_role_relation_id}')
-        || (($groupCleanup[0]['body']['object_request_ids']['identity_group_member'][0] ?? null) !== '${prefix}chain2-member-add')
-        || (($groupCleanup[2]['run_unless_capture_ids'] ?? null) !== ['group_role_relation_id'])
-        || (($groupCleanup[6]['run_unless_capture_ids'] ?? null) !== ['group_id'])) {
+        || count($groupCleanupContracts) !== 8
+        || (($groupCleanupById['cleanup controlled Keycloak directory']['proof'] ?? null) !== 'physical_cleanup')
+        || (($groupCleanupById['zero residual controlled Keycloak directory']['proof'] ?? null) !== 'zero_residual')
+        || (($groupCleanupById['controlled cleanup complete identity group role fixture']['body']['role_id'] ?? null) !== '__REQUIRED_ROLE_ID__')
+        || !str_contains((string) ($groupCleanupById['zero residual complete identity group role fixture']['path'] ?? ''), 'role_id=__REQUIRED_ROLE_ID__')
+        || (($groupCleanupById['controlled cleanup complete identity group role fixture']['body']['object_ids']['identity_group_role'][0] ?? null) !== '${group_role_relation_id}')
+        || (($groupCleanupById['controlled cleanup complete identity group role fixture']['body']['object_request_ids']['identity_group_member'][0] ?? null) !== '${prefix}chain2-member-add')
+        || (($groupCleanupById['controlled cleanup complete identity group role fixture']['body']['object_ids']['sync_connector'][0] ?? null) !== '${sync_connector_id}')
+        || (($groupCleanupById['controlled cleanup complete identity group role fixture']['body']['object_ids']['identity_import_job'][0] ?? null) !== '${identity_import_job_id}')
+        || (($groupCleanupById['controlled cleanup complete identity group role fixture']['body']['object_ids']['identity_provider'][0] ?? null) !== '${identity_provider_id}')
+        || (($groupCleanupById['controlled cleanup SCIM provider only']['run_if_capture_ids'] ?? null) !== ['identity_provider_id'])
+        || (($groupCleanupById['controlled cleanup SCIM provider only']['run_unless_capture_ids'] ?? null) !== ['sync_connector_id'])
+        || (($groupCleanupById['controlled cleanup SCIM provider only']['body']['partial_recovery'] ?? null) !== true)
+        || (($groupCleanupById['controlled cleanup directory sync only']['body']['partial_recovery'] ?? null) !== true)
+        || (($groupCleanupById['controlled cleanup identity import only']['body']['partial_recovery'] ?? null) !== true)
+        || (($groupCleanupById['controlled cleanup member partial identity group fixture']['run_unless_capture_ids'] ?? null) !== ['group_role_relation_id'])
+        || (($groupCleanupById['controlled cleanup identity partial fixture']['run_unless_capture_ids'] ?? null) !== ['group_id'])
+        || (($groupCleanupById['controlled cleanup directory sync only']['run_unless_capture_ids'] ?? null) !== ['identity_id'])
+        || (($groupCleanupById['controlled cleanup identity import only']['run_unless_capture_ids'] ?? null) !== ['identity_provider_id', 'sync_connector_id'])) {
         terminalAcceptanceFail('group role chain does not bind all captured fixtures to controlled cleanup and matching partial recovery');
+    }
+    $groupStepsById = [];
+    foreach ($groupChain['steps'] as $step) if (is_string($step['id'] ?? null)) $groupStepsById[$step['id']] = $step;
+    if (($examplePlan['targets']['directory']['base_url'] ?? null) !== '__REQUIRED_C02_DIRECTORY_URL__'
+        || (($groupStepsById['create controlled directory connector']['body']['driver_code'] ?? null) !== 'keycloak')
+        || (($groupStepsById['run controlled directory create sync']['assert']['json']['data.created'] ?? null) !== 1)
+        || (($groupStepsById['run controlled directory update sync']['assert']['json']['data.updated'] ?? null) !== 1)
+        || (($groupStepsById['controlled directory proves both generations']['assert']['json']['generations_seen'] ?? null) !== [1, 2])) {
+        terminalAcceptanceFail('group role chain does not prove a real two-generation Keycloak directory sync');
+    }
+    if (($groupStepsById['create controlled SCIM identity provider']['path'] ?? null) !== '/app/sand-iam/admin/identity-provider/save'
+        || (($groupStepsById['configure controlled SCIM identity provider']['body']['provider_type'] ?? null) !== 'scim')
+        || (($groupStepsById['issue controlled SCIM token']['capture']['scim_access_token']['sensitive'] ?? null) !== true)
+        || (($groupStepsById['SCIM creates controlled user']['auth_capture'] ?? null) !== 'scim_access_token')
+        || (($groupStepsById['SCIM creates controlled user']['media_type'] ?? null) !== 'application/scim+json')
+        || (($groupStepsById['SCIM updates controlled user']['method'] ?? null) !== 'PATCH')
+        || (($groupStepsById['SCIM disables controlled user']['body']['Operations'][0]['value'] ?? null) !== false)
+        || (($groupStepsById['SCIM deletes controlled user']['method'] ?? null) !== 'DELETE')
+        || (($groupStepsById['revoked SCIM token is denied']['expect_http'] ?? null) !== 401)) {
+        terminalAcceptanceFail('group role chain does not prove SCIM create, update, disable, delete and token revocation');
     }
     $memberAdd = array_values(array_filter($groupChain['steps'], static fn (array $step): bool => ($step['id'] ?? null) === 'add this-run identity to group'))[0] ?? [];
     $groupRoleGrant = array_values(array_filter($groupChain['steps'], static fn (array $step): bool => ($step['id'] ?? null) === 'grant role to group'))[0] ?? [];
@@ -341,10 +382,18 @@ try {
     if ($sessionRevokeIndex === false || $sessionAuditIndex === false || $sessionAuditIndex <= $sessionRevokeIndex || !str_contains($exampleSource, 'action=identity.session_revoke') || !str_contains($exampleSource, 'resource_type=auth_session') || !str_contains($exampleSource, 'request_id=${prefix}chain3-login-session-revoke')) terminalAcceptanceFail('session revoke audit does not follow the write or lacks this-run identifiers');
     $chainFive = $examplePlan['chains']['oauth-cas-api-governance'];
     $chainFiveCleanup = $chainFive['cleanup']['steps'] ?? [];
-    $chainFiveCleanupAction = $chainFiveCleanup[0] ?? [];
-    $chainFiveStatus = $chainFiveCleanup[1] ?? [];
+    $chainFiveCleanupAction = $chainFiveCleanup[4] ?? [];
+    $chainFiveStatus = $chainFiveCleanup[5] ?? [];
     if (($chainFive['cleanup']['api_available'] ?? null) !== true
         || isset($chainFive['manual_sql_cleanup'])
+        || array_column($chainFiveCleanup, 'id') !== [
+            'controlled cleanup complete C05 business audit',
+            'zero residual complete C05 business audit',
+            'controlled cleanup partial C05 business audit',
+            'zero residual partial C05 business audit',
+            'controlled cleanup OAuth CAS API governance fixture',
+            'zero residual OAuth CAS API governance fixture',
+        ]
         || (($chainFiveCleanupAction['path'] ?? null) !== '/app/sand-iam/admin/acceptance-fixture/cleanup')
         || (($chainFiveCleanupAction['body']['chain_id'] ?? null) !== 'oauth-cas-api-governance')
         || (($chainFiveCleanupAction['body']['application_id'] ?? null) !== '__REQUIRED_APPLICATION_ID__')
@@ -356,6 +405,7 @@ try {
         || (($chainFiveCleanupAction['body']['object_ids']['api_resource'] ?? null) !== ['${api_resource_id}'])
         || (($chainFiveCleanupAction['body']['object_ids']['api_route_binding'] ?? null) !== ['${route_binding_id}'])
         || (($chainFiveCleanupAction['body']['object_ids']['policy'] ?? null) !== ['${policy_id}'])
+        || (($chainFiveCleanupAction['body']['object_request_ids']['api_route_binding'] ?? null) !== ['${route_binding_audit_request}'])
         || (($chainFiveCleanupAction['body']['object_request_ids']['policy'] ?? null) !== ['${prefix}chain5-policy'])
         || !str_starts_with((string) ($chainFiveStatus['path'] ?? ''), '/app/sand-iam/admin/acceptance-fixture/status?chain_id=oauth-cas-api-governance&request_id=${prefix}chain5-status&')
         || (($chainFiveStatus['assert']['json']['data.residual.policy_version'] ?? null) !== 0)) {
@@ -367,12 +417,26 @@ try {
     if (($humanChain['cleanup']['api_available'] ?? null) !== true
         || isset($humanChain['manual_sql_cleanup'])
         || !is_array($humanContracts)
-        || count($humanContracts) !== 1
+        || count($humanContracts) !== 8
+        || (($humanChain['required_credentials'] ?? null) !== ['platform_admin'])
+        || (($humanChain['steps'][0]['path'] ?? null) !== '/app/sand-iam/admin/organization/save')
+        || (($humanChain['steps'][1]['path'] ?? null) !== '/app/sand-iam/admin/application/save')
+        || (($humanChain['steps'][2]['path'] ?? null) !== '/app/sand-iam/admin/auth-policy/save')
+        || (($humanCleanup['body']['object_ids']['auth_policy'] ?? null) !== ['${auth_policy_id}'])
         || (($humanCleanup['body']['object_ids']['auth_session'] ?? null) !== ['${registration_session_id}', '${login_session_id}', '${mfa_login_session_id}'])
         || (($humanCleanup['body']['human_auth_action_request_ids']['mfa_confirm'] ?? null) !== '${prefix}chain3-totp-confirm')
         || (($humanCleanup['body']['human_auth_action_request_ids']['mfa_login_verify'] ?? null) !== '${prefix}chain3-mfa-challenge-verify')
         || (($humanCleanup['body']['human_auth_session_actions'] ?? null) !== ['identity.register', 'identity.login', 'identity.mfa_login'])
         || (($humanCleanup['body']['human_auth_action_request_ids']['session_revoke'] ?? null) !== ['${prefix}chain3-registration-session-revoke', '${prefix}chain3-login-session-revoke', '${prefix}chain3-mfa-login-session-revoke'])
+        || (($humanCleanup['run_if_capture_ids'] ?? null) !== ['chain3_complete_marker'])
+        || (($humanChain['cleanup']['steps'][2]['body']['partial_recovery'] ?? null) !== true)
+        || (($humanChain['cleanup']['steps'][4]['body']['partial_recovery'] ?? null) !== true)
+        || (($humanChain['cleanup']['steps'][6]['body']['partial_recovery'] ?? null) !== true)
+        || (($humanChain['cleanup']['steps'][8]['body']['partial_recovery'] ?? null) !== true)
+        || (($humanChain['cleanup']['steps'][10]['body']['partial_recovery'] ?? null) !== true)
+        || (($humanChain['cleanup']['steps'][12]['body']['contract_version'] ?? null) !== 2)
+        || (($humanChain['cleanup']['steps'][14]['body']['contract_version'] ?? null) !== 2)
+        || !str_contains(json_encode($humanChain['cleanup'], JSON_THROW_ON_ERROR), 'data.residual.auth_challenge')
         || !str_contains((string) ($humanStatus['path'] ?? ''), 'human_auth_action_request_ids')) terminalAcceptanceFail('human auth cleanup does not bind every created session/factor and action audit to API cleanup');
     $routes = (string) file_get_contents($root . '/plugin/sand-iam/config/route.php');
     foreach (['/api/sand-iam/v1/authorization/decide', '/api/sand-iam/v1/oauth/authorize', '/api/sand-iam/v1/oauth/interaction/session', '/api/sand-iam/v1/oauth/interaction/confirm', '/api/sand-iam/v1/oauth/token', '/api/sand-iam/v1/cas/login', '/api/sand-iam/v1/cas/interaction/confirm', '/api/sand-iam/v1/cas/serviceValidate', '/webhook/delivery/retry'] as $route) {
@@ -441,6 +505,7 @@ try {
     foreach (['actor_type', 'actor_ref', 'outcome', 'action', 'resource_type', 'request_id'] as $field) if (!str_contains($auditController, "'{$field}'")) terminalAcceptanceFail("Audit controller filter missing: {$field}");
     if (!str_contains($auditController, "input('resource_id'") || !str_contains($auditController, "where('resource_id', (int) \$resourceIdInput)")) terminalAcceptanceFail('Audit controller does not apply the documented exact resource_id filter');
     $delegationSteps = $examplePlan['chains']['delegation-scope']['steps'];
+    $delegationChain = $examplePlan['chains']['delegation-scope'];
     $delegationCreate = array_values(array_filter($delegationSteps, static fn (array $step): bool => ($step['id'] ?? '') === 'create delegation'))[0] ?? [];
     $delegationAudit = array_values(array_filter($delegationSteps, static fn (array $step): bool => ($step['id'] ?? '') === 'audit this-run delegation creation'))[0] ?? [];
     if (($delegationCreate['request_id'] ?? null) !== '${prefix}delegation-create' || !str_contains((string) ($delegationAudit['path'] ?? ''), 'action=admin_application_grant.create') || !str_contains((string) ($delegationAudit['path'] ?? ''), 'resource_id=${delegation_id}') || !str_contains((string) ($delegationAudit['path'] ?? ''), 'request_id=${prefix}delegation-create') || (($delegationAudit['assert']['json_contains']['data.data']['contains']['request_id'] ?? null) !== '${prefix}delegation-create')) terminalAcceptanceFail('Delegation audit is not bound to the real create action, captured grant and this-run request ID');
@@ -510,6 +575,206 @@ try {
     require_once $liveDriver;
     require_once $acceptanceFixtureStore;
     require_once $acceptanceFixtureService;
+    foreach (['scim_provider_code', 'oauth_client_code', 'scim_token_ref'] as $publicCodeCapture) {
+        if (liveCaptureNameSensitive($publicCodeCapture)) terminalAcceptanceFail("public protocol code {$publicCodeCapture} was classified as a secret");
+    }
+    foreach (['oauth_code', 'oauth_code_wrong', 'totp_code', 'access_token', 'client_secret', 'cas_ticket'] as $sensitiveCapture) {
+        if (!liveCaptureNameSensitive($sensitiveCapture)) terminalAcceptanceFail("sensitive capture {$sensitiveCapture} was classified as public");
+    }
+    $fallbackRequestId = TERMINAL_ACCEPTANCE_MOCK_PREFIX . 'generated-request';
+    $queryRequestId = TERMINAL_ACCEPTANCE_MOCK_PREFIX . 'cleanup-query';
+    if (liveDeclaredRequestId(['query' => ['request_id' => $queryRequestId]], $fallbackRequestId) !== $queryRequestId
+        || liveDeclaredRequestId(['path' => '/status?request_id=' . $queryRequestId], $fallbackRequestId) !== $queryRequestId
+        || liveDeclaredRequestId([], $fallbackRequestId) !== $fallbackRequestId) {
+        terminalAcceptanceFail('cleanup status request ID was not mirrored into the X-Request-Id header');
+    }
+    if (!liveExtraHeadersSafe(['X-C02-Control-Token' => 'controlled-value_123'])
+        || liveExtraHeadersSafe(['Invalid Header' => 'value'])
+        || liveExtraHeadersSafe(['X-Control' => "value\r\nInjected: true"])) {
+        terminalAcceptanceFail('live header validation does not accept RFC token names or reject header injection');
+    }
+    putenv('SAND_IAM_ACCEPTANCE_CA_FILE=' . __FILE__);
+    putenv('SAND_IAM_ACCEPTANCE_ALLOW_CUSTOM_CA=I_UNDERSTAND_THIS_TRUSTS_ONLY_THE_CONFIGURED_CA');
+    if (liveCustomCaFile(['base_url' => 'https://directory.acceptance.example']) !== realpath(__FILE__)
+        || liveCustomCaFile(['base_url' => 'http://directory.acceptance.example']) !== null) {
+        terminalAcceptanceFail('explicit custom CA gate did not preserve HTTPS verification scope');
+    }
+    putenv('SAND_IAM_ACCEPTANCE_CA_FILE');
+    putenv('SAND_IAM_ACCEPTANCE_ALLOW_CUSTOM_CA');
+    $concreteDirectoryChain = $examplePlan['chains']['identity-group-role-policy'];
+    foreach ($concreteDirectoryChain['steps'] as &$step) {
+        if (($step['id'] ?? null) === 'preview controlled identity import') {
+            $step['multipart']['file']['content'] = str_replace(
+                '__REQUIRED_C02_IMPORT_EMAIL__',
+                'import-user@acceptance.example',
+                (string) $step['multipart']['file']['content'],
+            );
+        }
+        if (($step['id'] ?? null) !== 'configure controlled directory connector') continue;
+        $step['body']['config']['base_url'] = 'https://directory.acceptance.example';
+        $step['body']['config']['realm'] = 'acceptance-realm';
+        $step['body']['config']['access_token'] = 'acceptance-token';
+    }
+    unset($step);
+    $concreteDirectoryTargets = $examplePlan['targets'];
+    $concreteDirectoryTargets['directory']['base_url'] = 'https://directory.acceptance.example';
+    liveValidateIdentityDirectoryProtocol($concreteDirectoryChain, $concreteDirectoryTargets);
+    $mismatchedDirectoryTargets = $concreteDirectoryTargets;
+    $mismatchedDirectoryTargets['directory']['base_url'] = 'https://other-directory.acceptance.example';
+    try {
+        liveValidateIdentityDirectoryProtocol($concreteDirectoryChain, $mismatchedDirectoryTargets);
+        terminalAcceptanceFail('chain2 validator accepted a directory target that differs from connector configuration');
+    } catch (RuntimeException $exception) {
+        if (!str_contains($exception->getMessage(), '公网 HTTPS 目录')) terminalAcceptanceFail('chain2 mismatched directory target failed for an unrelated reason');
+    }
+    $concreteDelegationJson = strtr(
+        json_encode($examplePlan['chains']['delegation-scope'], JSON_THROW_ON_ERROR),
+        [
+            '__REQUIRED_SCOPED_ADMIN_ID__' => '101',
+            '__REQUIRED_OUT_OF_SCOPE_ADMIN_ID__' => '102',
+            '__REQUIRED_IN_SCOPE_ORGANIZATION_ID__' => '201',
+            '__REQUIRED_IN_SCOPE_APPLICATION_ID__' => '301',
+            '__REQUIRED_OUT_OF_SCOPE_APPLICATION_ID__' => '302',
+        ],
+    );
+    $concreteDelegation = json_decode($concreteDelegationJson, true, 512, JSON_THROW_ON_ERROR);
+    liveValidateDelegationScopeProtocol($concreteDelegation);
+    try {
+        liveValidateDelegationScopeProtocol(json_decode(str_replace('302', '301', $concreteDelegationJson), true, 512, JSON_THROW_ON_ERROR));
+        terminalAcceptanceFail('delegation validator accepted identical in-scope and out-of-scope applications');
+    } catch (RuntimeException $exception) {
+        if (!str_contains($exception->getMessage(), '相互独立')) terminalAcceptanceFail('invalid delegation scope failed for an unrelated reason');
+    }
+    $safeMultipart = liveMultipartDefinition(
+        ['kind' => 'sandiam'],
+        [
+            'method' => 'POST',
+            'write' => true,
+            'path' => '/app/sand-iam/admin/identity-import/preview',
+            'multipart' => [
+                'fields' => ['application_id' => '22', 'mode' => 'create'],
+                'file' => ['field' => 'file', 'filename' => 'acceptance.csv', 'content_type' => 'text/csv', 'content' => "用户名,显示名称,邮箱,手机号,账号状态,用户组代码\nuser,User,user@example.test,,正常,\n"],
+            ],
+        ],
+    );
+    if (($safeMultipart['file']['filename'] ?? null) !== 'acceptance.csv') terminalAcceptanceFail('safe inline identity-import multipart was rejected');
+    try {
+        liveMultipartDefinition(
+            ['kind' => 'sandiam'],
+            [
+                'method' => 'POST',
+                'write' => true,
+                'path' => '/app/sand-iam/admin/identity-import/preview',
+                'multipart' => [
+                    'fields' => ['application_id' => '22', 'mode' => 'create'],
+                    'file' => ['field' => 'file', 'filename' => '../secret.csv', 'content_type' => 'text/csv', 'content' => 'x'],
+                ],
+            ],
+        );
+        terminalAcceptanceFail('identity-import multipart accepted a path-bearing filename');
+    } catch (RuntimeException $exception) {
+        if (!str_contains($exception->getMessage(), 'multipart')) terminalAcceptanceFail('unsafe multipart failed for an unrelated reason');
+    }
+    $safeQuery = liveQueryString([
+        'method' => 'GET',
+        'query' => [
+            'object_ids' => ['identity_provider' => ['220']],
+            'partial_recovery' => true,
+        ],
+    ]);
+    if (!str_contains($safeQuery, 'object_ids%5Bidentity_provider%5D%5B0%5D=220')
+        || !str_contains($safeQuery, 'partial_recovery=1')) {
+        terminalAcceptanceFail('safe structured cleanup query was not encoded deterministically');
+    }
+    foreach ([
+        ['method' => 'POST', 'query' => ['id' => '1']],
+        ['method' => 'GET', 'query' => ['id' => "1\nX-Injected: yes"]],
+    ] as $unsafeQuery) {
+        try {
+            liveQueryString($unsafeQuery);
+            terminalAcceptanceFail('unsafe or write-method query was accepted');
+        } catch (RuntimeException) {
+        }
+    }
+    if (!liveMethodWriteAllowed(
+        ['kind' => 'sandiam'],
+        ['method' => 'PATCH', 'write' => true, 'path' => '/api/sand-iam/v1/scim/provider/Users/user'],
+    ) || liveMethodWriteAllowed(
+        ['kind' => 'sandiam'],
+        ['method' => 'PATCH', 'write' => true, 'path' => '/app/sand-iam/admin/identity/update'],
+    )) {
+        terminalAcceptanceFail('PATCH/DELETE safety boundary is not restricted to the SCIM runtime path');
+    }
+    if (liveMediaType(
+        ['kind' => 'sandiam'],
+        ['path' => '/api/sand-iam/v1/scim/provider/Users', 'media_type' => 'application/scim+json'],
+    ) !== 'application/scim+json') {
+        terminalAcceptanceFail('SCIM media type was rejected on the protocol runtime path');
+    }
+    try {
+        liveMediaType(
+            ['kind' => 'sandiam'],
+            ['path' => '/app/sand-iam/admin/identity/save', 'media_type' => 'application/scim+json'],
+        );
+        terminalAcceptanceFail('SCIM media type escaped the protocol runtime path');
+    } catch (RuntimeException) {
+    }
+    liveValidateDelegationScopeProtocol($delegationChain);
+    foreach ([
+        'third role replaced by scoped admin' => static function (array &$plan): void {
+            foreach ($plan['steps'] as &$step) if (($step['id'] ?? null) === 'independent out of scope admin deny') $step['auth'] = 'scoped_admin';
+            unset($step);
+        },
+        'disable audit removed' => static function (array &$plan): void {
+            $plan['steps'] = array_values(array_filter($plan['steps'], static fn (array $step): bool => ($step['id'] ?? null) !== 'audit this-run delegation disable'));
+        },
+        'revoked denial request detached' => static function (array &$plan): void {
+            foreach ($plan['steps'] as &$step) if (($step['id'] ?? null) === 'same scoped revoked deny') $step['request_id'] = '${prefix}unrelated-revoked-deny';
+            unset($step);
+        },
+        'delegated environment cleanup removed' => static function (array &$plan): void {
+            unset($plan['cleanup']['steps'][0]['body']['object_ids']['environment']);
+        },
+    ] as $label => $mutate) {
+        $invalidDelegation = $delegationChain;
+        $mutate($invalidDelegation);
+        try {
+            liveValidateDelegationScopeProtocol($invalidDelegation);
+            terminalAcceptanceFail("runtime Chain6 validator accepted {$label}");
+        } catch (RuntimeException $exception) {
+            if (!str_contains($exception->getMessage(), 'Chain6')) terminalAcceptanceFail("runtime Chain6 validator rejected {$label} for an unrelated reason");
+        }
+    }
+    $humanBootstrapVariables = ['organization_id' => '10', 'application_id' => '20', 'auth_policy_id' => '30'];
+    foreach ([
+        'organization' => [['organization_id' => '10'], ['retire interrupted C03 organization']],
+        'application' => [['organization_id' => '10', 'application_id' => '20'], ['retire C03 application and organization']],
+        'auth-policy' => [$humanBootstrapVariables, ['recover interrupted C03 auth policy bootstrap', 'retire C03 application and organization']],
+        'register' => [$humanBootstrapVariables + ['registration_session_id' => '1'], ['recover interrupted human auth after registration', 'retire C03 application and organization']],
+        'login' => [$humanBootstrapVariables + ['registration_session_id' => '1', 'login_session_id' => '2'], ['recover interrupted human auth after login', 'retire C03 application and organization']],
+        'mfa-start' => [$humanBootstrapVariables + ['registration_session_id' => '1', 'login_session_id' => '2', 'mfa_factor_id' => '3'], ['recover interrupted human auth after MFA start', 'retire C03 application and organization']],
+        'mfa-verified' => [$humanBootstrapVariables + ['registration_session_id' => '1', 'login_session_id' => '2', 'mfa_factor_id' => '3', 'mfa_login_session_id' => '4'], ['recover interrupted human auth after MFA verification', 'retire C03 application and organization']],
+        'complete' => [$humanBootstrapVariables + ['registration_session_id' => '1', 'login_session_id' => '2', 'mfa_factor_id' => '3', 'mfa_login_session_id' => '4', 'chain3_complete_marker' => '401'], ['controlled cleanup human auth fixture', 'retire C03 application and organization']],
+    ] as $stage => [$variables, $expectedCleanup]) {
+        $selectedPhysical = array_values(array_filter(
+            liveSelectedCleanupSteps($humanChain, $variables),
+            static fn (array $step): bool => ($step['proof'] ?? null) === 'physical_cleanup',
+        ));
+        if (array_column($selectedPhysical, 'id') !== $expectedCleanup) {
+            terminalAcceptanceFail("human auth {$stage} selected an unsafe or ambiguous cleanup branch");
+        }
+    }
+    putenv('SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_CONFIRM=I_OWN_THIS_PREFIXED_FIXTURE_SCOPE');
+    putenv('SAND_IAM_ACCEPTANCE_AUTOMATED_CLEANUP_CONFIRM=I_HAVE_VERIFIED_AUTOMATED_CLEANUP');
+    putenv('SAND_IAM_ACCEPTANCE_OWNERSHIP_EVIDENCE=approved ' . TERMINAL_ACCEPTANCE_MOCK_PREFIX . ' scope');
+    putenv('SAND_IAM_ACCEPTANCE_AUTOMATED_CLEANUP_EVIDENCE=approved ' . TERMINAL_ACCEPTANCE_MOCK_PREFIX . ' human-auth-session-mfa cleanup');
+    livePreflightGate($examplePlan, TERMINAL_ACCEPTANCE_MOCK_PREFIX, 'human-auth-session-mfa', $humanChain);
+    putenv('SAND_IAM_ACCEPTANCE_PLATFORM_ADMIN_AUTHORIZATION=Authorization: Bearer platform-only-test');
+    putenv('SAND_IAM_ACCEPTANCE_APPLICATION_USER_AUTHORIZATION');
+    if (liveAuthorizations($humanChain['required_credentials']) !== ['platform_admin' => 'Authorization: Bearer platform-only-test']) {
+        terminalAcceptanceFail('Chain3 still loads a pre-existing application-user credential instead of using captured tokens');
+    }
+    putenv('SAND_IAM_ACCEPTANCE_PLATFORM_ADMIN_AUTHORIZATION');
     if (SAND_IAM_ACCEPTANCE_FIXTURE_PREFIX_PATTERN !== \plugin\SandIam\app\acceptance\AcceptanceFixtureService::PREFIX_PATTERN) terminalAcceptanceFail('driver and backend fixture-prefix contracts differ');
     if (SAND_IAM_ACCEPTANCE_FIXTURE_REQUEST_ID_PATTERN !== \plugin\SandIam\app\acceptance\AcceptanceFixtureService::REQUEST_ID_PATTERN) terminalAcceptanceFail('driver and backend fixture-request-id contracts differ');
     try {
@@ -526,14 +791,45 @@ try {
         if (!str_contains($exception->getMessage(), 'Chain3')) terminalAcceptanceFail('runtime Chain3 validator rejected one-of-three proof for an unrelated reason');
     }
     try {
-        liveValidateOAuthCasApiGovernanceProtocol($chainFive);
+        liveValidateOAuthCasApiGovernanceProtocol($chainFive, $examplePlan['targets']);
     } catch (Throwable $exception) {
         terminalAcceptanceFail('runtime Chain5 validator rejected the complete OAuth/CAS/API-governance plan: ' . $exception->getMessage());
+    }
+    $pkceVerifier = str_repeat('A', 43);
+    $pkceChallenge = rtrim(strtr(base64_encode(hash('sha256', $pkceVerifier, true)), '+/', '-_'), '=');
+    $concreteChainFive = json_decode(strtr(
+        json_encode($chainFive, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+        [
+            '__REQUIRED_APPLICATION_ID__' => '22',
+            '__REQUIRED_RESOURCE_ID__' => '49',
+            '__REQUIRED_APPLICATION_IDENTITY_ID__' => '34',
+            '__REQUIRED_ENVIRONMENT_ID__' => '33',
+            '__REQUIRED_ORGANIZATION_ID__' => '11',
+            '__REQUIRED_ORGANIZATION_CODE__' => 'acceptance-org',
+            '__REQUIRED_APPLICATION_CODE__' => 'acceptance-app',
+            '__REQUIRED_ENVIRONMENT_CODE__' => 'acceptance-env',
+            '__REQUIRED_RESOURCE_CODE__' => 'acceptance-resource',
+            '__REQUIRED_APPLICATION_BUSINESS_ACTION__' => 'work_item.inspect',
+            '__REQUIRED_API_AUDIENCE__' => 'acceptance-api',
+            '__REQUIRED_API_SCOPE__' => 'work_item.read',
+            '__REQUIRED_PROVIDER_ROUTE_TEMPLATE__' => '/sand-iam-c05/v1/work-items/{id}/inspect',
+            '__REQUIRED_PROVIDER_ROUTE_PATH__' => '/sand-iam-c05/v1/work-items/501/inspect',
+            '__REQUIRED_OAUTH_REDIRECT_URI__' => 'http://127.0.0.1:9090/oauth/callback',
+            '__REQUIRED_CAS_SERVICE_URL__' => 'http://127.0.0.1:9090/cas/callback',
+            '__REQUIRED_PKCE_CHALLENGE__' => $pkceChallenge,
+            '__REQUIRED_PKCE_VERIFIER__' => $pkceVerifier,
+            '__REQUIRED_WRONG_PKCE_VERIFIER__' => str_repeat('B', 43),
+        ],
+    ), true, 512, JSON_THROW_ON_ERROR);
+    try {
+        liveValidateOAuthCasApiGovernanceProtocol($concreteChainFive, $examplePlan['targets']);
+    } catch (Throwable $exception) {
+        terminalAcceptanceFail('runtime Chain5 validator rejected a concrete authorized plan: ' . $exception->getMessage());
     }
     $oneOfThreeChainFive = $chainFive;
     $oneOfThreeChainFive['steps'] = array_values(array_filter($chainFive['steps'], static fn (array $step): bool => !in_array($step['id'] ?? null, ['OAuth userinfo denies revoked access token', 'CAS XML denies disabled service ticket'], true)));
     try {
-        liveValidateOAuthCasApiGovernanceProtocol($oneOfThreeChainFive);
+        liveValidateOAuthCasApiGovernanceProtocol($oneOfThreeChainFive, $examplePlan['targets']);
         terminalAcceptanceFail('runtime Chain5 validator accepted one of three OAuth/CAS/policy revoke-effective proofs');
     } catch (RuntimeException $exception) {
         if (!str_contains($exception->getMessage(), 'Chain5')) terminalAcceptanceFail('runtime Chain5 validator rejected one-of-three revoke proof for an unrelated reason');
@@ -547,14 +843,15 @@ try {
     }
     unset($step);
     try {
-        liveValidateOAuthCasApiGovernanceProtocol($casUserinfoFake);
+        liveValidateOAuthCasApiGovernanceProtocol($casUserinfoFake, $examplePlan['targets']);
         terminalAcceptanceFail('runtime Chain5 validator accepted CAS userinfo as XML ticket validation');
     } catch (RuntimeException $exception) {
         if (!str_contains($exception->getMessage(), 'Chain5')) terminalAcceptanceFail('runtime Chain5 validator rejected the CAS fake-green plan for an unrelated reason');
     }
     foreach ([
         'swapped PKCE verifier' => static function (array &$plan): void { foreach ($plan['steps'] as &$step) if (($step['id'] ?? null) === 'correct PKCE token') $step['body']['code_verifier'] = '__REQUIRED_WRONG_PKCE_VERIFIER__'; unset($step); },
-        'unbound route API id' => static function (array &$plan): void { foreach ($plan['steps'] as &$step) if (($step['id'] ?? null) === 'create controlled route binding') $step['body']['api_resource_id'] = '${route_binding_id}'; unset($step); },
+        'CAS protocol failure with non-protocol HTTP status' => static function (array &$plan): void { foreach ($plan['steps'] as &$step) if (($step['id'] ?? null) === 'CAS XML denies disabled service ticket') $step['expect_http'] = 400; unset($step); },
+        'route apply without preview hash' => static function (array &$plan): void { foreach ($plan['steps'] as &$step) if (($step['id'] ?? null) === 'apply controlled route manifest') $step['body']['preview_hash'] = str_repeat('0', 64); unset($step); },
         'unrelated application API' => static function (array &$plan): void { foreach ($plan['steps'] as &$step) if (($step['id'] ?? null) === 'application session permits controlled API invocation') $step['path'] = '/api/sand-iam/v1/oauth/userinfo'; unset($step); },
         'policy revoke substituted' => static function (array &$plan): void { foreach ($plan['steps'] as &$step) if (($step['id'] ?? null) === 'revoke controlled identity policy') $step['path'] = '/app/sand-iam/admin/api-route-binding/disable'; unset($step); },
         'unrelated simulate resource' => static function (array &$plan): void { foreach ($plan['steps'] as &$step) if (($step['id'] ?? null) === 'simulate controlled policy allow') $step['body']['resource_code'] = 'unrelated-resource'; unset($step); },
@@ -564,24 +861,24 @@ try {
         $invalid = $chainFive;
         $mutate($invalid);
         try {
-            liveValidateOAuthCasApiGovernanceProtocol($invalid);
+            liveValidateOAuthCasApiGovernanceProtocol($invalid, $examplePlan['targets']);
             terminalAcceptanceFail("runtime Chain5 validator accepted {$label}");
         } catch (RuntimeException $exception) {
             if (!str_contains($exception->getMessage(), 'Chain5')) terminalAcceptanceFail("runtime Chain5 validator rejected {$label} for an unrelated reason");
         }
     }
     $missingResidual = $chainFive;
-    unset($missingResidual['cleanup']['steps'][1]['assert']['json']['data.residual.authorization_code']);
+    unset($missingResidual['cleanup']['steps'][5]['assert']['json']['data.residual.authorization_code']);
     try {
-        liveValidateOAuthCasApiGovernanceProtocol($missingResidual);
+        liveValidateOAuthCasApiGovernanceProtocol($missingResidual, $examplePlan['targets']);
         terminalAcceptanceFail('runtime Chain5 validator accepted a cleanup/status plan missing one derived residual assertion');
     } catch (RuntimeException $exception) {
         if (!str_contains($exception->getMessage(), 'Chain5')) terminalAcceptanceFail('runtime Chain5 validator rejected incomplete residual assertions for an unrelated reason');
     }
     $missingChainFiveScope = $chainFive;
-    unset($missingChainFiveScope['cleanup']['steps'][0]['body']['environment_id']);
+    unset($missingChainFiveScope['cleanup']['steps'][4]['body']['environment_id']);
     try {
-        liveValidateOAuthCasApiGovernanceProtocol($missingChainFiveScope);
+        liveValidateOAuthCasApiGovernanceProtocol($missingChainFiveScope, $examplePlan['targets']);
         terminalAcceptanceFail('runtime Chain5 validator accepted cleanup without its frozen environment prerequisite');
     } catch (RuntimeException $exception) {
         if (!str_contains($exception->getMessage(), 'Chain5')) terminalAcceptanceFail('runtime Chain5 validator rejected missing cleanup environment for an unrelated reason');
@@ -613,7 +910,7 @@ try {
     ] as $invalidPrefix) {
         if (preg_match(SAND_IAM_ACCEPTANCE_FIXTURE_PREFIX_PATTERN, $invalidPrefix) === 1) terminalAcceptanceFail("shared fixture-prefix contract accepted {$invalidPrefix}");
     }
-    foreach (['organization-application-environment', 'workload-credential-invocation', 'oauth-cas-api-governance', 'delegation-scope', 'event-webhook-delivery'] as $controlledChainId) {
+    foreach (['organization-application-environment', 'human-auth-session-mfa', 'workload-credential-invocation', 'oauth-cas-api-governance', 'delegation-scope', 'event-webhook-delivery'] as $controlledChainId) {
         $controlledChain = $examplePlan['chains'][$controlledChainId];
         $declaredContracts = $examplePlan['preflight']['physical_cleanup']['evidence']['chains'][$controlledChainId]['action_contracts'] ?? null;
         if ($declaredContracts !== liveCleanupActionContracts($controlledChain)) terminalAcceptanceFail("example action contracts drifted from controlled cleanup steps: {$controlledChainId}");
@@ -637,6 +934,34 @@ try {
     ];
     putenv('SAND_IAM_ACCEPTANCE_ALLOW_HTTP=1');
     $mockTargets = ['sandiam' => liveSafeTarget($mockPlan['targets']['sandiam'], 'http://mock.invalid')];
+    $humanTargets = [];
+    foreach ($examplePlan['targets'] as $name => $target) {
+        $target['base_url'] = 'http://mock.invalid';
+        $humanTargets[$name] = liveSafeTarget($target, 'http://mock.invalid');
+    }
+    $GLOBALS['sand_iam_live_http_transport'] = static fn (): array => [
+        'status' => 200,
+        'body' => '{"code":200}',
+        'json' => ['code' => 200],
+        'headers' => [],
+        'location' => '',
+    ];
+    $humanLostOrganizationResponse = liveRun(
+        'human-auth-session-mfa',
+        $humanChain,
+        $humanTargets,
+        ['platform_admin' => 'Authorization: Bearer platform-test'],
+        TERMINAL_ACCEPTANCE_MOCK_PREFIX,
+        ['human-auth-session-mfa' => $humanChain['required_credentials']],
+    );
+    if (($humanLostOrganizationResponse['status'] ?? null) !== 'blocked'
+        || ($humanLostOrganizationResponse['cleanup']['state'] ?? null) !== 'not_confirmed'
+        || !str_contains(
+            (string) json_encode($humanLostOrganizationResponse['checks'] ?? [], JSON_THROW_ON_ERROR),
+            'write outcome reconciliation',
+        )) {
+        terminalAcceptanceFail('C03 lost create response claimed cleanup confirmation without a captured root id');
+    }
     $observedRequestId = null;
     $transportCalls = 0;
     $GLOBALS['sand_iam_live_http_transport'] = static function (array $target, array $step, string $authorization, string $requestId) use (&$observedRequestId, &$transportCalls): array {
@@ -901,8 +1226,12 @@ try {
             };
         };
         $chainFourPartial = liveRun('workload-credential-invocation', $workloadChain, $chainFourTargets, ['platform_admin' => 'Authorization: Bearer platform-test', 'service_client' => 'Authorization: Bearer service-test'], TERMINAL_ACCEPTANCE_MOCK_PREFIX, ['workload-credential-invocation' => ['platform_admin', 'service_client']]);
-        if (($chainFourPartial['cleanup']['ok'] ?? false) !== true || !in_array('controlled cleanup workload grant after credential issue failure', $chainFourCalls, true) || !in_array('zero residual workload grant after credential issue failure', $chainFourCalls, true) || in_array('controlled cleanup workload credential invocation', $chainFourCalls, true)) {
-            terminalAcceptanceFail('partial chain4 failure did not select the grant-only recovery and zero-residual branch');
+        if (($chainFourPartial['cleanup']['state'] ?? null) !== 'not_confirmed'
+            || ($chainFourPartial['status'] ?? null) !== 'blocked'
+            || !in_array('controlled cleanup workload grant after credential issue failure', $chainFourCalls, true)
+            || !in_array('zero residual workload grant after credential issue failure', $chainFourCalls, true)
+            || in_array('controlled cleanup workload credential invocation', $chainFourCalls, true)) {
+            terminalAcceptanceFail('partial chain4 failure did not run grant recovery while preserving the unknown credential outcome');
         }
         $preflightPlan = ['preflight' => [
             'fixture_ownership' => ['prefix' => TERMINAL_ACCEPTANCE_MOCK_PREFIX, 'confirmation' => 'I_OWN_THIS_PREFIXED_FIXTURE_SCOPE'],
@@ -995,9 +1324,11 @@ try {
             terminalAcceptanceFail('C01 first-create credential failure made HTTP or claimed cleanup/status confirmation without captures');
         }
         $c01FullCalls = [];
-        $GLOBALS['sand_iam_live_http_transport'] = static function (array $target, array $step) use (&$c01FullCalls): array {
+        $c01RequestIds = [];
+        $GLOBALS['sand_iam_live_http_transport'] = static function (array $target, array $step, string $authorization, string $requestId) use (&$c01FullCalls, &$c01RequestIds): array {
             $id = (string) ($step['id'] ?? '');
             $c01FullCalls[] = $id;
+            $c01RequestIds[] = $requestId;
             $body = match ($id) {
                 'create organization' => ['code' => 200, 'data' => ['id' => 11]],
                 'create application' => ['code' => 200, 'data' => ['id' => 22]],
@@ -1033,23 +1364,31 @@ try {
         if (($c01Full['status'] ?? null) !== 'passed'
             || (($c01Full['cleanup']['state'] ?? null) !== 'confirmed')
             || count($c01FullCalls) !== 13
+            || count(array_unique($c01RequestIds)) !== count($c01RequestIds)
             || array_slice($c01FullCalls, -2) !== ['controlled cleanup full organization application environment grant', 'zero residual full organization application environment grant']
             || !in_array('controlled cleanup full organization application environment grant', $c01FullCalls, true)
             || !in_array('zero residual full organization application environment grant', $c01FullCalls, true)) {
             terminalAcceptanceFail('C01 full-grant production liveRun did not accept the retained-anchor response shape');
         }
         $chainTwoCleanupSelections = [
-            'complete' => ['identity_id' => '34', 'group_id' => '35', 'group_member_id' => '36', 'group_role_relation_id' => '37'],
-            'member' => ['identity_id' => '34', 'group_id' => '35', 'group_member_id' => '36'],
-            'group' => ['identity_id' => '34', 'group_id' => '35'],
-            'identity' => ['identity_id' => '34'],
+            'complete' => ['identity_import_job_id' => '211', 'directory_config_id' => 'directory', 'sync_connector_id' => '201', 'identity_id' => '34', 'group_id' => '35', 'group_member_id' => '36', 'group_role_relation_id' => '37'],
+            'member' => ['identity_import_job_id' => '211', 'directory_config_id' => 'directory', 'sync_connector_id' => '201', 'identity_id' => '34', 'group_id' => '35', 'group_member_id' => '36'],
+            'group' => ['identity_import_job_id' => '211', 'directory_config_id' => 'directory', 'sync_connector_id' => '201', 'identity_id' => '34', 'group_id' => '35'],
+            'identity' => ['identity_import_job_id' => '211', 'directory_config_id' => 'directory', 'sync_connector_id' => '201', 'identity_id' => '34'],
+            'sync only' => ['identity_import_job_id' => '211', 'directory_config_id' => 'directory', 'sync_connector_id' => '201'],
+            'import only' => ['identity_import_job_id' => '211'],
         ];
         foreach ($chainTwoCleanupSelections as $branch => $captures) {
             $selected = array_column(liveSelectedCleanupSteps($groupChain, $captures), 'id');
-            if (count($selected) !== 2
-                || !str_contains($selected[0] ?? '', $branch === 'complete' ? 'complete' : $branch)
-                || !str_contains($selected[1] ?? '', $branch === 'complete' ? 'complete' : $branch)) {
-                terminalAcceptanceFail("chain2 {$branch} capture set did not select exactly its cleanup and zero-residual pair");
+            $branchNeedle = $branch === 'complete' ? 'complete' : $branch;
+            $directoryExpected = $branch !== 'import only';
+            $offset = $directoryExpected ? 2 : 0;
+            if (count($selected) !== ($directoryExpected ? 4 : 2)
+                || ($directoryExpected && ($selected[0] !== 'cleanup controlled Keycloak directory'
+                    || $selected[1] !== 'zero residual controlled Keycloak directory'))
+                || !str_contains($selected[$offset] ?? '', $branchNeedle)
+                || !str_contains($selected[$offset + 1] ?? '', $branchNeedle)) {
+                terminalAcceptanceFail("chain2 {$branch} capture set did not select its directory and SandIAM cleanup pairs");
             }
         }
         $chainTwoStatusPaths = [];
@@ -1065,12 +1404,18 @@ try {
                 if (($step['id'] ?? '') === $failStep) return ['status' => 500, 'body' => '{"code":500}', 'json' => ['code' => 500], 'headers' => [], 'location' => ''];
                 if (($step['proof'] ?? '') === 'zero_residual') {
                     $path = (string) ($step['path'] ?? '');
-                    parse_str((string) parse_url($path, PHP_URL_QUERY), $query);
-                    if (($query['role_id'] ?? null) !== '__REQUIRED_ROLE_ID__') terminalAcceptanceFail("chain2 {$branch} driver status request omitted role_id");
-                    $chainTwoStatusPaths[$branch] = $path;
+                    if (($target['kind'] ?? '') === 'sandiam') {
+                        parse_str((string) parse_url($path, PHP_URL_QUERY), $query);
+                        if (($query['role_id'] ?? null) !== '__REQUIRED_ROLE_ID__') terminalAcceptanceFail("chain2 {$branch} driver status request omitted role_id");
+                        $chainTwoStatusPaths[$branch] = $path;
+                    }
                 }
                 $json = ['code' => 200, 'data' => []];
                 $id = match ((string) ($step['id'] ?? '')) {
+                    'preview controlled identity import' => 211,
+                    'create controlled directory connector' => 201,
+                    'run controlled directory create sync' => 202,
+                    'run controlled directory update sync' => 205,
                     'create identity' => 34,
                     'create group' => 35,
                     'add this-run identity to group' => 36,
@@ -1078,11 +1423,25 @@ try {
                     default => null,
                 };
                 if ($id !== null) $json['data'] = ['id' => $id];
+                if (($step['id'] ?? '') === 'preview controlled identity import') $json['data'] += ['digest' => str_repeat('a', 64), 'total' => 1, 'valid' => 1, 'invalid' => 0];
+                if (($step['id'] ?? '') === 'confirm controlled identity import invitation') $json['data'] = ['state' => 'completed', 'success' => 1, 'warning' => 0, 'failure' => 0];
+                if (($step['id'] ?? '') === 'configure controlled directory connector') $json['data'] = ['config_version' => 1];
+                if (($step['id'] ?? '') === 'run controlled directory create sync') $json['data'] += ['state' => 'succeeded', 'pulled' => 1, 'created' => 1, 'conflict' => 0];
+                if (($step['id'] ?? '') === 'run controlled directory update sync') $json['data'] += ['state' => 'succeeded', 'pulled' => 1, 'updated' => 1, 'conflict' => 0];
                 if (($step['id'] ?? '') === 'authorization decision allows derived group role') $json['data'] = ['allowed' => true];
                 if (($step['id'] ?? '') === 'authorization decision denies outside policy') $json['data'] = ['allowed' => false];
                 if (isset($step['assert']['json_contains']['data.data']['contains'])) $json['data'] = ['data' => [$step['assert']['json_contains']['data.data']['contains']]];
-                if (($step['proof'] ?? '') === 'physical_cleanup' || ($step['proof'] ?? '') === 'zero_residual') $json['data'] = ['residual' => ['identity' => 0, 'identity_group' => 0, 'identity_group_member' => 0, 'identity_group_role' => 0]];
-                if (($target['kind'] ?? '') === 'external') $json = ['allowed' => false];
+                if (($step['proof'] ?? '') === 'physical_cleanup' || ($step['proof'] ?? '') === 'zero_residual') $json['data'] = ['residual' => ['identity' => 0, 'identity_group' => 0, 'identity_group_member' => 0, 'identity_group_role' => 0, 'sync_connector' => 0, 'sync_run' => 0, 'sync_resource' => 0, 'directory_identity' => 0, 'identity_import_job' => 0, 'identity_import_row' => 0, 'import_invitation' => 0]];
+                if (($target['kind'] ?? '') === 'external') {
+                    $json = match ((string) ($step['id'] ?? '')) {
+                        'configure controlled Keycloak directory' => ['scope' => TERMINAL_ACCEPTANCE_MOCK_PREFIX, 'directory_config_id' => 'directory', 'generation' => 1],
+                        'mutate controlled Keycloak directory' => ['directory_config_id' => 'directory', 'generation' => 2],
+                        'controlled directory proves both generations' => ['directory_config_id' => 'directory', 'generation' => 2, 'record_count' => 1, 'generations_seen' => [1, 2]],
+                        'cleanup controlled Keycloak directory' => ['directory_config_id' => 'directory', 'residual' => 0],
+                        'zero residual controlled Keycloak directory' => ['residual' => 0],
+                        default => ['allowed' => false],
+                    };
+                }
                 return ['status' => 200, 'body' => json_encode($json, JSON_THROW_ON_ERROR), 'json' => $json, 'headers' => [], 'location' => ''];
             };
             liveRun('identity-group-role-policy', $groupChain, $examplePlan['targets'], ['platform_admin' => 'Authorization: Bearer platform-test', 'application_user' => 'Authorization: Bearer user-test', 'out_of_scope_admin' => 'Authorization: Bearer out-of-scope-test'], TERMINAL_ACCEPTANCE_MOCK_PREFIX, $chainTwoRequirements);
@@ -1103,17 +1462,17 @@ try {
         }
         $pgStep = ['id' => 'zero human auth artifacts', 'proof' => 'zero_residual', 'target_kind' => 'postgres_readonly', 'verifier' => ['kind' => 'postgres_readonly', 'check' => 'human_auth_artifacts']];
         putenv('SAND_IAM_ACCEPTANCE_DB_READONLY_VERIFY'); putenv('SAND_IAM_ACCEPTANCE_DB_READONLY_CONFIRM');
-        try { livePostgresReadonlyVerify($pgStep, ['captured_ids' => ['session_id' => '11', 'mfa_factor_id' => '12']]); terminalAcceptanceFail('readonly verifier connected without explicit DB authorization'); } catch (RuntimeException) { /* expected before PDO */ }
+        try { livePostgresReadonlyVerify($pgStep, ['captured_ids' => ['identity_id' => '10', 'session_id' => '11', 'mfa_factor_id' => '12']]); terminalAcceptanceFail('readonly verifier connected without explicit DB authorization'); } catch (RuntimeException) { /* expected before PDO */ }
         putenv('SAND_IAM_ACCEPTANCE_DB_READONLY_VERIFY=1'); putenv('SAND_IAM_ACCEPTANCE_DB_READONLY_CONFIRM=I_UNDERSTAND_THIS_READS_EXISTING_DATABASE');
         $GLOBALS['sand_iam_live_postgres_readonly_verifier'] = static function (string $check, array $definitions, array $captured): array {
-            if ($check !== 'human_auth_artifacts' || $captured !== ['session_id' => '11', 'mfa_factor_id' => '12']) terminalAcceptanceFail('readonly verifier received unsafe state values');
-            $expected = ['sand_iam_auth_refresh_token.session_id', 'sand_iam_auth_session.id', 'sand_iam_mfa_recovery_code.factor_id', 'sand_iam_mfa_factor.id'];
+            if ($check !== 'human_auth_artifacts' || $captured !== ['identity_id' => '10', 'session_id' => '11', 'mfa_factor_id' => '12']) terminalAcceptanceFail('readonly verifier received unsafe state values');
+            $expected = ['sand_iam_auth_challenge.identity_id', 'sand_iam_auth_refresh_token.session_id', 'sand_iam_auth_session.id', 'sand_iam_mfa_recovery_code.factor_id', 'sand_iam_mfa_factor.id'];
             if (array_map(static fn (array $item): string => $item['table'] . '.' . $item['column'], $definitions) !== $expected) terminalAcceptanceFail('readonly verifier registry drifted from fixed table/column allowlist');
             return array_fill_keys($expected, 0);
         };
-        if (!livePostgresReadonlyVerify($pgStep, ['captured_ids' => ['session_id' => '11', 'mfa_factor_id' => '12']])['ok']) terminalAcceptanceFail('readonly verifier rejected zero residual mock results');
-        $GLOBALS['sand_iam_live_postgres_readonly_verifier'] = static fn (): array => ['sand_iam_auth_refresh_token.session_id' => 1, 'sand_iam_auth_session.id' => 0, 'sand_iam_mfa_recovery_code.factor_id' => 0, 'sand_iam_mfa_factor.id' => 0];
-        if (livePostgresReadonlyVerify($pgStep, ['captured_ids' => ['session_id' => '11', 'mfa_factor_id' => '12']])['ok']) terminalAcceptanceFail('readonly verifier accepted residual session data');
+        if (!livePostgresReadonlyVerify($pgStep, ['captured_ids' => ['identity_id' => '10', 'session_id' => '11', 'mfa_factor_id' => '12']])['ok']) terminalAcceptanceFail('readonly verifier rejected zero residual mock results');
+        $GLOBALS['sand_iam_live_postgres_readonly_verifier'] = static fn (): array => ['sand_iam_auth_challenge.identity_id' => 0, 'sand_iam_auth_refresh_token.session_id' => 1, 'sand_iam_auth_session.id' => 0, 'sand_iam_mfa_recovery_code.factor_id' => 0, 'sand_iam_mfa_factor.id' => 0];
+        if (livePostgresReadonlyVerify($pgStep, ['captured_ids' => ['identity_id' => '10', 'session_id' => '11', 'mfa_factor_id' => '12']])['ok']) terminalAcceptanceFail('readonly verifier accepted residual session data');
     } finally {
         unset($GLOBALS['sand_iam_live_http_transport']);
         unset($GLOBALS['sand_iam_live_postgres_readonly_verifier']);

@@ -306,7 +306,11 @@ final class WebhookService
                     if ($lockedApplication === null || $lockedOrganization === null || $delivery === null || !in_array((int) $delivery->status, [1, 4], true)) {
                         throw new ApiException('SAND_IAM_WEBHOOK_DELIVERY_NOT_RETRYABLE', 409);
                     }
-                    $delivery->save(['status' => 1, 'attempt_count' => 0, 'next_attempt_time' => date('Y-m-d H:i:s'), 'locked_until' => null, 'last_error_code' => null]);
+                    // Keep the cumulative attempt number. Resetting it here
+                    // makes the next worker attempt reuse the first attempt's
+                    // audit request id, so a successful manual retry can be
+                    // delivered without a persisted success audit.
+                    $delivery->save(['status' => 1, 'next_attempt_time' => date('Y-m-d H:i:s'), 'locked_until' => null, 'last_error_code' => null]);
                     $this->auditWriter->write(
                         'admin',
                         'control_plane',

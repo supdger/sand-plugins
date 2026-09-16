@@ -100,6 +100,9 @@ namespace {
         'function webhookDeliveryAuditIds(array $deliveryIds): array',
         "->where('action', 'webhook.delivery')",
         "->where('resource_type', 'webhook_delivery')",
+        "Db::table('sand_iam_auth_challenge')",
+        "->whereIn('identity_id', \$identityIds)",
+        "'auth_challenge' => \$challengeRows",
         'function detachPolicyVersions(array $policyVersionIds, array $policyIds, int $applicationId): void',
         "Db::table('sand_iam_policy')->where('application_id', \$applicationId)->whereIn('id', \$policyIds)->lock(true)",
         "Db::table('sand_iam_policy_version')->where('id', \$publishedVersionId)->lock(true)",
@@ -109,6 +112,8 @@ namespace {
         "Db::table('sand_iam_policy_version')->whereIn('id', \$policyVersionIds)->lock(true)",
         "->whereIn('published_version_id', \$policyVersionIds)",
         "->whereNotIn('id', \$policyIds)",
+        "->field('id')",
+        "->limit(1)",
         "->where('application_id', \$applicationId)",
         "->whereIn('policy_id', \$policyIds)",
         'SAND_IAM_ACCEPTANCE_FIXTURE_POLICY_VERSION_SCOPE_DENIED',
@@ -120,6 +125,10 @@ namespace {
     }
     if (str_contains($source, "whereIn('member.id'") || str_contains($source, "whereIn('group_role.id'")) {
         fwrite(STDERR, "database acceptance store incorrectly narrows relationship scope to submitted IDs\n");
+        exit(1);
+    }
+    if (str_contains($source, '->exists()') || substr_count($source, '->count() > 0') !== 2) {
+        fwrite(STDERR, "database acceptance store must avoid unsupported locked aggregate existence checks\n");
         exit(1);
     }
     $webhookDeliveryQuery = strstr($source, 'function webhookDeliveries', true);

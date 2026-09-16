@@ -12,7 +12,7 @@ SandIAM 判定身份与权限，应用负责加载真实业务对象并只在允
 | 场景 | 入口 | 鉴权与调用方责任 |
 | --- | --- | --- |
 | 应用用户注册、登录、刷新、会话与自助安全 | `/api/sand-iam/v1/auth/*`、`/me/*` | 未登录入口仅限注册/登录/刷新/恢复；其他调用使用 `Authorization: Bearer <access token>`。应用必须按组织代码和应用代码隔离用户体验。 |
-| 业务 API 授权决定 | `POST /api/sand-iam/v1/authorization/decide` | 带用户 access token；请求携带稳定 `api_code`、已登记的组织/应用代码和服务器加载的范围属性。 |
+| 业务 API 授权决定 | `POST /api/sand-iam/v1/authorization/decide` | 带用户 access token；请求携带稳定 `api_code`、已登记的组织/应用代码。策略上下文放在 `attributes`；单个已加载业务对象的范围事实放在 `entity_attributes`。 |
 | 机器身份上下文 | `POST /app/sand-iam/runtime/context/issue`、`verify` | 签发端用工作负载凭证作为 `Authorization: Bearer`；验证端提交短期 context，比较服务代码、受众和每一个动作后才执行业务副作用。 |
 | 协议互操作 | `/api/sand-iam/v1/oauth/*`、`.well-known/*`、`/scim/*`、`/cas/*` | 只在管理员明确配置并按相应协议校验时启用；不能因路由存在而假定外部互操作已经验收。 |
 
@@ -23,7 +23,8 @@ SandIAM 判定身份与权限，应用负责加载真实业务对象并只在允
 
 `authorization/decide` 必须在服务器拥有用户 Bearer token 后调用；必填 body 是
 `organization_code`、`application_code`、`api_code`，`api_version` 默认 `v1`，`attributes` 必须是
-JSON 对象且只能来自服务器已验证的事实。最小请求和成功形状如下，`data.allowed=false` 仍是一次正常的
+JSON 对象且只能来自服务器已验证的策略上下文。后端已经加载单个业务对象时，另传非空 JSON 对象
+`entity_attributes`；SandIAM 在粗粒度策略允许后复核返回 scope，并写入关联的 `scope.*` 审计。最小请求和成功形状如下，`data.allowed=false` 仍是一次正常的
 授权决定，业务方必须拒绝副作用：
 
 ```http
@@ -32,17 +33,17 @@ Authorization: Bearer <application-user-access-token>
 X-Request-Id: business-read-001
 Content-Type: application/json
 
-{"organization_code":"acme","application_code":"workbench","api_code":"work_item.read","api_version":"v1","attributes":{"organization_id":42}}
+{"organization_code":"acme","application_code":"workbench","api_code":"work_item.read","api_version":"v1","attributes":{"request_channel":"api"},"entity_attributes":{"organization_id":42,"owner_identity_id":101}}
 ```
 
 <!-- sand-iam-doc-contract: decide.allow -->
 ```json
-{"code":200,"data":{"allowed":true,"code":"allowed","policy_ids":[12],"scope":{"equals":{"organization_id":42}},"application_id":3,"identity_id":101,"api_code":"work_item.read","api_version":"v1","resource_code":"work_item","action":"work_item.read","operation":"read","risk_level":"medium","request_id":"business-read-001"}}
+{"code":200,"data":{"allowed":true,"code":"allowed","policy_ids":[12],"scope":{"equals":{"organization_id":42}},"application_id":3,"identity_id":101,"api_code":"work_item.read","api_version":"v1","resource_code":"work_item","action":"work_item.read","operation":"read","risk_level":"medium","request_id":"business-read-001","scope_checked":true}}
 ```
 
 <!-- sand-iam-doc-contract: decide.deny -->
 ```json
-{"code":200,"data":{"allowed":false,"code":"SAND_IAM_POLICY_DENIED","policy_ids":[],"scope":{},"application_id":3,"identity_id":101,"api_code":"work_item.read","api_version":"v1","resource_code":"work_item","action":"work_item.read","operation":"read","risk_level":"medium","request_id":"business-read-deny-001"}}
+{"code":200,"data":{"allowed":false,"code":"SAND_IAM_POLICY_DENIED","policy_ids":[],"scope":{},"application_id":3,"identity_id":101,"api_code":"work_item.read","api_version":"v1","resource_code":"work_item","action":"work_item.read","operation":"read","risk_level":"medium","request_id":"business-read-deny-001","scope_checked":false}}
 ```
 
 <!-- sand-iam-doc-contract: decide.error -->
@@ -50,11 +51,13 @@ Content-Type: application/json
 {"code":403,"msg":"SAND_IAM_RESOURCE_SCOPE_DENIED: real entity is outside the permitted scope"}
 ```
 
-`data.allowed=false` 是可解析的 deny 决定，PHP SDK 的 `authorize()` 会以
+`data.allowed=false` 是可解析的 deny 决定；它既可能是策略拒绝，也可能是带 `scope_checked=true` 的
+`SAND_IAM_RESOURCE_SCOPE_DENIED`。PHP SDK 的 `authorize()` 或 `authorizeEntity()` 会以
 `AuthorizationDenied` 失败关闭；HTTP `401`/`403` 等 error envelope 则以 `SandIamException` 失败关闭。
 缺失/空 Bearer token 返回 `401 SAND_IAM_AUTHENTICATION_FAILED`；组织或应用与 token 不一致、未登记
 API、范围不符或策略拒绝必须按返回的稳定 `SAND_IAM_*` 码拒绝。网络错误、非 JSON 或不能识别的
-响应同样拒绝，不得把调用方提供的 `organization_id`、owner 或范围属性当作可信事实。
+响应同样拒绝。业务端只能从自己已加载的业务对象生成 `entity_attributes`，不得把请求 body、header 或 URL 中的
+`organization_id`、owner 或范围属性原样转交为可信事实。
 
 机器调用分成两次：`issue` 的必填 header 是 workload credential，body 必填
 `service_code`、`audience`、非空 `actions`；`verify` 不接收 workload credential，body 必填短期

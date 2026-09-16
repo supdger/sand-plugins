@@ -35,7 +35,7 @@
 
 | 路由 | 用途 | 权限码 |
 | --- | --- | --- |
-| `POST /acceptance-fixture/webhook-event` | 仅为第 7 链发出一条本轮专用验收事件，并返回精确投递编号 | `sand_iam:acceptance_fixture:cleanup` |
+| `POST /acceptance-fixture/webhook-event` | 发出内部验收专用事件；不作为第 7 链真实业务事件通过证据 | `sand_iam:acceptance_fixture:cleanup` |
 | `POST /acceptance-fixture/cleanup` | 先停用，再按子对象到父对象的顺序清理本轮验收数据 | `sand_iam:acceptance_fixture:cleanup` |
 | `GET /acceptance-fixture/status` | 按同一组精确编号检查是否还有残留 | `sand_iam:acceptance_fixture:read` |
 
@@ -47,13 +47,13 @@
 - 按对象类型列出的 `object_ids`；
 - 与每个对象一一对应的 `object_request_ids`，它们必须命中该对象创建成功时的审计记录。
 
-第 7 链在创建并启用端点后，只能调用 `POST /acceptance-fixture/webhook-event`。该接口与清理接口共用默认关闭、平台超级管理员和 `sand_iam:acceptance_fixture:cleanup` 边界；它要求固定链 `event-webhook-delivery`、本轮精确前缀、请求体与 `X-Request-Id` 相同的 `request_id`、客户主体/应用/端点编号，以及确认值 `I_CONFIRM_EMIT_ONLY_THIS_ACCEPTANCE_EVENT`。端点必须是本轮创建、已启用、归属该客户主体/应用，并命中 `webhook.create` 创建审计；接口只通过既有 Webhook outbox 写入一条 `acceptance.fixture.event`，其 `event_id` 精确等于 `request_id`，并返回该端点、应用和事件编号下唯一的 `delivery_ids`。它不触碰身份或任何其他业务对象。成功/失败审计仅保留链、前缀摘要、端点编号和投递数量，不记录确认值、原始前缀或端点密钥。
+第 7 链通过正常 `credential.issue` 产生生产 `credential.changed` 事件，不再用 `acceptance.fixture.event` 代替业务变化。计划先创建端点并将一次性签名密钥写入本轮受控 HTTPS 接收器，再签发带固定前缀的临时调用凭证。接收器验证时间戳、HMAC、应用、事件类型、凭证编号和签发请求号；第一次真实投递返回 500，人工重试后返回 204。证明完成后按正常接口撤销凭证、停用端点。
 
 第 4 链额外要求 `environment_id`、`workload_client_id`、`service_id`、`service_action_id` 与 `invocation_request_ids`。接口逐项核验客户主体 → 应用 → 环境 → 调用身份，以及服务 → 服务动作关系；预置的客户主体、应用、环境、调用身份、服务和服务动作只作为边界输入，绝不在清理集合中。它先按 credential、grant 和完整层级查询同一固定前缀下的**全部** `service_invocation_operation`，再与提交的 `invocation_request_ids` 作无序精确集合比较：少一条、多一条或同一请求出现两条均拒绝；每条还必须命中 `service.invoke.authorize` 成功审计。历史或预置调用记录一律拒绝。该轮新建 grant 下的 quota bucket 是受限子对象，只在同一事务中处理。完整链先按正常语义撤销 credential、grant，再物理删除 **service_quota_bucket → service_invocation_operation → credential → service_grant**；若 credential 签发失败但 grant 已创建，可只提交 grant 的创建审计绑定作幂等回收。任何跨应用、跨环境、错调用身份、错服务/动作、少交对象、前缀或创建审计不匹配都会整批回滚。
 
 第 2 链额外要求预置 `role_id`。接口按固定前缀与应用边界查询**全部**本轮 identity-group-member（同时限定本轮 group 和 identity）以及 identity-group-role（限定本轮 group）关系，再与提交编号无序精确比较；少交、多交、历史或同组额外关系均在任何停用或删除前拒绝。预置角色必须真实存在、已启用、属于当前应用且不带本轮前缀；关系中的 `role_id` 必须精确等于该预置角色。角色、资源、策略、客户主体、应用和环境均不属于清理对象。状态查询按实际关系范围统计残留，不能因提交编号较少而把额外关系误报为零残留。
 
-第 7 链额外要求每条 `webhook_delivery` 的 `delivery_retry_request_ids`。端点必须属于提交的应用和客户主体；接口锁定该端点下该应用的**完整**投递集合，拒绝未提交、历史、额外、跨端点或跨应用的记录。任一投递已被 worker 领取（`status=2` 或锁未过期）即返回 `DRAIN_REQUIRED`，不执行任何写入；排空后才先停用端点，再物理删除 **delivery → endpoint**。每条投递还必须同时命中 `webhook.delivery_enqueue` 创建审计、`webhook.delivery` worker 审计及对应 `webhook.delivery_retry` 请求审计；审计只保留脱敏关联证据，不包含端点密钥。
+第 7 链额外要求 `environment_id`、`workload_client_id` 和每条 `webhook_delivery` 的 `delivery_retry_request_ids`。接口核验客户主体 → 应用 → 环境 → 调用身份，并锁定本轮端点下该应用的**完整**投递集合。每条投递必须是 `credential.changed`，其 envelope 必须精确引用本轮 `credential.issue` 的凭证编号和请求号，同时命中 `webhook.delivery` worker 审计及对应的 `webhook.delivery_retry` 请求审计。任一投递仍被 worker 持有即返回 `DRAIN_REQUIRED`。排空后按 **delivery → credential → endpoint** 物理删除并核对零残留；接收器临时配置由独立控制接口删除并另行核对零残留。
 
 接口会同时核对对象编号、固定前缀、客户主体/应用归属和创建审计。任一对象不属于本轮，整批操作都会拒绝并回滚；预置演示数据和历史数据不能被这个接口清理。成功响应包含 `matched`、`revoked`、`purged`、`residual` 和 `replayed`。重复提交同一个清理请求只返回上次结果，不会再次删除。成功审计使用 `acceptance_fixture.cleanup`；事务失败后的审计使用独立动作 `acceptance_fixture.cleanup_failed`，不会占用成功动作的同一请求键，因此同一清理请求可在故障消除后安全重试。两类审计只保留本轮请求编号、链、前缀摘要和数量，不保存确认值、凭证、`secret_hash`、token、原始前缀或密钥片段；客户主体和应用被清理后，审计正文仍保留。
 

@@ -26,6 +26,31 @@ if (!interface_exists(ServiceInvocationFactResolver::class)) require_once dirnam
 
 function invocationPgAssert(bool $condition, string $message): void { if (!$condition) throw new RuntimeException($message); }
 
+function invocationPgEnsureSigningKey(): void
+{
+    $key = trim((string) getenv('SAND_IAM_CONTEXT_SIGNING_KEY'));
+    if ($key === '') $key = bin2hex(random_bytes(32));
+    putenv('SAND_IAM_CONTEXT_SIGNING_KEY=' . $key);
+    $_ENV['SAND_IAM_CONTEXT_SIGNING_KEY'] = $key;
+    $_SERVER['SAND_IAM_CONTEXT_SIGNING_KEY'] = $key;
+}
+
+if (($argv[1] ?? '') === '--signing-key-self-test') {
+    putenv('SAND_IAM_CONTEXT_SIGNING_KEY=');
+    $_ENV['SAND_IAM_CONTEXT_SIGNING_KEY'] = '';
+    $_SERVER['SAND_IAM_CONTEXT_SIGNING_KEY'] = '';
+    invocationPgEnsureSigningKey();
+    $key = (string) getenv('SAND_IAM_CONTEXT_SIGNING_KEY');
+    invocationPgAssert(
+        strlen($key) === 64
+        && hash_equals($key, (string) $_ENV['SAND_IAM_CONTEXT_SIGNING_KEY'])
+        && hash_equals($key, (string) $_SERVER['SAND_IAM_CONTEXT_SIGNING_KEY']),
+        'temporary signing key did not converge across environment repositories',
+    );
+    echo "service invocation signing key self-test passed\n";
+    exit(0);
+}
+
 /** @param list<array<string,mixed>> $race */
 function invocationPgRaceSummary(array $race): string
 {
@@ -78,6 +103,24 @@ function invocationPgWorker(array $payload, string $resultFile): void
     }
 }
 
+/** @param list<mixed> $children */
+function invocationPgCloseChildren(array &$children, bool $terminate): void
+{
+    foreach ($children as $index => $process) {
+        if (!is_resource($process)) {
+            unset($children[$index]);
+            continue;
+        }
+        if ($terminate) {
+            $status = proc_get_status($process);
+            if (($status['running'] ?? false) === true) proc_terminate($process);
+        }
+        proc_close($process);
+        unset($children[$index]);
+    }
+    $children = [];
+}
+
 /** @param array<string,mixed> $base @return list<array<string,mixed>> */
 function invocationPgCompete(array $base): array
 {
@@ -97,11 +140,12 @@ function invocationPgCompete(array $base): array
         $deadline = microtime(true) + 15;
         while (!is_file($directory . '/ready-0') || !is_file($directory . '/ready-1')) { if (microtime(true) >= $deadline) throw new RuntimeException('quota workers did not reach barrier'); usleep(10_000); }
         touch($barrier);
-        foreach ($children as $process) proc_close($process);
+        invocationPgCloseChildren($children, false);
         $results = [];
         foreach ($resultFiles as $file) { $decoded = is_file($file) ? json_decode((string) file_get_contents($file), true) : null; if (!is_array($decoded)) throw new RuntimeException('quota worker result missing'); $results[] = $decoded; }
         return $results;
     } finally {
+        invocationPgCloseChildren($children, true);
         foreach (glob($directory . '/*') ?: [] as $file) @unlink($file); @rmdir($directory);
     }
 }
@@ -109,9 +153,29 @@ function invocationPgCompete(array $base): array
 $hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
 $root = dirname(__DIR__, 3);
 if (getenv('SAND_IAM_RUN_PG_TESTS') !== '1' || !is_file($hostRoot . '/vendor/autoload.php')) { echo "SKIP service invocation PostgreSQL integration; use a disposable installed SandIAM database\n"; exit(0); }
-if ((string) getenv('SAND_IAM_CONTEXT_SIGNING_KEY') === '') putenv('SAND_IAM_CONTEXT_SIGNING_KEY=' . bin2hex(random_bytes(32)));
-chdir($hostRoot); require $hostRoot . '/vendor/autoload.php'; require $root . '/plugin/sand-iam/app/functions.php';
-Config::clear(); support\App::loadAllConfig(['route']); Config::load($root . '/plugin/sand-iam/config', ['route'], 'plugin.sand-iam'); ThinkOrm::start(null);
+$sourcePluginRoot = getenv('SAND_IAM_SOURCE_PLUGIN_ROOT') ?: $root . '/plugin/sand-iam';
+$expectedDatabase = getenv('SAND_IAM_PG_EXPECTED_DATABASE') ?: 'sandadmin';
+chdir($hostRoot);
+require $hostRoot . '/vendor/autoload.php';
+\Dotenv\Dotenv::createUnsafeImmutable($hostRoot)->load();
+invocationPgEnsureSigningKey();
+require $sourcePluginRoot . '/app/functions.php';
+Config::clear(); support\App::loadAllConfig(['route']); Config::load($sourcePluginRoot . '/config', ['route'], 'plugin.sand-iam'); ThinkOrm::start(null);
+foreach ([
+    IdentityContextProvider::class => $sourcePluginRoot . '/app/runtime/IdentityContextProvider.php',
+    ServiceInvocationAuthorizer::class => $sourcePluginRoot . '/app/runtime/ServiceInvocationAuthorizer.php',
+] as $class => $expectedFile) {
+    $loadedFile = (new ReflectionClass($class))->getFileName();
+    invocationPgAssert(
+        realpath($expectedFile) !== false && realpath($loadedFile) === realpath($expectedFile),
+        "{$class} did not load from the authoritative plugin source",
+    );
+}
+$database = Db::query('SELECT current_database() AS name');
+invocationPgAssert(
+    isset($database[0]['name']) && (string) $database[0]['name'] === $expectedDatabase,
+    "refusing fixture writes outside expected database {$expectedDatabase}",
+);
 if (($argv[1] ?? '') === '--quota-worker') { $payload = json_decode((string) file_get_contents((string) ($argv[2] ?? '')), true); if (!is_array($payload)) throw new RuntimeException('invalid quota worker payload'); invocationPgWorker($payload, (string) ($argv[3] ?? '')); exit(0); }
 
 $suffix = bin2hex(random_bytes(6));
@@ -219,7 +283,16 @@ try {
     try { $authorizer->revalidateInvocation((int) $first['authorization_id'], (string) $issued['context'], (string) $service->code, 'quota-test', 'quota.invoke', 'pg-resource', '42', '127.0.0.1', 'quota-revalidate-' . $suffix); throw new RuntimeException('revoked grant revalidated'); } catch (ApiException $exception) { invocationPgAssert(str_contains($exception->getMessage(), 'SAND_IAM_SERVICE_ACTION_FORBIDDEN'), 'revoked grant used wrong revalidation error'); }
     echo "service grant invocation PostgreSQL integration passed\n";
 } finally {
-    if ($application !== null) Db::table('sand_iam_audit_log')->where('application_id', (int) $application->id)->delete();
+    $applicationIds = array_values(array_filter([
+        $application === null ? 0 : (int) $application->id,
+        $foreignApplication === null ? 0 : (int) $foreignApplication->id,
+    ]));
+    $grantIds = array_values(array_filter([
+        $grant === null ? 0 : (int) $grant->id,
+        $otherGrant === null ? 0 : (int) $otherGrant->id,
+        $otherClientGrant === null ? 0 : (int) $otherClientGrant->id,
+    ]));
+    if ($applicationIds !== []) Db::table('sand_iam_audit_log')->whereIn('application_id', $applicationIds)->delete();
     if ($grant !== null) { Db::table('sand_iam_service_quota_bucket')->where('grant_id', (int) $grant->id)->delete(); Db::table('sand_iam_service_invocation_operation')->where('grant_id', (int) $grant->id)->delete(); Db::table('sand_iam_service_grant')->where('id', (int) $grant->id)->delete(); }
     if ($otherGrant !== null) { Db::table('sand_iam_service_quota_bucket')->where('grant_id', (int) $otherGrant->id)->delete(); Db::table('sand_iam_service_invocation_operation')->where('grant_id', (int) $otherGrant->id)->delete(); Db::table('sand_iam_service_grant')->where('id', (int) $otherGrant->id)->delete(); }
     if ($otherClientGrant !== null) { Db::table('sand_iam_service_quota_bucket')->where('grant_id', (int) $otherClientGrant->id)->delete(); Db::table('sand_iam_service_invocation_operation')->where('grant_id', (int) $otherClientGrant->id)->delete(); Db::table('sand_iam_service_grant')->where('id', (int) $otherClientGrant->id)->delete(); }
@@ -239,4 +312,27 @@ try {
     if ($service !== null) Db::table('sand_iam_service')->where('id', (int) $service->id)->delete();
     if ($otherService !== null) Db::table('sand_iam_service')->where('id', (int) $otherService->id)->delete();
     @unlink($factsStore);
+    if ($applicationIds !== []) {
+        invocationPgAssert(Db::table('sand_iam_audit_log')->whereIn('application_id', $applicationIds)->count() === 0, 'fixture cleanup left audit rows');
+    }
+    if ($grantIds !== []) {
+        invocationPgAssert(Db::table('sand_iam_service_quota_bucket')->whereIn('grant_id', $grantIds)->count() === 0, 'fixture cleanup left quota rows');
+        invocationPgAssert(Db::table('sand_iam_service_invocation_operation')->whereIn('grant_id', $grantIds)->count() === 0, 'fixture cleanup left invocation rows');
+        invocationPgAssert(Db::table('sand_iam_service_grant')->whereIn('id', $grantIds)->count() === 0, 'fixture cleanup left grant rows');
+    }
+    foreach ([
+        'sand_iam_credential' => [$credential, $rotatedCredential, $otherCredential],
+        'sand_iam_workload_client' => [$client, $otherClient],
+        'sand_iam_environment' => [$environment, $foreignEnvironment],
+        'sand_iam_application' => [$application, $foreignApplication],
+        'sand_iam_organization' => [$organization, $foreignOrganization],
+        'sand_iam_service_action' => [$action, $otherAction],
+        'sand_iam_service' => [$service, $otherService],
+    ] as $table => $models) {
+        $ids = array_values(array_map(
+            static fn (object $model): int => (int) $model->id,
+            array_filter($models, static fn (mixed $model): bool => is_object($model)),
+        ));
+        if ($ids !== []) invocationPgAssert(Db::table($table)->whereIn('id', $ids)->count() === 0, "fixture cleanup left rows in {$table}");
+    }
 }

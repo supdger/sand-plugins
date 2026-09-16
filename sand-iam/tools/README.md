@@ -108,12 +108,22 @@ The final-candidate gates remain separate from package construction:
   generated plan digest. Required operator fields are deliberately invalid until
   completed, so a freshly generated report/plan pair cannot pass by accident.
 - `validate-casdoor-comparison.php` validates the external 3-journey ×
-  2-product × 2-round record and its per-run evidence hashes. It never operates
-  either product.
+  2-product × 2-round record. Every v2 run has one structured document plus
+  separately hashed browser, product-system and cleanup artifacts. The
+  structured document binds the candidate, environment, journey, product,
+  round, timestamps and all measured counters; it also requires globally unique
+  request IDs, business-effect references, audit references and zero residuals.
+  It never operates either product.
 - `validate-protocol-interop.php` validates all seven declared protocol families
   against versioned standard clients and real controlled counterparts, including
   protocol-specific positive, negative, replay/revocation, cleanup, independent-review,
-  and evidence-hash requirements. It never connects to a protocol endpoint.
+  and evidence-hash requirements. The v2 report requires one structured evidence
+  document plus separately hashed client, SandIAM, counterpart and cleanup
+  artifacts for every protocol. The structured document is cross-bound to the
+  candidate, environment, client, counterpart and timestamps; every assertion
+  has a unique request ID and must reference all three execution sides, while
+  cleanup must reference a zero-residual artifact. It never connects to a
+  protocol endpoint.
 - `validate-backup-recovery.php` validates a v3 isolated PostgreSQL
   backup/recovery evidence record and separately supplied v2 recovery plan. It
   requires `--report`, `--plan`, `--archive` and `--artifact-manifest`,
@@ -138,6 +148,24 @@ See `docs/development/sand-iam-developer-journey-acceptance.md` and
 `docs/development/sand-iam-endurance-acceptance.md`. A valid plan or passing
 tool test is acceptance infrastructure only; it is not a Casdoor comparison or
 endurance result.
+
+## L01 delegated notification configuration
+
+`admin-notification-live-acceptance.php` closes the notification portion of the
+L01 administrator configuration loop. It uses three distinct delegated
+SandAdmin accounts plus the platform administrator to create, encrypt,
+application-mount, inspect, deny out-of-scope access to, unmount and disable a
+notification provider. It then revokes both grants, proves the same delegated
+accounts are denied, checks exact audit attribution, disables the application
+and organization, and removes only the captured child records.
+
+The tool accepts only the existing `sandadmin` PostgreSQL database, requires a
+`sand_iam_acceptance_<16 hex>_` prefix and the explicit
+`I_CONFIRM_L01_EXISTING_DATABASE_FIXTURES_AND_CLEANUP` confirmation. It does not
+create a database, start Webman, create SandAdmin users or roles, or disclose
+the generated one-time provider token in its report. Run it only through the
+authorized demo-host wrapper that supplies the four bearer headers, three
+administrator IDs, existing PostgreSQL DSN and cleanup authorization.
 
 ## Consumer acceptance runner v1
 

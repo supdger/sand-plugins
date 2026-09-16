@@ -51,11 +51,13 @@ function sandIamPayloadExcluded(string $path): bool
     if (str_starts_with($path, 'sdk/typescript/dist/')) {
         return false;
     }
-    // The standalone consumer is a copyable source example. Its Composer
-    // dependency tree is deliberately local-only and must not bloat or
-    // shadow the package's own runtime dependencies.
+    // The standalone consumer and machine-service provider are copyable source
+    // examples. Their Composer dependency trees are deliberately local-only
+    // and must not bloat or shadow the package's own runtime dependencies.
     if ($path === 'examples/webman-business-app/standalone/vendor'
-        || str_starts_with($path, 'examples/webman-business-app/standalone/vendor/')) {
+        || str_starts_with($path, 'examples/webman-business-app/standalone/vendor/')
+        || $path === 'examples/machine-service-client/provider/vendor'
+        || str_starts_with($path, 'examples/machine-service-client/provider/vendor/')) {
         return true;
     }
     if (in_array($path, [

@@ -9,6 +9,7 @@ use plugin\SandIam\app\model\CasLoginRequest;
 use plugin\SandIam\app\model\CasService;
 use plugin\SandIam\app\model\CasTicket;
 use plugin\SandIam\app\model\Identity;
+use plugin\SandIam\app\model\IdentityAuth;
 use plugin\SandIam\app\model\Organization;
 use plugin\sandadmin\exception\ApiException;
 use think\facade\Db;
@@ -135,6 +136,7 @@ final class CasProtocolService
             }
             $service = CasService::where('id', (int) $record->cas_service_id)->where('application_id', (int) $record->application_id)->where('status', 1)->find();
             $identity = Identity::where('id', (int) $record->identity_id)->where('application_id', (int) $record->application_id)->where('status', 1)->find();
+            $identityAuth = IdentityAuth::where('identity_id', (int) $record->identity_id)->where('application_id', (int) $record->application_id)->where('status', 1)->find();
             $application = Application::where('id', (int) $record->application_id)->where('status', 1)->find();
             $organization = $application === null ? null : Organization::where('id', (int) $application->organization_id)->where('status', 1)->find();
             $record->save(['consumed_time' => date('Y-m-d H:i:s'), 'status' => 2]);
@@ -142,7 +144,7 @@ final class CasProtocolService
                 Db::commit();
                 return null;
             }
-            $username = trim((string) ($identity->username ?? ''));
+            $username = trim((string) ($identity->code ?? ''));
             if ($username === '') {
                 Db::commit();
                 return null;
@@ -152,7 +154,7 @@ final class CasProtocolService
             if (is_string($released)) $released = json_decode($released, true);
             foreach (is_array($released) ? $released : [] as $attribute) {
                 if ($attribute === 'display_name' && trim((string) ($identity->display_name ?? '')) !== '') $attributes['displayName'] = (string) $identity->display_name;
-                if ($attribute === 'email' && trim((string) ($identity->email ?? '')) !== '') $attributes['email'] = (string) $identity->email;
+                if ($attribute === 'email' && $identityAuth !== null && trim((string) ($identityAuth->email ?? '')) !== '') $attributes['email'] = (string) $identityAuth->email;
             }
             $this->writeAudit($service, 'cas.ticket.validate', 'cas_ticket', (int) $record->id, 'cas_client', $requestId, ['identity_id' => (int) $identity->id]);
             Db::commit();

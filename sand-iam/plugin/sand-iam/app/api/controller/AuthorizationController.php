@@ -19,6 +19,10 @@ final class AuthorizationController extends BaseController
         if (!is_array($attributes)) {
             throw new ApiException('SAND_IAM_VALIDATION_ERROR: 授权属性必须是 JSON 对象', 400);
         }
+        $entityAttributes = $request->post('entity_attributes', null);
+        if ($entityAttributes !== null && (!is_array($entityAttributes) || array_is_list($entityAttributes))) {
+            throw new ApiException('SAND_IAM_VALIDATION_ERROR: 实体属性必须是非空 JSON 对象', 400);
+        }
         $decision = (new ApplicationAuthorizationService())->decide(
             $this->bearerToken($request),
             trim((string) $request->post('organization_code', '')),
@@ -27,6 +31,7 @@ final class AuthorizationController extends BaseController
             trim((string) $request->post('api_version', 'v1')),
             $attributes,
             RequestId::fromRequest($request),
+            $entityAttributes,
         );
         return $this->success($decision)->withHeader('Cache-Control', 'no-store');
     }

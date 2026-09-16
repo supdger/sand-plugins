@@ -11,5 +11,5 @@ interface Repository
     public function find(int $id): WorkItem;
 
     /** @param callable(WorkItem):string $authorize */
-    public function close(int $id, callable $authorize, AuditWriter $auditWriter, string $requestId): WorkItem;
+    public function close(int $id, callable $authorize, AuditWriter $auditWriter, string $action, string $requestId): WorkItem;
 }

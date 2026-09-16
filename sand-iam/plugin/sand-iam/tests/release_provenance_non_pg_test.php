@@ -20,7 +20,10 @@ $run = static function (string $tool, array $arguments): array {
 /** @return bool */
 $git = static function (string $workspace, array $arguments): bool {
     $command = 'git -C ' . escapeshellarg($workspace) . ' ' . implode(' ', array_map('escapeshellarg', $arguments));
-    exec($command . ' >/dev/null 2>&1', $output, $status);
+    exec($command . ' 2>&1', $output, $status);
+    if ($status !== 0) {
+        fwrite(STDERR, 'release provenance Git command failed: ' . implode(' ', $arguments) . PHP_EOL);
+    }
     return $status === 0;
 };
 
@@ -37,27 +40,36 @@ $passed = sandIamWithIsolatedFixture($root, static function (string $fixtureRoot
         || !$git($workspace, ['config', 'core.autocrlf', 'false'])
         || !$git($workspace, ['add', 'sand-iam'])
         || !$git($workspace, ['-c', 'user.name=SandIAM fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'fixture'])) {
+        fwrite(STDERR, "release provenance setup failed: initial fixture commit\n");
         return false;
     }
     $controllerRelative = 'plugin/sand-iam/app/api/controller/AuthController.php';
     if (file_put_contents($attributes, $crlfRelative . " text eol=crlf\n" . $controllerRelative . " export-ignore\n") === false
         || !$git($workspace, ['add', 'sand-iam/.gitattributes'])
         || !$git($workspace, ['-c', 'user.name=SandIAM fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'export-ignore-controller'])) {
+        fwrite(STDERR, "release provenance setup failed: export-ignore commit\n");
         return false;
     }
     if (!unlink($fixtureRoot . '/' . $crlfRelative)
         || !$git($workspace, ['checkout-index', '--', 'sand-iam/' . $crlfRelative])
         || !$git($workspace, ['add', 'sand-iam/' . $crlfRelative])) {
+        fwrite(STDERR, "release provenance setup failed: CRLF checkout\n");
         return false;
     }
     $commit = trim((string) shell_exec('git -C ' . escapeshellarg($workspace) . ' rev-parse HEAD'));
-    if (preg_match('/^[0-9a-f]{40}$/', $commit) !== 1) return false;
+    if (preg_match('/^[0-9a-f]{40}$/', $commit) !== 1) {
+        fwrite(STDERR, "release provenance setup failed: resolve fixture commit\n");
+        return false;
+    }
     $eol = (string) shell_exec('git -C ' . escapeshellarg($workspace) . ' ls-files --eol -- ' . escapeshellarg('sand-iam/' . $crlfRelative));
     $cleanCrlfWorktree = str_contains($eol, 'i/lf') && str_contains($eol, 'w/crlf');
     $integrity = $fixtureRoot . '/tools/check-package-integrity.php';
     $builder = $fixtureRoot . '/tools/build-review-candidate.php';
     [$baselineStatus, $baselineOutput] = $run($integrity, []);
-    if ($baselineStatus !== 0 || !str_contains($baselineOutput, '[PASS] eligible release payload is clean, tracked, and matches HEAD Git blobs')) return false;
+    if ($baselineStatus !== 0 || !str_contains($baselineOutput, '[PASS] eligible release payload is clean, tracked, and matches HEAD Git blobs')) {
+        fwrite(STDERR, "release provenance setup failed: clean fixture baseline\n{$baselineOutput}\n");
+        return false;
+    }
     $contractPath = $fixtureRoot . '/release-build-contract.json';
     $correctContract = file_get_contents($contractPath);
     try {
@@ -208,8 +220,26 @@ $passed = sandIamWithIsolatedFixture($root, static function (string $fixtureRoot
         && str_contains($unsupportedOutput, 'unsupported Git tree mode: 120000')
         && $newlineStatus !== 0
         && str_contains($newlineOutput, 'unsupported Git tree path characters');
-    return $cleanCrlfWorktree && $mismatchedContractRejected && $vendor && $dist && $lock && $contract && $injection && $stageParity && $formalBuild
-        && $normalBuilderZip && $committedVendorMismatch && $unsupportedTreeInputs;
+    $results = [
+        'clean_crlf_worktree' => $cleanCrlfWorktree,
+        'mismatched_contract_rejected' => $mismatchedContractRejected,
+        'vendor_tamper_rejected' => $vendor,
+        'dist_tamper_rejected' => $dist,
+        'lock_tamper_rejected' => $lock,
+        'contract_tamper_rejected' => $contract,
+        'untracked_injection_rejected' => $injection,
+        'git_stage_parity' => $stageParity,
+        'formal_git_blob_build' => $formalBuild,
+        'normal_builder_zip' => $normalBuilderZip,
+        'committed_vendor_mismatch_rejected' => $committedVendorMismatch,
+        'unsupported_tree_inputs_rejected' => $unsupportedTreeInputs,
+    ];
+    foreach ($results as $name => $ok) {
+        if (!$ok) {
+            fwrite(STDERR, "release provenance subcheck failed: {$name}\n");
+        }
+    }
+    return !in_array(false, $results, true);
 });
 
 if (!$passed) {

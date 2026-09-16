@@ -58,5 +58,54 @@ void main() {
         ),
       );
     });
+
+    test('previews and applies a route manifest with confirmation hash', () async {
+      final observed = <SandIamHttpRequest>[];
+      final previewHash = List<String>.filled(64, 'a').join();
+      final manifest = <String, Object?>{
+        'format': 'sand-iam.route-sync/v1',
+        'organization_code': 'sand',
+        'application_code': 'lawyer',
+        'environment_code': 'production',
+        'routes': <Object?>[],
+      };
+      final client = SandIamManagementClient(
+        baseUrl: 'https://iam.example.test',
+        administratorToken: () => 'admin-token',
+        transport: (SandIamHttpRequest request) async {
+          observed.add(request);
+          return SandIamHttpResponse(
+            status: 200,
+            body: observed.length == 1
+                ? '{"code":200,"data":{"preview_hash":"$previewHash"}}'
+                : '{"code":200,"data":{"application_id":2}}',
+          );
+        },
+      );
+
+      await client.routeSyncPreview(
+        manifest,
+        disableMissing: true,
+        requestId: 'route-preview-1',
+      );
+      await client.routeSyncApply(SandIamRouteSyncOperation(
+        manifest: manifest,
+        previewHash: previewHash,
+        requestId: 'route-apply-1',
+        disableMissing: true,
+      ));
+
+      expect(observed[0].uri.path, SandIamApi.routeManifestPreview);
+      expect(observed[1].uri.path, SandIamApi.routeManifestApply);
+      expect(
+        jsonDecode(observed[1].body!) as Map<String, Object?>,
+        <String, Object?>{
+          'manifest': manifest,
+          'disable_missing': true,
+          'preview_hash': previewHash,
+          'apply': true,
+        },
+      );
+    });
   });
 }

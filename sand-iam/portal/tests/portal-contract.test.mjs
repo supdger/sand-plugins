@@ -78,19 +78,27 @@ const bundled = await build({
   write: false,
 });
 const nodes = new Map();
+let dataNodes = [];
 class Element {
-  constructor(value = "") { this.value = value; this.listeners = {}; this.isConnected = true; }
+  constructor(value = "", attributes = {}) {
+    this.value = value; this.attributes = attributes; this.listeners = {}; this.isConnected = true;
+  }
   addEventListener(event, callback) { this.listeners[event] = callback; }
+  getAttribute(name) { return this.attributes[name] ?? null; }
 }
 class Input extends Element {}
 class Select extends Element {}
 const panel = {
   dataset: {},
-  querySelectorAll: () => [],
+  querySelectorAll: (selector) => selector === "[data-revoke-factor]"
+    ? dataNodes.filter((node) => node.isConnected)
+    : [],
   set innerHTML(html) {
     this.html = html;
     for (const node of nodes.values()) node.isConnected = false;
+    for (const node of dataNodes) node.isConnected = false;
     nodes.clear();
+    dataNodes = [];
     for (const match of html.matchAll(/<(input|button|div|p|select)[^>]*id="([^"]+)"[^>]*>/g)) {
       const value = match[0].match(/value="([^"]*)"/)?.[1] ?? "";
       nodes.set(match[2], match[1] === "select" ? new Select(value) : new Input(value));
@@ -98,6 +106,12 @@ const panel = {
     }
     for (const match of html.matchAll(/<select[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) {
       nodes.get(match[1]).value = match[2].match(/<option value="([^"]+)" selected/)?.[1] ?? "";
+    }
+    for (const match of html.matchAll(/<button[^>]*data-revoke-factor="([^"]+)"[^>]*data-factor-type="([^"]+)"[^>]*>/g)) {
+      dataNodes.push(new Input("", {
+        "data-revoke-factor": match[1],
+        "data-factor-type": match[2],
+      }));
     }
   },
 };
@@ -108,6 +122,7 @@ let networkError = false;
 let configurationTesting = false;
 let captchaResponse = { required: false };
 let sessionResponses = false;
+let factorResponses = null;
 const sdkOptions = [];
 const calls = [];
 const context = vm.createContext({
@@ -127,6 +142,10 @@ const context = vm.createContext({
   fetch: async (url, init) => {
     if (networkError) throw new Error("offline");
     calls.push({ url, ...init, body: init.body === undefined ? null : JSON.parse(init.body) });
+    if (factorResponses !== null && url.endsWith("/auth/mfa/factors") && init.method === "GET") {
+      const data = factorResponses.shift() ?? [];
+      return { ok: true, status: 200, json: async () => ({ data }) };
+    }
     if (sessionResponses && init.method === "GET" && init.headers.Authorization) {
       const data = url.endsWith("/profile") ? { display_name: "Authenticated Alice",
         organization: { name: "Org", code: "org" }, application: { name: "App", code: "app" } }
@@ -988,3 +1007,76 @@ await oldLogout;
 assert.equal(sessionPortal.state.accessToken, "new-logout-session");
 assert.equal(sessionPortal.state.errorTitle, "New session");
 console.log("SandIAM portal logout and current-session revoke behavior passed");
+
+const collidingFactorPortal = invitationPortal();
+collidingFactorPortal.state.accessToken = "factor-token";
+collidingFactorPortal.state.factors = [
+  { id: 7, type: "totp", name: "TOTP", status: 1, createTime: "2026-09-16 20:00:00", lastUsedTime: null },
+  { id: 7, type: "passkey", name: "Passkey", status: 1, createTime: "2026-09-16 20:00:01", lastUsedTime: null },
+];
+collidingFactorPortal.render();
+nodes.get("factor-password").value = "current-password";
+factorResponses = [[{
+  id: 7, type: "totp", name: "TOTP", status: 1,
+  create_time: "2026-09-16 20:00:00", last_used_time: null,
+}]];
+const passkeyButton = dataNodes.find((node) => node.getAttribute("data-factor-type") === "passkey");
+assert.ok(passkeyButton, "same-id passkey revoke button must render");
+passkeyButton.listeners.click();
+await settle();
+await settle();
+const passkeyRevoke = calls.filter((call) => call.url.endsWith("/auth/mfa/factors/revoke")).at(-1);
+assert.equal(passkeyRevoke.body.factor_id, 7);
+assert.equal(passkeyRevoke.body.type, "passkey", "same-id Passkey click must not revoke TOTP");
+assert.deepEqual(
+  collidingFactorPortal.state.factors.map(({ id, type }) => ({ id, type })),
+  [{ id: 7, type: "totp" }],
+  "Passkey revoke refresh must preserve the same-id TOTP factor",
+);
+
+collidingFactorPortal.state.factors = [
+  { id: 9, type: "passkey", name: "Passkey", status: 1, createTime: "2026-09-16 20:00:02", lastUsedTime: null },
+  { id: 9, type: "totp", name: "TOTP", status: 1, createTime: "2026-09-16 20:00:03", lastUsedTime: null },
+];
+collidingFactorPortal.render();
+nodes.get("factor-password").value = "current-password";
+factorResponses = [[{
+  id: 9, type: "passkey", name: "Passkey", status: 1,
+  create_time: "2026-09-16 20:00:02", last_used_time: null,
+}]];
+const totpButton = dataNodes.find((node) => node.getAttribute("data-factor-type") === "totp");
+assert.ok(totpButton, "same-id TOTP revoke button must render");
+totpButton.listeners.click();
+await settle();
+await settle();
+const totpRevoke = calls.filter((call) => call.url.endsWith("/auth/mfa/factors/revoke")).at(-1);
+assert.equal(totpRevoke.body.factor_id, 9);
+assert.equal(totpRevoke.body.type, "totp", "same-id TOTP click must not revoke Passkey");
+assert.deepEqual(
+  collidingFactorPortal.state.factors.map(({ id, type }) => ({ id, type })),
+  [{ id: 9, type: "passkey" }],
+  "TOTP revoke refresh must preserve the same-id Passkey",
+);
+collidingFactorPortal.state.factors = [];
+const revokeCallCount = calls.filter((call) => call.url.endsWith("/auth/mfa/factors/revoke")).length;
+totpButton.listeners.click();
+await settle();
+assert.equal(
+  calls.filter((call) => call.url.endsWith("/auth/mfa/factors/revoke")).length,
+  revokeCallCount,
+  "a stale factor button without an exact id/type match must not revoke",
+);
+collidingFactorPortal.state.factors = [{
+  id: 9, type: "unknown", name: "Invalid", status: 1,
+  createTime: "2026-09-16 20:00:04", lastUsedTime: null,
+}];
+totpButton.attributes["data-factor-type"] = "unknown";
+totpButton.listeners.click();
+await settle();
+assert.equal(
+  calls.filter((call) => call.url.endsWith("/auth/mfa/factors/revoke")).length,
+  revokeCallCount,
+  "an invalid factor type must not revoke",
+);
+factorResponses = null;
+console.log("SandIAM portal same-id factor revoke behavior passed");

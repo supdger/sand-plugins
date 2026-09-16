@@ -7,6 +7,8 @@
   import {
     describeOnboardingManifestError,
     parseOnboardingPreview,
+    parseRouteManifestPreview,
+    SAND_IAM_ROUTE_SYNC_FORMAT,
     type SandIamOnboardingPreview
   } from '../api/governanceContracts'
   import type { SandIamRequestError } from '../api/types'
@@ -23,15 +25,18 @@
   const applied = ref(false)
   const acting = ref(false)
   const issuedCredential = ref('')
+  const disableMissing = ref(false)
+  const previewKind = ref<'onboarding' | 'route-manifest' | null>(null)
   let inputVersion = 0
   let previewVersion = -1
   let disposed = false
-  watch(manifestText, () => {
+  watch([manifestText, disableMissing], () => {
     inputVersion++
     preview.value = null
     applied.value = false
     requestError.value = null
     lastHint.value = ''
+    previewKind.value = null
   }, { flush: 'sync' })
   onScopeDispose(() => { disposed = true; inputVersion++; issuedCredential.value = '' })
   const previewChanges = computed(() =>
@@ -87,15 +92,20 @@
     resetApplyState()
     preview.value = null
     try {
-      const result = await postSandIamAction('developer/onboarding/preview', {
-        manifest
-      })
+      const routeManifest = manifest.format === SAND_IAM_ROUTE_SYNC_FORMAT
+      const result = await postSandIamAction(
+        routeManifest ? 'developer/route-manifest/preview' : 'developer/onboarding/preview',
+        routeManifest ? { manifest, disable_missing: disableMissing.value } : { manifest }
+      )
       if (disposed || version !== inputVersion) return
-      const parsed = parseOnboardingPreview(result)
+      const parsed = routeManifest
+        ? parseRouteManifestPreview(result)
+        : parseOnboardingPreview(result)
       if (parsed === null) {
         throw new Error('服务器没有返回可确认的变更预览，请检查清单后重试。')
       }
       preview.value = parsed
+      previewKind.value = routeManifest ? 'route-manifest' : 'onboarding'
       previewVersion = version
       lastHint.value = '这是保存前的变更预览，尚未写入。有冲突或未关联项时不能继续保存。'
     } catch (error: unknown) {
@@ -109,16 +119,17 @@
 
   async function confirmApply(): Promise<void> {
     if (disposed || acting.value || !canApply.value || issuedCredential.value !== '' || applied.value) return
-    if (preview.value === null || preview.value.dryRun !== true) {
+    if (preview.value === null || preview.value.dryRun !== true || !preview.value.canApply) {
       requestError.value = describeSandIamError(new Error('请先生成变更预览，再确认保存。'))
       return
     }
     const manifest = parseManifestJson()
     if (manifest === null) return
     const selected = preview.value
+    const kind = previewKind.value
     const version = inputVersion
     const current = (): boolean => !disposed && version === inputVersion &&
-      previewVersion === version && preview.value === selected
+      previewVersion === version && preview.value === selected && previewKind.value === kind
     if (!current()) return
     acting.value = true
     try {
@@ -137,19 +148,29 @@
     }
     requestError.value = null
     try {
-      const result = await postSandIamAction('developer/onboarding/apply', {
-        manifest,
-        preview_hash: selected.previewHash,
-        apply: true
-      })
+      const result = await postSandIamAction(
+        kind === 'route-manifest'
+          ? 'developer/route-manifest/apply'
+          : 'developer/onboarding/apply',
+        kind === 'route-manifest'
+          ? {
+              manifest,
+              disable_missing: disableMissing.value,
+              preview_hash: selected.previewHash,
+              apply: true
+            }
+          : { manifest, preview_hash: selected.previewHash, apply: true }
+      )
       if (disposed) return
       const payload = isRecord(result) && isRecord(result.data) ? result.data : result
-      if (isRecord(payload) && typeof payload.credential === 'string') {
+      if (kind === 'onboarding' && isRecord(payload) && typeof payload.credential === 'string') {
         issuedCredential.value = payload.credential
       }
       if (!current()) return
       applied.value = true
-      lastHint.value = '清单已保存，请按交接清单继续验证业务接入。'
+      lastHint.value = kind === 'route-manifest'
+        ? '路由清单已应用，请按预检结果验证业务路由。'
+        : '清单已保存，请按交接清单继续验证业务接入。'
       ElMessage.success('已保存')
     } catch (error: unknown) {
       if (!current()) return
@@ -231,6 +252,11 @@
                 placeholder="粘贴由开发团队生成的接入清单"
               />
             </ElFormItem>
+            <ElFormItem v-if="manifestText.includes(SAND_IAM_ROUTE_SYNC_FORMAT)" label="缺失路由">
+              <ElCheckbox v-model="disableMissing">
+                停用清单中已删除且来源为 route_scan 的旧路由
+              </ElCheckbox>
+            </ElFormItem>
             <ElFormItem>
               <ElSpace>
                 <ElButton type="primary" :disabled="!canPreview || acting || issuedCredential !== ''" @click="runPreview">
@@ -238,7 +264,7 @@
                 </ElButton>
                 <ElButton
                   type="warning"
-                  :disabled="!canApply || preview === null || acting || issuedCredential !== '' || applied"
+                  :disabled="!canApply || preview === null || !preview.canApply || acting || issuedCredential !== '' || applied"
                   @click="confirmApply"
                 >
                   确认保存
@@ -251,7 +277,9 @@
 
       <ElDescriptions v-if="preview !== null" :column="2" border class="mb-4">
         <ElDescriptionsItem label="变更条数">{{ preview.changeCount }}</ElDescriptionsItem>
-        <ElDescriptionsItem label="核对结果">变更内容已核对，可在保存前继续修改</ElDescriptionsItem>
+        <ElDescriptionsItem label="核对结果">{{
+          preview.canApply ? '变更内容已核对，可在保存前继续修改' : '存在冲突或未关联接口，修正清单后重新预检'
+        }}</ElDescriptionsItem>
         <ElDescriptionsItem label="写入状态">{{
           applied ? '已保存' : '尚未保存'
         }}</ElDescriptionsItem>

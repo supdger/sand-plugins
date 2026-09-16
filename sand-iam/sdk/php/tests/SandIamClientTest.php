@@ -18,6 +18,7 @@ use Sand\Iam\Sdk\SandIamCredentialRevokeInput;
 use Sand\Iam\Sdk\SandIamManagementClient;
 use Sand\Iam\Sdk\SandIamOnboardingOperation;
 use Sand\Iam\Sdk\SandIamProviderPresetDraftInput;
+use Sand\Iam\Sdk\SandIamRouteSyncOperation;
 
 function sdkAssert(bool $condition, string $message): void
 {
@@ -209,7 +210,12 @@ $allowClient = new SandIamClient(
     3,
     static function (array $input) use (&$request): array {
         $request = $input;
-        return ['status' => 200, 'body' => json_encode(['code' => 200, 'data' => decision(true)], JSON_THROW_ON_ERROR)];
+        $body = json_decode((string) $input['body'], true, 32, JSON_THROW_ON_ERROR);
+        $result = decision(true);
+        if (array_key_exists('entity_attributes', $body)) {
+            $result['scope_checked'] = true;
+        }
+        return ['status' => 200, 'body' => json_encode(['code' => 200, 'data' => $result], JSON_THROW_ON_ERROR)];
     },
 );
 $result = $allowClient->authorize('siam_at_test', 'matter.detail', ['organization_id' => 42], 'v1', 'request-1');
@@ -229,6 +235,61 @@ $allowClient->authorizeEntity(
     'v1',
     'request-entity',
 );
+$entityBody = json_decode((string) ($request['body'] ?? ''), true, 32, JSON_THROW_ON_ERROR);
+sdkAssert(
+    ($entityBody['entity_attributes'] ?? null) === ['organization_id' => 42, 'owner_identity_id' => 101]
+        && ($entityBody['attributes'] ?? null) === [],
+    'entity authorization did not keep server-loaded scope attributes separate from route attributes',
+);
+
+$remoteScopeDenyClient = new SandIamClient(
+    'https://iam.example.test',
+    'sand',
+    'lawyer',
+    3,
+    static function (array $input): array {
+        $body = json_decode((string) $input['body'], true, 32, JSON_THROW_ON_ERROR);
+        $result = decision(true);
+        if (($body['entity_attributes']['organization_id'] ?? null) !== 42) {
+            $result = array_replace($result, [
+                'allowed' => false,
+                'code' => 'SAND_IAM_RESOURCE_SCOPE_DENIED',
+                'scope_checked' => true,
+            ]);
+        }
+        return ['status' => 200, 'body' => json_encode(['code' => 200, 'data' => $result], JSON_THROW_ON_ERROR)];
+    },
+);
+try {
+    $remoteScopeDenyClient->authorizeEntity(
+        'siam_at_test',
+        'matter.detail',
+        (object) ['organization_id' => 43],
+        static fn (object $entity): array => ['organization_id' => $entity->organization_id],
+    );
+    throw new RuntimeException('server-audited entity scope denial did not throw');
+} catch (AuthorizationDenied $exception) {
+    sdkAssert($exception->errorCode === 'SAND_IAM_RESOURCE_SCOPE_DENIED', 'server scope denial lost its stable code');
+}
+
+$legacyScopeClient = new SandIamClient(
+    'https://iam.example.test',
+    'sand',
+    'lawyer',
+    3,
+    static fn (): array => ['status' => 200, 'body' => json_encode(['code' => 200, 'data' => decision(true)], JSON_THROW_ON_ERROR)],
+);
+try {
+    $legacyScopeClient->authorizeEntity(
+        'siam_at_test',
+        'matter.detail',
+        $matter,
+        static fn (object $entity): array => ['organization_id' => $entity->organization_id],
+    );
+    throw new RuntimeException('entity authorization trusted a server that did not confirm scope auditing');
+} catch (SandIamException $exception) {
+    sdkAssert($exception->errorCode === 'SAND_IAM_SDK_INVALID_RESPONSE', 'missing scope confirmation used the wrong error');
+}
 try {
     $allowClient->authorizeCollection(
         'siam_at_test',
@@ -358,26 +419,30 @@ foreach (['inference.chat', ['inference.chat' => true], ['inference.chat', 1], [
 }
 
 $managementRequests = [];
+$routePreviewHash = str_repeat('a', 64);
 $management = new SandIamManagementClient(
     'https://iam.example.test',
     static fn (): string => 'sandadmin-session-token',
     3,
-    static function (array $input) use (&$managementRequests): array {
+    static function (array $input) use (&$managementRequests, $routePreviewHash): array {
         $managementRequests[] = $input;
         $path = (string) parse_url((string) $input['url'], PHP_URL_PATH);
         $data = match ($path) {
             '/app/sand-iam/admin/identity-provider-preset/index' => [['code' => 'github_oauth2', 'name' => 'GitHub OAuth 应用']],
             '/app/sand-iam/admin/credential/issue' => ['id' => 7, 'key_prefix' => 'siam_wc_', 'credential' => 'one-time-credential'],
             '/app/sand-iam/admin/credential/revoke' => ['id' => 7],
+            '/app/sand-iam/admin/developer/route-manifest/preview' => ['preview_hash' => $routePreviewHash],
+            '/app/sand-iam/admin/developer/route-manifest/apply' => ['route_sync' => ['created' => 1]],
             default => ['preview_hash' => 'preview-1', 'route_sync' => ['created' => 1]],
         };
         return ['status' => 200, 'body' => json_encode(['code' => 200, 'data' => $data], JSON_THROW_ON_ERROR)];
     },
 );
-$preview = $management->routeSyncPreview(['operation_id' => 'route-sync-op-1', 'route_manifest' => ['format' => 'sand-iam.route-sync/v1']], 'management-preview-1');
-sdkAssert(($preview['preview_hash'] ?? '') === 'preview-1', 'management preview response was not returned');
-$applied = $management->routeSyncApply(new SandIamOnboardingOperation(['operation_id' => 'route-sync-op-1', 'route_manifest' => ['format' => 'sand-iam.route-sync/v1']], 'management-apply-1', 'preview-1'));
-sdkAssert(($applied['route_sync']['created'] ?? 0) === 1, 'route sync apply did not use onboarding apply');
+$routeManifest = ['format' => 'sand-iam.route-sync/v1', 'organization_code' => 'sand', 'application_code' => 'app', 'environment_code' => 'production', 'routes' => []];
+$preview = $management->routeSyncPreview($routeManifest, true, 'management-preview-1');
+sdkAssert(($preview['preview_hash'] ?? '') === $routePreviewHash, 'management route preview response was not returned');
+$applied = $management->routeSyncApply(new SandIamRouteSyncOperation($routeManifest, $routePreviewHash, 'management-apply-1', true));
+sdkAssert(($applied['route_sync']['created'] ?? 0) === 1, 'route sync apply did not use the route-manifest apply endpoint');
 $issuedCredential = $management->credentialIssue(new SandIamCredentialIssueInput(7, 'production', null, 'credential-issue-1'));
 sdkAssert($issuedCredential->secretAvailable === true && $issuedCredential->replayed === false, 'one-time credential state is incorrect');
 $secret = $issuedCredential->revealSecretOnce();

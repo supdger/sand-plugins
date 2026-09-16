@@ -36,6 +36,10 @@ abstract final class SandIamApi {
   static const discovery = '/api/sand-iam/v1/.well-known/openid-configuration';
   static const onboardingPreview = '/app/sand-iam/admin/developer/onboarding/preview';
   static const onboardingApply = '/app/sand-iam/admin/developer/onboarding/apply';
+  static const routeManifestPreview =
+      '/app/sand-iam/admin/developer/route-manifest/preview';
+  static const routeManifestApply =
+      '/app/sand-iam/admin/developer/route-manifest/apply';
   static const policySimulate = '/app/sand-iam/admin/policy/simulate';
   static const policyRollback = '/app/sand-iam/admin/policy/rollback';
   static const credentialIssue = '/app/sand-iam/admin/credential/issue';

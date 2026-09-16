@@ -99,7 +99,7 @@ namespace {
             return $found;
         }
 
-        /** @var list<array{application_id:int,identity_id:int,request_id:string,actor_ref:string,challenge_id:int,challenge_application_id:int,challenge_identity_id:int,purpose:string,outcome:string}> */
+        /** @var list<array{application_id:int,identity_id:int,request_id:string,actor_ref:string,challenge_id:int,challenge_application_id:int,challenge_identity_id:int,purpose:string,outcome:string,action?:string,challenge_status?:int}> */
         public array $mfaLoginChallengeAudits = [];
 
         public function mfaLoginChallengeAuditExists(int $applicationId, int $identityId, string $requestId, string $prefix): bool
@@ -113,7 +113,11 @@ namespace {
                     && $audit['challenge_id'] > 0
                     && $audit['challenge_application_id'] === $applicationId
                     && $audit['challenge_identity_id'] === $identityId
-                    && $audit['purpose'] === 'mfa_login'
+                    && ($audit['challenge_status'] ?? 2) === 2
+                    && (
+                        (($audit['action'] ?? 'identity.mfa_login_verify') === 'identity.mfa_login_verify' && $audit['purpose'] === 'mfa_login')
+                        || (($audit['action'] ?? '') === 'identity.passkey_auth_finish' && $audit['purpose'] === 'webauthn_auth')
+                    )
                     && $audit['outcome'] === 'succeeded') return true;
             }
             return $this->mfaLoginChallengeAudits === []
@@ -152,6 +156,59 @@ namespace {
                     && (int) ($group['application_id'] ?? 0) === $applicationId
                     && str_starts_with((string) ($group['code'] ?? ''), $prefix);
             }));
+        }
+
+        public function directorySyncArtifacts(array $connectorIds, int $applicationId, bool $lock): array
+        {
+            $this->operations[] = 'records:directory_sync_artifacts:' . ($lock ? 'lock' : 'read');
+            $runs = array_values(array_filter($this->rows['sync_run'] ?? [], static fn (array $row): bool =>
+                (int) ($row['application_id'] ?? 0) === $applicationId
+                && in_array((int) ($row['sync_connector_id'] ?? 0), $connectorIds, true)
+            ));
+            $resources = array_values(array_filter($this->rows['sync_resource'] ?? [], static fn (array $row): bool =>
+                (int) ($row['application_id'] ?? 0) === $applicationId
+                && in_array((int) ($row['sync_connector_id'] ?? 0), $connectorIds, true)
+            ));
+            $identityIds = array_values(array_unique(array_map(static fn (array $row): int => (int) ($row['identity_id'] ?? 0), $resources)));
+            $identities = array_values(array_filter($this->rows['directory_identity'] ?? [], static fn (array $row): bool =>
+                (int) ($row['application_id'] ?? 0) === $applicationId
+                && in_array((int) ($row['id'] ?? 0), $identityIds, true)
+            ));
+            return ['sync_run' => $runs, 'sync_resource' => $resources, 'directory_identity' => $identities];
+        }
+
+        public function identityLifecycleArtifacts(array $importJobIds, int $applicationId, bool $lock): array
+        {
+            $this->operations[] = 'records:identity_lifecycle_artifacts:' . ($lock ? 'lock' : 'read');
+            $rows = array_values(array_filter($this->rows['identity_import_row'] ?? [], static fn (array $row): bool =>
+                (int) ($row['application_id'] ?? 0) === $applicationId
+                && in_array((int) ($row['import_job_id'] ?? 0), $importJobIds, true)
+            ));
+            $invitationIds = array_values(array_unique(array_filter(array_map(static fn (array $row): int => (int) ($row['result_invitation_id'] ?? 0), $rows))));
+            $invitations = array_values(array_filter($this->rows['import_invitation'] ?? [], static fn (array $row): bool =>
+                (int) ($row['application_id'] ?? 0) === $applicationId
+                && in_array((int) ($row['id'] ?? 0), $invitationIds, true)
+            ));
+            return ['identity_import_row' => $rows, 'import_invitation' => $invitations];
+        }
+
+        public function scimArtifacts(array $providerIds, int $applicationId, bool $lock): array
+        {
+            $this->operations[] = 'records:scim_artifacts:' . ($lock ? 'lock' : 'read');
+            $types = ['identity_provider_application', 'scim_token', 'scim_resource', 'identity_binding', 'provisioning_event'];
+            $result = [];
+            foreach ($types as $type) {
+                $result[$type] = array_values(array_filter($this->rows[$type] ?? [], static fn (array $row): bool =>
+                    (int) ($row['application_id'] ?? 0) === $applicationId
+                    && in_array((int) ($row['identity_provider_id'] ?? 0), $providerIds, true)
+                ));
+            }
+            $identityIds = array_values(array_unique(array_map(static fn (array $row): int => (int) ($row['identity_id'] ?? 0), $result['scim_resource'])));
+            $result['scim_identity'] = array_values(array_filter($this->rows['scim_identity'] ?? [], static fn (array $row): bool =>
+                (int) ($row['application_id'] ?? 0) === $applicationId
+                && in_array((int) ($row['id'] ?? 0), $identityIds, true)
+            ));
+            return $result;
         }
 
         public function invocationOperations(string $prefix, array $credentialIds, array $grantIds, array $scopeIds, bool $lock): array
@@ -228,6 +285,8 @@ namespace {
             $roots['application'] = array_values(array_filter($this->rows['application'] ?? [], static fn (array $row): bool => str_starts_with((string) ($row['code'] ?? ''), $prefix) || in_array((int) ($row['organization_id'] ?? 0), $organizationIds, true)));
             $applicationIds = array_map(static fn (array $row): int => (int) $row['id'], $roots['application']);
             $roots['environment'] = array_values(array_filter($this->rows['environment'] ?? [], static fn (array $row): bool => str_starts_with((string) ($row['code'] ?? ''), $prefix) || in_array((int) ($row['application_id'] ?? 0), $applicationIds, true)));
+            $roots['application_experience'] = array_values(array_filter($this->rows['application_experience'] ?? [], static fn (array $row): bool => in_array((int) ($row['application_id'] ?? 0), $applicationIds, true)));
+            $roots['admin_organization_grant'] = array_values(array_filter($this->rows['admin_organization_grant'] ?? [], static fn (array $row): bool => in_array((int) ($row['organization_id'] ?? 0), $organizationIds, true)));
             $roots['admin_application_grant'] = array_values(array_filter($this->rows['admin_application_grant'] ?? [], static fn (array $row): bool => in_array((int) ($row['application_id'] ?? 0), $applicationIds, true)));
             return $roots;
         }
@@ -246,10 +305,13 @@ namespace {
             $factorIds = array_map(static fn (array $row): int => (int) $row['id'], $factors);
             return [
                 'identity_auth' => $identityAuth,
+                'auth_verification' => array_values(array_filter($this->rows['auth_verification'] ?? [], $byIdentity)),
+                'auth_challenge' => array_values(array_filter($this->rows['auth_challenge'] ?? [], $byIdentity)),
                 'auth_session' => $sessions,
                 'auth_refresh_token' => array_values(array_filter($this->rows['auth_refresh_token'] ?? [], static fn (array $row): bool => in_array((int) ($row['session_id'] ?? 0), $sessionIds, true))),
                 'mfa_factor' => $factors,
                 'mfa_recovery_code' => array_values(array_filter($this->rows['mfa_recovery_code'] ?? [], static fn (array $row): bool => in_array((int) ($row['factor_id'] ?? 0), $factorIds, true))),
+                'webauthn_credential' => array_values(array_filter($this->rows['webauthn_credential'] ?? [], $byIdentity)),
             ];
         }
 
@@ -288,6 +350,23 @@ namespace {
             $roots['api_route_binding'] = array_values(array_filter($this->rows['api_route_binding'] ?? [], static fn (array $row): bool => (int) ($row['application_id'] ?? 0) === $applicationId && in_array((int) ($row['api_resource_id'] ?? 0), $apiIds, true)));
             $artifact = $this->oauthCasApiGovernanceArtifacts(array_map(static fn (array $row): int => (int) $row['id'], $roots['oauth_client']), array_map(static fn (array $row): int => (int) $row['id'], $roots['cas_service']), array_map(static fn (array $row): int => (int) $row['id'], $roots['policy']), $applicationId, $lock);
             return $roots + $artifact;
+        }
+
+        public function nonAiBusinessConsumerUniverse(string $prefix, int $applicationId, int $identityId, bool $lock): array
+        {
+            $this->operations[] = 'records:non_ai_business_consumer_universe:' . ($lock ? 'lock' : 'read');
+            $roots = [
+                'application_business_action' => array_values(array_filter($this->rows['application_business_action'] ?? [], static fn (array $row): bool => (int) ($row['application_id'] ?? 0) === $applicationId && str_starts_with((string) ($row['code'] ?? ''), $prefix))),
+                'resource' => array_values(array_filter($this->rows['resource'] ?? [], static fn (array $row): bool => (int) ($row['application_id'] ?? 0) === $applicationId && str_starts_with((string) ($row['code'] ?? ''), $prefix))),
+            ];
+            $resourceIds = array_map(static fn (array $row): int => (int) $row['id'], $roots['resource']);
+            $roots['api_resource'] = array_values(array_filter($this->rows['api_resource'] ?? [], static fn (array $row): bool => (int) ($row['application_id'] ?? 0) === $applicationId && in_array((int) ($row['resource_id'] ?? 0), $resourceIds, true) && str_starts_with((string) ($row['code'] ?? ''), $prefix)));
+            $apiResourceIds = array_map(static fn (array $row): int => (int) $row['id'], $roots['api_resource']);
+            $roots['api_route_binding'] = array_values(array_filter($this->rows['api_route_binding'] ?? [], static fn (array $row): bool => (int) ($row['application_id'] ?? 0) === $applicationId && in_array((int) ($row['api_resource_id'] ?? 0), $apiResourceIds, true)));
+            $roots['policy'] = array_values(array_filter($this->rows['policy'] ?? [], static fn (array $row): bool => (int) ($row['application_id'] ?? 0) === $applicationId && (int) ($row['identity_id'] ?? 0) === $identityId && in_array((int) ($row['resource_id'] ?? 0), $resourceIds, true)));
+            $policyIds = array_map(static fn (array $row): int => (int) $row['id'], $roots['policy']);
+            $artifact = $this->oauthCasApiGovernanceArtifacts([], [], $policyIds, $applicationId, $lock);
+            return $roots + ['policy_version' => $artifact['policy_version']];
         }
 
         public function detachPolicyVersions(array $policyVersionIds, array $policyIds, int $applicationId): void
@@ -359,12 +438,15 @@ namespace {
         return [
             'organization' => [11 => ['id' => 11, 'code' => $prefix . 'org_11', 'status' => 1]],
             'application' => [22 => ['id' => 22, 'organization_id' => 11, 'code' => $prefix . 'app_22', 'status' => 1]],
+            'auth_policy' => [133 => ['id' => 133, 'application_id' => 22, 'status' => 1]],
             'environment' => [33 => ['id' => 33, 'application_id' => 22, 'code' => $prefix . 'env_33', 'status' => 1]],
             'identity' => [
                 34 => ['id' => 34, 'application_id' => 22, 'code' => $prefix . 'identity_34', 'status' => 1, 'lifecycle_state' => 'active'],
                 134 => ['id' => 134, 'application_id' => 22, 'code' => $prefix . 'login_134', 'status' => 1, 'lifecycle_state' => 'active'],
             ],
             'identity_auth' => [135 => ['id' => 135, 'application_id' => 22, 'identity_id' => 134, 'username' => $prefix . 'login_134', 'status' => 1]],
+            'auth_verification' => [144 => ['id' => 144, 'application_id' => 22, 'identity_id' => 134, 'purpose' => 'password_reset', 'status' => 2]],
+            'auth_challenge' => [901 => ['id' => 901, 'application_id' => 22, 'identity_id' => 134, 'purpose' => 'mfa_login', 'status' => 2]],
             'auth_session' => [
                 136 => ['id' => 136, 'application_id' => 22, 'identity_id' => 134, 'status' => 2, 'revoked_time' => '2026-08-30 00:00:00'],
                 140 => ['id' => 140, 'application_id' => 22, 'identity_id' => 134, 'status' => 2, 'revoked_time' => '2026-08-30 00:00:00'],
@@ -377,28 +459,66 @@ namespace {
             ],
             'mfa_factor' => [138 => ['id' => 138, 'application_id' => 22, 'identity_id' => 134, 'name' => $prefix . 'factor_138', 'status' => 2, 'revoked_time' => '2026-08-30 00:00:00']],
             'mfa_recovery_code' => [139 => ['id' => 139, 'application_id' => 22, 'identity_id' => 134, 'factor_id' => 138, 'status' => 2]],
+            'webauthn_credential' => [145 => ['id' => 145, 'application_id' => 22, 'identity_id' => 134, 'status' => 2, 'revoked_time' => '2026-08-30 00:00:00']],
             'identity_group' => [35 => ['id' => 35, 'application_id' => 22, 'code' => $prefix . 'group_35', 'status' => 1]],
             'identity_group_member' => [36 => ['id' => 36, 'identity_group_id' => 35, 'application_id' => 22, 'identity_id' => 34, 'status' => 1]],
             'identity_group_role' => [37 => ['id' => 37, 'identity_group_id' => 35, 'application_id' => 22, 'role_id' => 38, 'status' => 1]],
             'role' => [38 => ['id' => 38, 'application_id' => 22, 'code' => 'acceptance.role', 'status' => 1]],
-            'resource' => [49 => ['id' => 49, 'application_id' => 22, 'code' => 'acceptance.resource', 'status' => 1]],
+            'resource' => [
+                49 => ['id' => 49, 'application_id' => 22, 'code' => 'acceptance.resource', 'status' => 1],
+                181 => ['id' => 181, 'application_id' => 22, 'code' => $prefix . 'work-item', 'status' => 1],
+            ],
+            'application_business_action' => [
+                180 => ['id' => 180, 'application_id' => 22, 'code' => $prefix . 'work-item.close', 'status' => 1],
+            ],
             'admin_application_grant' => [44 => ['id' => 44, 'application_id' => 22, 'status' => 1]],
             'workload_client' => [55 => ['id' => 55, 'environment_id' => 33, 'audience' => 'acceptance-audience', 'status' => 1]],
             'service' => [66 => ['id' => 66, 'code' => 'acceptance.service', 'status' => 1]],
             'service_action' => [77 => ['id' => 77, 'service_id' => 66, 'code' => 'acceptance.action', 'status' => 1]],
-            'credential' => [88 => ['id' => 88, 'workload_client_id' => 55, 'name' => $prefix . 'credential', 'status' => 1]],
+            'credential' => [
+                88 => ['id' => 88, 'workload_client_id' => 55, 'name' => $prefix . 'credential', 'status' => 1],
+                124 => ['id' => 124, 'workload_client_id' => 55, 'name' => $prefix . 'webhook-credential', 'status' => 1],
+            ],
             'service_grant' => [99 => ['id' => 99, 'workload_client_id' => 55, 'service_action_id' => 77, 'status' => 1]],
             'service_invocation_operation' => [111 => ['id' => 111, 'request_id' => $prefix . 'chain4-allow', 'credential_id' => 88, 'grant_id' => 99, 'organization_id' => 11, 'application_id' => 22, 'environment_id' => 33, 'workload_client_id' => 55]],
             'service_quota_bucket' => [112 => ['id' => 112, 'grant_id' => 99]],
             'webhook_endpoint' => [121 => ['id' => 121, 'application_id' => 22, 'code' => $prefix . 'webhook_121', 'status' => 1]],
-            'webhook_delivery' => [122 => ['id' => 122, 'application_id' => 22, 'webhook_endpoint_id' => 121, 'event_id' => $prefix . 'chain7-fixture-event', 'event_type' => 'acceptance.fixture.event', 'status' => 4, 'attempt_count' => 2, 'locked_until' => null]],
+            'webhook_delivery' => [122 => [
+                'id' => 122,
+                'application_id' => 22,
+                'webhook_endpoint_id' => 121,
+                'event_id' => 'evt_' . str_repeat('1', 32),
+                'event_type' => 'credential.changed',
+                'payload' => [
+                    'id' => 'evt_' . str_repeat('1', 32),
+                    'type' => 'credential.changed',
+                    'application_id' => 22,
+                    'data' => [
+                        'action' => 'credential.issue',
+                        'outcome' => 'succeeded',
+                        'resource_type' => 'credential',
+                        'resource_id' => 124,
+                        'request_id' => $prefix . 'chain7-credential',
+                    ],
+                ],
+                'status' => 4,
+                'attempt_count' => 2,
+                'locked_until' => null,
+            ]],
             'oauth_client' => [151 => ['id' => 151, 'application_id' => 22, 'code' => $prefix . 'oauth-client', 'status' => 1]],
             'cas_service' => [152 => ['id' => 152, 'application_id' => 22, 'name' => $prefix . 'cas-service', 'status' => 1]],
-            'api_resource' => [153 => ['id' => 153, 'application_id' => 22, 'resource_id' => 49, 'code' => $prefix . 'api-resource', 'status' => 1]],
-            'api_route_binding' => [154 => ['id' => 154, 'application_id' => 22, 'api_resource_id' => 153, 'status' => 1]],
+            'api_resource' => [
+                153 => ['id' => 153, 'application_id' => 22, 'resource_id' => 49, 'code' => $prefix . 'api-resource', 'status' => 1],
+                185 => ['id' => 185, 'application_id' => 22, 'resource_id' => 181, 'code' => $prefix . 'work-item-close', 'status' => 1],
+            ],
+            'api_route_binding' => [
+                154 => ['id' => 154, 'application_id' => 22, 'api_resource_id' => 153, 'status' => 1],
+                186 => ['id' => 186, 'application_id' => 22, 'api_resource_id' => 185, 'status' => 1],
+            ],
             'policy' => [
                 50 => ['id' => 50, 'application_id' => 22, 'code' => 'acceptance.policy', 'status' => 1],
                 155 => ['id' => 155, 'application_id' => 22, 'resource_id' => 49, 'identity_id' => 34, 'published_version_id' => 176, 'status' => 1],
+                182 => ['id' => 182, 'application_id' => 22, 'resource_id' => 181, 'identity_id' => 34, 'published_version_id' => 183, 'status' => 1],
             ],
             'oauth_authorization_request' => [161 => ['id' => 161, 'application_id' => 22, 'client_id' => 151]],
             'authorization_code' => [162 => ['id' => 162, 'application_id' => 22, 'client_id' => 151]],
@@ -407,7 +527,10 @@ namespace {
             'oauth_token' => [165 => ['id' => 165, 'application_id' => 22, 'client_id' => 151]],
             'cas_login_request' => [166 => ['id' => 166, 'application_id' => 22, 'cas_service_id' => 152]],
             'cas_ticket' => [167 => ['id' => 167, 'application_id' => 22, 'cas_service_id' => 152]],
-            'policy_version' => [176 => ['id' => 176, 'application_id' => 22, 'policy_id' => 155, 'rollback_of_version_id' => null]],
+            'policy_version' => [
+                176 => ['id' => 176, 'application_id' => 22, 'policy_id' => 155, 'rollback_of_version_id' => null],
+                183 => ['id' => 183, 'application_id' => 22, 'policy_id' => 182, 'rollback_of_version_id' => null],
+            ],
         ];
     }
 
@@ -425,6 +548,7 @@ namespace {
             $requestId . '-chain2-member|identity_group.member_add|identity_group|34' => [35],
             $requestId . '-chain2-role|identity_group_role.grant|identity_group_role' => [37],
             $requestId . '-chain3-register|identity.register|identity' => [134],
+            $requestId . '-chain3-auth-policy|auth_policy.create|auth_policy' => [133],
             $requestId . '-chain3-login|identity.login|identity' => [134],
             $requestId . '-chain3-mfa-verify|identity.mfa_login|identity' => [134],
             $requestId . '-chain3-mfa-verify|identity.mfa_login_verify|mfa_challenge' => [901],
@@ -439,13 +563,18 @@ namespace {
             $requestId . '-chain4-credential|credential.issue|credential' => [88],
             $prefix . 'chain4-allow|service.invoke.authorize|service_invocation_operation' => [111],
             $requestId . '-chain7-endpoint|webhook.create|webhook_endpoint' => [121],
-            $requestId . '-chain7-delivery|webhook.delivery_enqueue|webhook_delivery' => [122],
+            $prefix . 'chain7-credential|credential.issue|credential' => [124],
             $requestId . '-chain7-retry|webhook.delivery_retry|webhook_delivery' => [122],
             $requestId . '-chain5-oauth-client|oauth_client.create|oauth_client' => [151],
             $requestId . '-chain5-cas-service|cas_service.create|cas_service' => [152],
             $requestId . '-chain5-api-resource|api_resource.create|api_resource' => [153],
-            $requestId . '-chain5-route-binding|api_route_binding.create|api_route_binding' => [154],
+            $requestId . '-chain5-route-binding|api_route.observe|api_route_binding' => [154],
             $requestId . '-chain5-policy|policy.create|policy' => [155],
+            $requestId . '-l04-action|application_business_action.create|application_business_action' => [180],
+            $requestId . '-l04-resource|resource.create|resource' => [181],
+            $requestId . '-l04-api-resource|api_resource.create|api_resource' => [185],
+            $requestId . '-l04-route-binding|api_route_binding.create|api_route_binding' => [186],
+            $requestId . '-l04-policy|policy.create|policy' => [182],
             'worker-delivery-' . $requestId . '|webhook.delivery|webhook_delivery' => [122],
         ];
     }
@@ -528,8 +657,9 @@ namespace {
             'confirmation' => AcceptanceFixtureService::CONFIRMATION,
             'organization_id' => 11,
             'application_id' => 22,
-            'object_ids' => ['identity' => [134], 'auth_session' => [136, 140, 141], 'mfa_factor' => [138]],
+            'object_ids' => ['auth_policy' => [133], 'identity' => [134], 'auth_session' => [136, 140, 141], 'mfa_factor' => [138]],
             'object_request_ids' => [
+                'auth_policy' => [$requestId . '-chain3-auth-policy'],
                 'identity' => [$requestId . '-chain3-register'],
                 'auth_session' => [$requestId . '-chain3-register', $requestId . '-chain3-login', $requestId . '-chain3-mfa-verify'],
                 'mfa_factor' => [$requestId . '-chain3-totp-start'],
@@ -554,10 +684,13 @@ namespace {
             'confirmation' => AcceptanceFixtureService::CONFIRMATION,
             'organization_id' => 11,
             'application_id' => 22,
-            'object_ids' => ['webhook_endpoint' => [121], 'webhook_delivery' => [122]],
+            'environment_id' => 33,
+            'workload_client_id' => 55,
+            'object_ids' => ['credential' => [124], 'webhook_endpoint' => [121], 'webhook_delivery' => [122]],
             'object_request_ids' => [
+                'credential' => [$prefix . 'chain7-credential'],
                 'webhook_endpoint' => [$requestId . '-chain7-endpoint'],
-                'webhook_delivery' => [$requestId . '-chain7-delivery'],
+                'webhook_delivery' => [$prefix . 'chain7-credential'],
             ],
             'delivery_retry_request_ids' => [$requestId . '-chain7-retry'],
         ];
@@ -589,6 +722,34 @@ namespace {
                 'api_resource' => [$requestId . '-chain5-api-resource'],
                 'api_route_binding' => [$requestId . '-chain5-route-binding'],
                 'policy' => [$requestId . '-chain5-policy'],
+            ],
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    function acceptanceFixtureL04Payload(string $requestId, string $prefix = ACCEPTANCE_FIXTURE_PREFIX): array
+    {
+        return [
+            'chain_id' => 'non-ai-business-consumer',
+            'request_id' => $requestId,
+            'prefix' => $prefix,
+            'confirmation' => AcceptanceFixtureService::CONFIRMATION,
+            'organization_id' => 11,
+            'application_id' => 22,
+            'identity_id' => 34,
+            'object_ids' => [
+                'application_business_action' => [180],
+                'resource' => [181],
+                'api_resource' => [185],
+                'api_route_binding' => [186],
+                'policy' => [182],
+            ],
+            'object_request_ids' => [
+                'application_business_action' => [$requestId . '-l04-action'],
+                'resource' => [$requestId . '-l04-resource'],
+                'api_resource' => [$requestId . '-l04-api-resource'],
+                'api_route_binding' => [$requestId . '-l04-route-binding'],
+                'policy' => [$requestId . '-l04-policy'],
             ],
         ];
     }
@@ -632,7 +793,7 @@ namespace {
     );
     $emptyRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain1-empty';
     $emptyRows = acceptanceFixtureRows();
-    foreach (['organization', 'application', 'environment', 'admin_application_grant'] as $type) $emptyRows[$type] = [];
+    foreach (['organization', 'application', 'environment', 'application_experience', 'admin_organization_grant', 'admin_application_grant'] as $type) $emptyRows[$type] = [];
     $emptyPayload = acceptanceFixturePayload($emptyRequest);
     $emptyPayload['contract_version'] = 2;
     $emptyPayload['creator_admin_id'] = 1;
@@ -660,14 +821,23 @@ namespace {
         && array_sum($partial['residual']) === 0, 'C01 organization-only interrupted create did not retain its disabled audit anchor');
     $fullGrantRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain1-full-grant';
     $fullGrantRows = acceptanceFixtureRows();
+    $fullGrantRows['application_experience'][42] = ['id' => 42, 'application_id' => 22, 'status' => 1];
+    $fullGrantRows['admin_organization_grant'][43] = ['id' => 43, 'organization_id' => 11, 'admin_user_id' => 76, 'status' => 1];
     $fullGrantRows['admin_application_grant'][44]['admin_user_id'] = 77;
     $fullGrantAudits = acceptanceFixtureAudits($fullGrantRequest);
+    $fullGrantAudits[$fullGrantRequest . '-chain1-experience-create|application_experience.create|application_experience'] = [42];
+    $fullGrantAudits[$fullGrantRequest . '-chain1-org-grant-create|admin_organization_grant.create|admin_organization_grant'] = [43];
     $fullGrantAudits[$fullGrantRequest . '-chain1-grant-create|admin_application_grant.create|admin_application_grant'] = [44];
     $fullGrantPayload = acceptanceFixturePayload($fullGrantRequest);
     $fullGrantPayload['contract_version'] = 2;
     $fullGrantPayload['creator_admin_id'] = 1;
+    $fullGrantPayload['organization_scoped_admin_id'] = 76;
     $fullGrantPayload['scoped_admin_id'] = 77;
+    $fullGrantPayload['object_ids']['application_experience'] = [42];
+    $fullGrantPayload['object_ids']['admin_organization_grant'] = [43];
     $fullGrantPayload['object_ids']['admin_application_grant'] = [44];
+    $fullGrantPayload['object_request_ids']['application_experience'] = [$fullGrantRequest . '-chain1-experience-create'];
+    $fullGrantPayload['object_request_ids']['admin_organization_grant'] = [$fullGrantRequest . '-chain1-org-grant-create'];
     $fullGrantPayload['object_request_ids']['admin_application_grant'] = [$fullGrantRequest . '-chain1-grant-create'];
     $fullGrantStore = new AcceptanceFixtureMemoryStore($fullGrantRows, $fullGrantAudits);
     [$fullGrantIdempotent, $fullGrantAudit] = acceptanceFixtureDoubles();
@@ -675,7 +845,7 @@ namespace {
     $fullGrant = $fullGrantService->cleanup($fullGrantPayload, 1, $fullGrantRequest);
     acceptanceFixtureAssert(array_sum($fullGrant['residual']) === 0
         && (($fullGrant['retained'] ?? null) === ['organization' => [['id' => 11, 'status' => 2]], 'application' => [['id' => 22, 'status' => 2]]])
-        && array_values(array_filter($fullGrantStore->operations, static fn (string $operation): bool => str_starts_with($operation, 'purge:'))) === ['purge:admin_application_grant', 'purge:environment'], 'C01 full plus grant did not retain disabled audit anchors after removing grant and environment');
+        && array_values(array_filter($fullGrantStore->operations, static fn (string $operation): bool => str_starts_with($operation, 'purge:'))) === ['purge:admin_application_grant', 'purge:admin_organization_grant', 'purge:application_experience', 'purge:environment'], 'C01 full plus experience and both grants did not retain disabled audit anchors after removing children');
 
     $fullOmitGrant = $fullGrantPayload;
     unset($fullOmitGrant['scoped_admin_id'], $fullOmitGrant['object_ids']['admin_application_grant'], $fullOmitGrant['object_request_ids']['admin_application_grant']);
@@ -691,6 +861,13 @@ namespace {
     $wrongGrantService = new AcceptanceFixtureService($wrongGrantStore, $wrongGrantIdempotent, $wrongGrantAudit);
     acceptanceFixtureExpect(static fn () => $wrongGrantService->cleanup($wrongGrantActor, 1, $fullGrantRequest), 'SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED');
     acceptanceFixtureAssert(isset($wrongGrantStore->rows['organization'][11]), 'C01 scoped-grant actor mismatch reached cleanup mutation');
+    $wrongOrganizationGrantActor = $fullGrantPayload;
+    $wrongOrganizationGrantActor['organization_scoped_admin_id'] = 78;
+    $wrongOrganizationGrantStore = new AcceptanceFixtureMemoryStore($fullGrantRows, $fullGrantAudits);
+    [$wrongOrganizationGrantIdempotent, $wrongOrganizationGrantAudit] = acceptanceFixtureDoubles();
+    $wrongOrganizationGrantService = new AcceptanceFixtureService($wrongOrganizationGrantStore, $wrongOrganizationGrantIdempotent, $wrongOrganizationGrantAudit);
+    acceptanceFixtureExpect(static fn () => $wrongOrganizationGrantService->cleanup($wrongOrganizationGrantActor, 1, $fullGrantRequest), 'SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED');
+    acceptanceFixtureAssert(isset($wrongOrganizationGrantStore->rows['organization'][11]), 'C01 organization scoped-grant actor mismatch reached cleanup mutation');
 
     $wrongCreator = $fullGrantPayload;
     $wrongCreator['creator_admin_id'] = 2;
@@ -825,16 +1002,50 @@ namespace {
         'confirmation' => AcceptanceFixtureService::CONFIRMATION,
         'organization_id' => 11,
         'application_id' => 22,
-        'object_ids' => ['admin_application_grant' => [44]],
-        'object_request_ids' => ['admin_application_grant' => [$delegationRequest . '-grant']],
+        'object_ids' => ['environment' => [33], 'admin_application_grant' => [44]],
+        'object_request_ids' => [
+            'environment' => [$delegationRequest . '-environment'],
+            'admin_application_grant' => [$delegationRequest . '-grant'],
+        ],
     ];
-    $delegationStore = new AcceptanceFixtureMemoryStore(acceptanceFixtureRows(), acceptanceFixtureAudits($delegationRequest));
+    $delegationAudits = acceptanceFixtureAudits($delegationRequest);
+    $delegationAudits[$delegationRequest . '-environment|environment.create|environment'] = [33];
+    $delegationStore = new AcceptanceFixtureMemoryStore(acceptanceFixtureRows(), $delegationAudits);
     [$delegationIdempotent, $delegationAudit] = acceptanceFixtureDoubles();
     $delegationService = new AcceptanceFixtureService($delegationStore, $delegationIdempotent, $delegationAudit);
     $delegation = $delegationService->cleanup($delegationPayload, 1, $delegationRequest);
-    acceptanceFixtureAssert($delegation['revoked']['admin_application_grant'] === 1 && $delegation['purged']['admin_application_grant'] === 1, 'chain 6 did not disable before purge');
+    acceptanceFixtureAssert(
+        $delegation['revoked'] === ['environment' => 1, 'admin_application_grant' => 1]
+        && $delegation['purged'] === ['environment' => 1, 'admin_application_grant' => 1],
+        'chain 6 did not disable and purge its delegated write plus grant',
+    );
     $status = $delegationService->status($delegationPayload, $delegationRequest);
-    acceptanceFixtureAssert($status['residual']['admin_application_grant'] === 0, 'status did not prove exact delegation fixture zero residual');
+    acceptanceFixtureAssert(
+        $status['residual'] === ['admin_application_grant' => 0, 'environment' => 0],
+        'status did not prove exact delegated environment and grant zero residual: ' . json_encode($status['residual'], JSON_THROW_ON_ERROR),
+    );
+    $partialDelegationRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain6-partial';
+    $partialDelegationRows = acceptanceFixtureRows();
+    unset($partialDelegationRows['environment'][33]);
+    $partialDelegationPayload = [
+        'chain_id' => 'delegation-scope',
+        'request_id' => $partialDelegationRequest,
+        'prefix' => ACCEPTANCE_FIXTURE_PREFIX,
+        'confirmation' => AcceptanceFixtureService::CONFIRMATION,
+        'organization_id' => 11,
+        'application_id' => 22,
+        'object_ids' => ['admin_application_grant' => [44]],
+        'object_request_ids' => ['admin_application_grant' => [$partialDelegationRequest . '-grant']],
+    ];
+    $partialDelegationStore = new AcceptanceFixtureMemoryStore($partialDelegationRows, acceptanceFixtureAudits($partialDelegationRequest));
+    [$partialDelegationIdempotent, $partialDelegationAudit] = acceptanceFixtureDoubles();
+    $partialDelegationService = new AcceptanceFixtureService($partialDelegationStore, $partialDelegationIdempotent, $partialDelegationAudit);
+    $partialDelegation = $partialDelegationService->cleanup($partialDelegationPayload, 1, $partialDelegationRequest);
+    acceptanceFixtureAssert(
+        $partialDelegation['purged'] === ['environment' => 0, 'admin_application_grant' => 1]
+        && $partialDelegationService->status($partialDelegationPayload, $partialDelegationRequest)['residual'] === ['admin_application_grant' => 0],
+        'chain 6 interrupted run did not clean a captured grant before environment creation',
+    );
 
     $chainTwoRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain2-cleanup';
     $chainTwoStore = new AcceptanceFixtureMemoryStore(acceptanceFixtureRows(), acceptanceFixtureAudits($chainTwoRequest));
@@ -864,6 +1075,104 @@ namespace {
     $chainTwoReplayOperations = count($chainTwoStore->operations);
     $chainTwoReplay = $chainTwoService->cleanup($chainTwoPayload, 1, $chainTwoRequest);
     acceptanceFixtureAssert($chainTwoReplay['replayed'] === true && count($chainTwoStore->operations) === $chainTwoReplayOperations + 2, 'chain 2 cleanup replay did not remain idempotent');
+
+    $chainTwoSyncRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain2-sync-cleanup';
+    $chainTwoSyncRows = acceptanceFixtureRows();
+    $chainTwoSyncRows['sync_connector'][201] = ['id' => 201, 'organization_id' => 11, 'application_id' => 22, 'code' => ACCEPTANCE_FIXTURE_PREFIX . 'directory', 'status' => 1];
+    $chainTwoSyncRows['sync_run'][202] = ['id' => 202, 'sync_connector_id' => 201, 'application_id' => 22, 'state' => 'succeeded', 'status' => 2];
+    $chainTwoSyncRows['directory_identity'][204] = ['id' => 204, 'application_id' => 22, 'code' => 'sync_0123456789abcdef01234567', 'status' => 2];
+    $chainTwoSyncRows['sync_resource'][203] = ['id' => 203, 'sync_connector_id' => 201, 'application_id' => 22, 'identity_id' => 204, 'last_seen_run_id' => 202, 'status' => 1];
+    $chainTwoSyncRows['identity_invitation'][210] = ['id' => 210, 'application_id' => 22, 'state' => 'revoked', 'status' => 2];
+    $chainTwoSyncRows['identity_import_job'][211] = ['id' => 211, 'application_id' => 22, 'state' => 'completed', 'status' => 1];
+    $chainTwoSyncRows['identity_import_row'][212] = ['id' => 212, 'import_job_id' => 211, 'application_id' => 22, 'result_invitation_id' => 213, 'state' => 'succeeded_with_warning', 'status' => 1];
+    $chainTwoSyncRows['import_invitation'][213] = ['id' => 213, 'application_id' => 22, 'state' => 'delivery_failed', 'status' => 1];
+    $chainTwoSyncRows['identity_provider'][220] = ['id' => 220, 'organization_id' => 11, 'application_id' => 22, 'code' => ACCEPTANCE_FIXTURE_PREFIX . 'scim', 'provider_type' => 'scim', 'status' => 1];
+    $chainTwoSyncRows['identity_provider_application'][221] = ['id' => 221, 'identity_provider_id' => 220, 'organization_id' => 11, 'application_id' => 22, 'status' => 1];
+    $chainTwoSyncRows['scim_token'][222] = ['id' => 222, 'identity_provider_id' => 220, 'application_id' => 22, 'status' => 2];
+    $chainTwoSyncRows['scim_identity'][223] = ['id' => 223, 'application_id' => 22, 'code' => 'scim_0123456789abcdef01234567', 'status' => 2];
+    $chainTwoSyncRows['identity_binding'][224] = ['id' => 224, 'identity_provider_id' => 220, 'application_id' => 22, 'identity_id' => 223, 'status' => 2];
+    $chainTwoSyncRows['scim_resource'][225] = ['id' => 225, 'identity_provider_id' => 220, 'application_id' => 22, 'identity_id' => 223, 'source_state' => 'deleted'];
+    $chainTwoSyncRows['provisioning_event'][226] = ['id' => 226, 'identity_provider_id' => 220, 'application_id' => 22, 'scim_resource_id' => 225];
+    $chainTwoSyncPayload = acceptanceFixtureChainTwoPayload($chainTwoSyncRequest);
+    $chainTwoSyncPayload['object_ids']['sync_connector'] = [201];
+    $chainTwoSyncPayload['object_request_ids']['sync_connector'] = [$chainTwoSyncRequest . '-chain2-sync-connector'];
+    $chainTwoSyncPayload['object_ids']['identity_invitation'] = [210];
+    $chainTwoSyncPayload['object_request_ids']['identity_invitation'] = [$chainTwoSyncRequest . '-chain2-invitation'];
+    $chainTwoSyncPayload['object_ids']['identity_import_job'] = [211];
+    $chainTwoSyncPayload['object_request_ids']['identity_import_job'] = [$chainTwoSyncRequest . '-chain2-import-preview'];
+    $chainTwoSyncPayload['object_ids']['identity_provider'] = [220];
+    $chainTwoSyncPayload['object_request_ids']['identity_provider'] = [$chainTwoSyncRequest . '-chain2-scim-provider'];
+    $chainTwoSyncAudits = acceptanceFixtureAudits($chainTwoSyncRequest);
+    $chainTwoSyncAudits[$chainTwoSyncRequest . '-chain2-sync-connector|sync_connector.create|sync_connector'] = [201];
+    $chainTwoSyncAudits[$chainTwoSyncRequest . '-chain2-invitation|identity_invitation.create|identity_invitation'] = [210];
+    $chainTwoSyncAudits[$chainTwoSyncRequest . '-chain2-import-preview|identity_import.preview|identity_import_job'] = [211];
+    $chainTwoSyncAudits[$chainTwoSyncRequest . '-chain2-scim-provider|identity_provider.create|identity_provider'] = [220];
+    $chainTwoSyncStore = new AcceptanceFixtureMemoryStore($chainTwoSyncRows, $chainTwoSyncAudits);
+    [$chainTwoSyncIdempotent, $chainTwoSyncAudit] = acceptanceFixtureDoubles();
+    $chainTwoSyncService = new AcceptanceFixtureService($chainTwoSyncStore, $chainTwoSyncIdempotent, $chainTwoSyncAudit);
+    $chainTwoSync = $chainTwoSyncService->cleanup($chainTwoSyncPayload, 1, $chainTwoSyncRequest);
+    acceptanceFixtureAssert(
+        ($chainTwoSync['matched']['sync_connector'] ?? 0) === 1
+        && ($chainTwoSync['matched']['sync_run'] ?? 0) === 1
+        && ($chainTwoSync['matched']['sync_resource'] ?? 0) === 1
+        && ($chainTwoSync['matched']['directory_identity'] ?? 0) === 1
+        && ($chainTwoSync['matched']['identity_import_row'] ?? 0) === 1
+        && ($chainTwoSync['matched']['import_invitation'] ?? 0) === 1
+        && ($chainTwoSync['matched']['scim_token'] ?? 0) === 1
+        && ($chainTwoSync['matched']['scim_resource'] ?? 0) === 1
+        && ($chainTwoSync['matched']['scim_identity'] ?? 0) === 1
+        && array_sum($chainTwoSync['residual']) === 0,
+        'chain 2 did not discover and clean the complete lifecycle and directory artifact sets',
+    );
+    acceptanceFixtureAssert(
+        array_values(array_filter($chainTwoSyncStore->operations, static fn (string $operation): bool => str_starts_with($operation, 'purge:'))) === [
+            'purge:identity_group_role', 'purge:identity_group_member',
+            'purge:sync_resource', 'purge:directory_identity', 'purge:sync_run', 'purge:sync_connector',
+            'purge:identity_import_row', 'purge:import_invitation', 'purge:identity_invitation', 'purge:identity_import_job',
+            'purge:provisioning_event', 'purge:scim_resource', 'purge:identity_binding', 'purge:scim_token',
+            'purge:scim_identity', 'purge:identity_provider_application', 'purge:identity_provider',
+            'purge:identity_group', 'purge:identity',
+        ],
+        'chain 2 did not remove directory and import children before their roots',
+    );
+
+    $chainTwoPartialScimRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain2-scim-partial';
+    $chainTwoPartialScimRows = acceptanceFixtureRows();
+    unset(
+        $chainTwoPartialScimRows['identity'][34],
+        $chainTwoPartialScimRows['identity_group'][35],
+        $chainTwoPartialScimRows['identity_group_member'][36],
+        $chainTwoPartialScimRows['identity_group_role'][37],
+    );
+    $chainTwoPartialScimRows['identity_provider'][227] = [
+        'id' => 227,
+        'organization_id' => 11,
+        'application_id' => 22,
+        'code' => ACCEPTANCE_FIXTURE_PREFIX . 'scim-partial',
+        'provider_type' => 'local',
+        'status' => 1,
+    ];
+    $chainTwoPartialScimPayload = acceptanceFixtureChainTwoPayload($chainTwoPartialScimRequest);
+    $chainTwoPartialScimPayload['object_ids'] = ['identity_provider' => [227]];
+    $chainTwoPartialScimPayload['object_request_ids'] = [
+        'identity_provider' => [$chainTwoPartialScimRequest . '-chain2-scim-provider'],
+    ];
+    $chainTwoPartialScimAudits = acceptanceFixtureAudits($chainTwoPartialScimRequest);
+    $chainTwoPartialScimAudits[$chainTwoPartialScimRequest . '-chain2-scim-provider|identity_provider.create|identity_provider'] = [227];
+    $chainTwoPartialScimStore = new AcceptanceFixtureMemoryStore($chainTwoPartialScimRows, $chainTwoPartialScimAudits);
+    [$chainTwoPartialScimIdempotent, $chainTwoPartialScimAudit] = acceptanceFixtureDoubles();
+    $chainTwoPartialScimService = new AcceptanceFixtureService($chainTwoPartialScimStore, $chainTwoPartialScimIdempotent, $chainTwoPartialScimAudit);
+    acceptanceFixtureExpect(
+        static fn () => $chainTwoPartialScimService->cleanup($chainTwoPartialScimPayload, 1, $chainTwoPartialScimRequest),
+        'SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED',
+    );
+    $chainTwoPartialScimPayload['partial_recovery'] = true;
+    $chainTwoPartialScim = $chainTwoPartialScimService->cleanup($chainTwoPartialScimPayload, 1, $chainTwoPartialScimRequest);
+    acceptanceFixtureAssert(
+        ($chainTwoPartialScim['purged']['identity_provider'] ?? 0) === 1
+        && array_sum($chainTwoPartialScim['residual']) === 0,
+        'chain 2 interrupted SCIM provider creation could not be recovered without fabricated derived objects',
+    );
 
     foreach (['extra member' => static function (array &$rows): void {
         $rows['identity'][40] = ['id' => 40, 'application_id' => 22, 'code' => ACCEPTANCE_FIXTURE_PREFIX . 'identity_40', 'status' => 1, 'lifecycle_state' => 'active'];
@@ -1172,10 +1481,10 @@ namespace {
     [$chainSevenIdempotent, $chainSevenAudit, $chainSevenEvents] = acceptanceFixtureDoubles();
     $chainSevenService = new AcceptanceFixtureService($chainSevenStore, $chainSevenIdempotent, $chainSevenAudit);
     $chainSeven = $chainSevenService->cleanup(acceptanceFixtureChainSevenPayload($chainSevenRequest), 1, $chainSevenRequest);
-    acceptanceFixtureAssert($chainSeven['purged']['webhook_delivery'] === 1 && $chainSeven['purged']['webhook_endpoint'] === 1 && array_sum($chainSeven['residual']) === 0, 'chain 7 did not physically clean delivery before endpoint');
+    acceptanceFixtureAssert($chainSeven['purged']['webhook_delivery'] === 1 && $chainSeven['purged']['credential'] === 1 && $chainSeven['purged']['webhook_endpoint'] === 1 && array_sum($chainSeven['residual']) === 0, 'chain 7 did not physically clean delivery, event credential and endpoint');
     acceptanceFixtureAssert(
-        array_values(array_filter($chainSevenStore->operations, static fn (string $operation): bool => str_starts_with($operation, 'revoke:') || str_starts_with($operation, 'purge:'))) === ['revoke:webhook_endpoint', 'purge:webhook_delivery', 'purge:webhook_endpoint'],
-        'chain 7 did not disable the endpoint before delivery and endpoint cleanup',
+        array_values(array_filter($chainSevenStore->operations, static fn (string $operation): bool => str_starts_with($operation, 'revoke:') || str_starts_with($operation, 'purge:'))) === ['revoke:credential', 'revoke:webhook_endpoint', 'purge:webhook_delivery', 'purge:credential', 'purge:webhook_endpoint'],
+        'chain 7 did not revoke the event credential and endpoint before physical cleanup',
     );
     $chainSevenAuditJson = json_encode($chainSevenEvents[0]['context'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     acceptanceFixtureAssert(!str_contains($chainSevenAuditJson, ACCEPTANCE_FIXTURE_PREFIX) && !str_contains($chainSevenAuditJson, AcceptanceFixtureService::CONFIRMATION), 'chain 7 cleanup audit leaked prefix or confirmation');
@@ -1213,12 +1522,13 @@ namespace {
 
     $chainSevenEndpointOnlyRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain7-endpoint-only';
     $chainSevenEndpointOnlyRows = acceptanceFixtureRows();
-    unset($chainSevenEndpointOnlyRows['webhook_delivery'][122]);
+    unset($chainSevenEndpointOnlyRows['webhook_delivery'][122], $chainSevenEndpointOnlyRows['credential'][124]);
     $chainSevenEndpointOnlyStore = new AcceptanceFixtureMemoryStore($chainSevenEndpointOnlyRows, acceptanceFixtureAudits($chainSevenEndpointOnlyRequest));
     [$chainSevenEndpointOnlyIdempotent, $chainSevenEndpointOnlyAudit] = acceptanceFixtureDoubles();
     $chainSevenEndpointOnlyService = new AcceptanceFixtureService($chainSevenEndpointOnlyStore, $chainSevenEndpointOnlyIdempotent, $chainSevenEndpointOnlyAudit);
     $chainSevenEndpointOnlyPayload = acceptanceFixtureChainSevenPayload($chainSevenEndpointOnlyRequest);
-    unset($chainSevenEndpointOnlyPayload['object_ids']['webhook_delivery'], $chainSevenEndpointOnlyPayload['object_request_ids']['webhook_delivery'], $chainSevenEndpointOnlyPayload['delivery_retry_request_ids']);
+    unset($chainSevenEndpointOnlyPayload['object_ids']['credential'], $chainSevenEndpointOnlyPayload['object_ids']['webhook_delivery'], $chainSevenEndpointOnlyPayload['object_request_ids']['credential'], $chainSevenEndpointOnlyPayload['object_request_ids']['webhook_delivery']);
+    $chainSevenEndpointOnlyPayload['delivery_retry_request_ids'] = [];
     $chainSevenEndpointOnly = $chainSevenEndpointOnlyService->cleanup($chainSevenEndpointOnlyPayload, 1, $chainSevenEndpointOnlyRequest);
     acceptanceFixtureAssert($chainSevenEndpointOnly['purged']['webhook_endpoint'] === 1 && array_sum($chainSevenEndpointOnly['residual']) === 0, 'chain 7 endpoint-only interrupted setup did not clean safely');
 
@@ -1229,23 +1539,196 @@ namespace {
     $chainThree = $chainThreeService->cleanup(acceptanceFixtureChainThreePayload($chainThreeRequest), 1, $chainThreeRequest);
     acceptanceFixtureAssert(
         ($chainThree['purged']['mfa_recovery_code'] ?? 0) === 1
+        && ($chainThree['purged']['auth_challenge'] ?? 0) === 1
+        && ($chainThree['purged']['auth_verification'] ?? 0) === 1
         && ($chainThree['purged']['mfa_factor'] ?? 0) === 1
+        && ($chainThree['purged']['webauthn_credential'] ?? 0) === 1
         && ($chainThree['purged']['auth_refresh_token'] ?? 0) === 3
         && ($chainThree['purged']['auth_session'] ?? 0) === 3
         && ($chainThree['purged']['identity_auth'] ?? 0) === 1
         && ($chainThree['purged']['identity'] ?? 0) === 1
+        && ($chainThree['purged']['auth_policy'] ?? 0) === 1
         && array_sum($chainThree['residual']) === 0,
         'chain 3 did not clean every derived authentication artifact in foreign-key order',
     );
     acceptanceFixtureAssert(
         array_values(array_filter($chainThreeStore->operations, static fn (string $operation): bool => str_starts_with($operation, 'revoke:') || str_starts_with($operation, 'purge:'))) === [
-            'revoke:identity', 'purge:mfa_recovery_code', 'purge:mfa_factor', 'purge:auth_refresh_token', 'purge:auth_session', 'purge:identity_auth', 'purge:identity',
+            'revoke:identity', 'purge:auth_challenge', 'purge:auth_verification', 'purge:mfa_recovery_code', 'purge:mfa_factor', 'purge:webauthn_credential', 'purge:auth_refresh_token', 'purge:auth_session', 'purge:identity_auth', 'purge:identity', 'purge:auth_policy',
         ],
         'chain 3 cleanup did not revoke the identity and purge child authentication artifacts before the identity',
     );
+    foreach (['auth_verification' => 144, 'webauthn_credential' => 145] as $activeType => $activeId) {
+        $activeRows = acceptanceFixtureRows();
+        $activeRows[$activeType][$activeId]['status'] = 1;
+        $activeRows[$activeType][$activeId]['revoked_time'] = null;
+        $activeStore = new AcceptanceFixtureMemoryStore($activeRows, acceptanceFixtureAudits($chainThreeRequest));
+        [$activeIdempotent, $activeAudit] = acceptanceFixtureDoubles();
+        $activeService = new AcceptanceFixtureService($activeStore, $activeIdempotent, $activeAudit);
+        acceptanceFixtureExpect(
+            static fn () => $activeService->cleanup(acceptanceFixtureChainThreePayload($chainThreeRequest), 1, $chainThreeRequest),
+            'SAND_IAM_ACCEPTANCE_FIXTURE_DRAIN_REQUIRED',
+        );
+        acceptanceFixtureAssert(isset($activeStore->rows[$activeType][$activeId]), "chain 3 drain rejection removed active {$activeType}");
+    }
     $chainThreeAuditJson = json_encode($chainThreeEvents[0]['context'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     foreach (['siam_at_', 'siam_rt_', 'otpauth://', 'password-value', 'secret-value'] as $sensitiveKey) {
         acceptanceFixtureAssert(!str_contains($chainThreeAuditJson, $sensitiveKey), 'chain 3 cleanup audit leaked authentication material');
+    }
+
+    $policyOnlyRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain3-policy-only';
+    $policyOnlyRows = acceptanceFixtureRows();
+    unset(
+        $policyOnlyRows['identity'][134],
+        $policyOnlyRows['identity_auth'][135],
+        $policyOnlyRows['auth_verification'][144],
+        $policyOnlyRows['auth_challenge'][901],
+        $policyOnlyRows['auth_session'][136],
+        $policyOnlyRows['auth_session'][140],
+        $policyOnlyRows['auth_session'][141],
+        $policyOnlyRows['auth_refresh_token'][137],
+        $policyOnlyRows['auth_refresh_token'][142],
+        $policyOnlyRows['auth_refresh_token'][143],
+        $policyOnlyRows['mfa_factor'][138],
+        $policyOnlyRows['mfa_recovery_code'][139],
+        $policyOnlyRows['webauthn_credential'][145],
+    );
+    $policyOnlyAudits = acceptanceFixtureAudits($policyOnlyRequest);
+    unset($policyOnlyAudits[$policyOnlyRequest . '-chain3-register|identity.register|identity']);
+    $policyOnlyStore = new AcceptanceFixtureMemoryStore($policyOnlyRows, $policyOnlyAudits);
+    [$policyOnlyIdempotent, $policyOnlyAudit] = acceptanceFixtureDoubles();
+    $policyOnlyService = new AcceptanceFixtureService($policyOnlyStore, $policyOnlyIdempotent, $policyOnlyAudit);
+    $policyOnlyPayload = [
+        'chain_id' => 'human-auth-session-mfa',
+        'request_id' => $policyOnlyRequest,
+        'prefix' => ACCEPTANCE_FIXTURE_PREFIX,
+        'confirmation' => AcceptanceFixtureService::CONFIRMATION,
+        'organization_id' => 11,
+        'application_id' => 22,
+        'partial_recovery' => true,
+        'object_ids' => ['auth_policy' => [133]],
+        'object_request_ids' => ['auth_policy' => [$policyOnlyRequest . '-chain3-auth-policy']],
+        'human_auth_registration_request_id' => $policyOnlyRequest . '-chain3-register',
+        'human_auth_action_request_ids' => [],
+        'human_auth_session_actions' => [],
+    ];
+    $policyOnlyStatusPayload = $policyOnlyPayload;
+    unset($policyOnlyStatusPayload['human_auth_session_actions']);
+    $policyOnlyStatusPayload['request_id'] = $policyOnlyRequest . '-status';
+    $policyOnlyStatus = $policyOnlyService->status(
+        $policyOnlyStatusPayload,
+        $policyOnlyStatusPayload['request_id'],
+    );
+    acceptanceFixtureAssert(
+        ($policyOnlyStatus['residual']['auth_policy'] ?? null) === 1,
+        'chain 3 auth-policy-only status rejected an omitted empty session-action list',
+    );
+    $policyOnly = $policyOnlyService->cleanup($policyOnlyPayload, 1, $policyOnlyRequest);
+    acceptanceFixtureAssert(($policyOnly['purged']['auth_policy'] ?? 0) === 1 && array_sum($policyOnly['residual']) === 0, 'chain 3 auth-policy-only interrupted bootstrap did not clean safely');
+
+    $lostRegistrationStore = new AcceptanceFixtureMemoryStore(
+        acceptanceFixtureRows(),
+        acceptanceFixtureAudits($policyOnlyRequest),
+    );
+    [$lostRegistrationIdempotent, $lostRegistrationAudit] = acceptanceFixtureDoubles();
+    $lostRegistrationService = new AcceptanceFixtureService(
+        $lostRegistrationStore,
+        $lostRegistrationIdempotent,
+        $lostRegistrationAudit,
+    );
+    acceptanceFixtureExpect(
+        static fn () => $lostRegistrationService->cleanup($policyOnlyPayload, 1, $policyOnlyRequest),
+        'SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED',
+    );
+    acceptanceFixtureAssert(
+        isset($lostRegistrationStore->rows['auth_policy'][133], $lostRegistrationStore->rows['identity'][134]),
+        'lost registration response changed policy or identity before ownership rejection',
+    );
+
+    $foreignPolicyRows = $policyOnlyRows;
+    $foreignPolicyRows['auth_policy'][133]['application_id'] = 999;
+    $foreignPolicyStore = new AcceptanceFixtureMemoryStore($foreignPolicyRows, $policyOnlyAudits);
+    [$foreignPolicyIdempotent, $foreignPolicyAudit] = acceptanceFixtureDoubles();
+    $foreignPolicyService = new AcceptanceFixtureService(
+        $foreignPolicyStore,
+        $foreignPolicyIdempotent,
+        $foreignPolicyAudit,
+    );
+    acceptanceFixtureExpect(
+        static fn () => $foreignPolicyService->cleanup($policyOnlyPayload, 1, $policyOnlyRequest),
+        'SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED',
+    );
+    acceptanceFixtureAssert(
+        isset($foreignPolicyStore->rows['auth_policy'][133]),
+        'cross-application auth policy changed before scope rejection',
+    );
+
+    foreach ([
+        'register' => ['sessions' => [136], 'factor' => false],
+        'login' => ['sessions' => [136, 140], 'factor' => false],
+        'mfa-start' => ['sessions' => [136, 140], 'factor' => true],
+        'mfa-verified' => ['sessions' => [136, 140, 141], 'factor' => true],
+    ] as $stage => $shape) {
+        $partialRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain3-partial-' . $stage;
+        $partialRows = acceptanceFixtureRows();
+        foreach ([136, 140, 141] as $sessionId) {
+            if (!in_array($sessionId, $shape['sessions'], true)) {
+                unset($partialRows['auth_session'][$sessionId]);
+            } else {
+                $partialRows['auth_session'][$sessionId]['status'] = 1;
+                $partialRows['auth_session'][$sessionId]['revoked_time'] = null;
+            }
+        }
+        foreach ([137 => 136, 142 => 140, 143 => 141] as $tokenId => $sessionId) {
+            if (!in_array($sessionId, $shape['sessions'], true)) unset($partialRows['auth_refresh_token'][$tokenId]);
+        }
+        if ($stage !== 'mfa-verified') unset($partialRows['auth_challenge'][901]);
+        $partialRows['auth_challenge'][902] = ['id' => 902, 'application_id' => 22, 'identity_id' => 34, 'purpose' => 'mfa_login', 'status' => 1];
+        $partialRows['auth_challenge'][903] = ['id' => 903, 'application_id' => 99, 'identity_id' => 134, 'purpose' => 'mfa_login', 'status' => 1];
+        if (!$shape['factor']) {
+            unset($partialRows['mfa_factor'][138], $partialRows['mfa_recovery_code'][139]);
+        }
+        unset($partialRows['auth_verification'][144], $partialRows['webauthn_credential'][145]);
+        $partialStore = new AcceptanceFixtureMemoryStore($partialRows, acceptanceFixtureAudits($partialRequest));
+        if ($stage === 'mfa-verified') {
+            $partialStore->mfaLoginChallengeAudits[] = [
+                'application_id' => 22,
+                'identity_id' => 134,
+                'request_id' => $partialRequest . '-chain3-mfa-verify',
+                'actor_ref' => '134',
+                'challenge_id' => 901,
+                'challenge_application_id' => 22,
+                'challenge_identity_id' => 134,
+                'purpose' => 'mfa_login',
+                'outcome' => 'succeeded',
+            ];
+        }
+        [$partialIdempotent, $partialAudit] = acceptanceFixtureDoubles();
+        $partialService = new AcceptanceFixtureService($partialStore, $partialIdempotent, $partialAudit);
+        $partialPayload = acceptanceFixtureChainThreePayload($partialRequest);
+        $partialPayload['partial_recovery'] = $stage === 'register' ? '1' : true;
+        $partialPayload['object_ids']['auth_session'] = $shape['sessions'];
+        $partialPayload['object_request_ids']['auth_session'] = array_slice(
+            [$partialRequest . '-chain3-register', $partialRequest . '-chain3-login', $partialRequest . '-chain3-mfa-verify'],
+            0,
+            count($shape['sessions']),
+        );
+        $partialPayload['human_auth_session_actions'] = array_slice(
+            ['identity.register', 'identity.login', 'identity.mfa_login'],
+            0,
+            count($shape['sessions']),
+        );
+        $partialPayload['human_auth_action_request_ids'] = [];
+        if (!$shape['factor']) {
+            unset($partialPayload['object_ids']['mfa_factor'], $partialPayload['object_request_ids']['mfa_factor']);
+        }
+        $partial = $partialService->cleanup($partialPayload, 1, $partialRequest);
+        acceptanceFixtureAssert(array_sum($partial['residual']) === 0, "chain 3 {$stage} partial recovery left authentication artifacts");
+        acceptanceFixtureAssert(isset($partialStore->rows['auth_challenge'][902], $partialStore->rows['auth_challenge'][903]), "chain 3 {$stage} partial recovery deleted an unrelated challenge");
+        $partialStatusPayload = $partialPayload;
+        $partialStatusPayload['request_id'] = $partialRequest . '-status';
+        unset($partialStatusPayload['human_auth_action_request_ids']);
+        $partialStatus = $partialService->status($partialStatusPayload, $partialRequest . '-status');
+        acceptanceFixtureAssert(array_sum($partialStatus['residual']) === 0, "chain 3 {$stage} partial status could not prove zero residual");
     }
 
     $chainThreeMfaRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain3-mfa-three-session';
@@ -1282,6 +1765,58 @@ namespace {
     $chainThreeMfaPayload['human_auth_action_request_ids']['session_revoke'] = [$chainThreeMfaRequest . '-chain3-session-revoke-136', $chainThreeMfaRequest . '-chain3-session-revoke-140', $chainThreeMfaRequest . '-chain3-session-revoke-141'];
     $chainThreeMfa = $chainThreeMfaService->cleanup($chainThreeMfaPayload, 1, $chainThreeMfaRequest);
     acceptanceFixtureAssert(($chainThreeMfa['purged']['auth_session'] ?? 0) === 3 && ($chainThreeMfa['purged']['auth_refresh_token'] ?? 0) === 3 && array_sum($chainThreeMfa['residual']) === 0, 'three-session MFA cleanup did not reach complete zero residual');
+
+    $chainThreePasskeyRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain3-passkey-session-order';
+    $chainThreePasskeyRows = $chainThreeMfaRows;
+    $chainThreePasskeyRows['auth_challenge'][901]['purpose'] = 'webauthn_auth';
+    $chainThreePasskeyAudits = acceptanceFixtureAudits($chainThreePasskeyRequest);
+    $chainThreePasskeyAudits[$chainThreePasskeyRequest . '-chain3-register|identity.register|identity'] = [134];
+    $chainThreePasskeyAudits[$chainThreePasskeyRequest . '-chain3-passkey-finish|identity.mfa_login|identity'] = [134];
+    $chainThreePasskeyAudits[$chainThreePasskeyRequest . '-chain3-login|identity.login|identity'] = [134];
+    $chainThreePasskeyStore = new AcceptanceFixtureMemoryStore($chainThreePasskeyRows, $chainThreePasskeyAudits);
+    $chainThreePasskeyStore->mfaLoginChallengeAudits[] = [
+        'application_id' => 22,
+        'identity_id' => 134,
+        'request_id' => $chainThreePasskeyRequest . '-chain3-passkey-finish',
+        'actor_ref' => '134',
+        'challenge_id' => 901,
+        'challenge_application_id' => 22,
+        'challenge_identity_id' => 134,
+        'purpose' => 'webauthn_auth',
+        'outcome' => 'succeeded',
+        'action' => 'identity.passkey_auth_finish',
+        'challenge_status' => 2,
+    ];
+    [$chainThreePasskeyIdempotent, $chainThreePasskeyAudit] = acceptanceFixtureDoubles();
+    $chainThreePasskeyService = new AcceptanceFixtureService($chainThreePasskeyStore, $chainThreePasskeyIdempotent, $chainThreePasskeyAudit);
+    $chainThreePasskeyPayload = acceptanceFixtureChainThreePayload($chainThreePasskeyRequest);
+    $chainThreePasskeyPayload['partial_recovery'] = true;
+    $chainThreePasskeyPayload['object_ids']['auth_session'] = [136, 140, 141];
+    $chainThreePasskeyPayload['object_request_ids']['auth_session'] = [
+        $chainThreePasskeyRequest . '-chain3-register',
+        $chainThreePasskeyRequest . '-chain3-passkey-finish',
+        $chainThreePasskeyRequest . '-chain3-login',
+    ];
+    $chainThreePasskeyPayload['human_auth_action_request_ids'] = [];
+    $chainThreePasskeyPayload['human_auth_session_actions'] = ['identity.register', 'identity.mfa_login', 'identity.login'];
+    $chainThreePasskey = $chainThreePasskeyService->cleanup($chainThreePasskeyPayload, 1, $chainThreePasskeyRequest);
+    acceptanceFixtureAssert(
+        ($chainThreePasskey['purged']['auth_session'] ?? 0) === 3
+        && ($chainThreePasskey['purged']['auth_challenge'] ?? 0) === 1
+        && array_sum($chainThreePasskey['residual']) === 0,
+        'Passkey-before-password session order did not retain exact challenge ownership or reach zero residual',
+    );
+
+    $chainThreePasskeyMismatchStore = new AcceptanceFixtureMemoryStore($chainThreePasskeyRows, $chainThreePasskeyAudits);
+    $chainThreePasskeyMismatchStore->mfaLoginChallengeAudits = $chainThreePasskeyStore->mfaLoginChallengeAudits;
+    [$chainThreePasskeyMismatchIdempotent, $chainThreePasskeyMismatchAudit] = acceptanceFixtureDoubles();
+    $chainThreePasskeyMismatchService = new AcceptanceFixtureService($chainThreePasskeyMismatchStore, $chainThreePasskeyMismatchIdempotent, $chainThreePasskeyMismatchAudit);
+    $chainThreePasskeyMismatchPayload = $chainThreePasskeyPayload;
+    $chainThreePasskeyMismatchPayload['human_auth_session_actions'] = ['identity.register', 'identity.login', 'identity.mfa_login'];
+    acceptanceFixtureExpect(
+        static fn () => $chainThreePasskeyMismatchService->cleanup($chainThreePasskeyMismatchPayload, 1, $chainThreePasskeyRequest),
+        'SAND_IAM_ACCEPTANCE_FIXTURE_OWNERSHIP_DENIED',
+    );
     $normalActionReuseStore = new AcceptanceFixtureMemoryStore($chainThreeMfaRows, $chainThreeMfaAudits);
     [$normalActionReuseIdempotent, $normalActionReuseAudit] = acceptanceFixtureDoubles();
     $normalActionReuseService = new AcceptanceFixtureService($normalActionReuseStore, $normalActionReuseIdempotent, $normalActionReuseAudit);
@@ -1576,6 +2111,55 @@ namespace {
     }
     acceptanceFixtureAssert(isset($chainFiveFailureStore->rows['oauth_client'][151], $chainFiveFailureStore->rows['oauth_token'][165], $chainFiveFailureStore->rows['cas_service'][152], $chainFiveFailureStore->rows['policy'][155], $chainFiveFailureStore->rows['policy_version'][176]), 'chain 5 partial failure did not roll back every fixture mutation');
     acceptanceFixtureAssert(($chainFiveFailureEvents[0]['outcome'] ?? null) === 'failed', 'chain 5 partial failure did not write the failed cleanup audit');
+
+    $l04MultiRequest = ACCEPTANCE_FIXTURE_PREFIX . 'l04-multi-request-cleanup';
+    $l04MultiRows = acceptanceFixtureRows();
+    $l04MultiRows['application_business_action'][187] = [
+        'id' => 187,
+        'application_id' => 22,
+        'code' => ACCEPTANCE_FIXTURE_PREFIX . 'work-item.read',
+        'status' => 1,
+    ];
+    $l04MultiAudits = acceptanceFixtureAudits($l04MultiRequest);
+    $l04MultiAudits[$l04MultiRequest . '-l04-action-2|application_business_action.create|application_business_action'] = [187];
+    $l04MultiPayload = acceptanceFixtureL04Payload($l04MultiRequest);
+    $l04MultiPayload['object_ids']['application_business_action'][] = 187;
+    $l04MultiPayload['object_request_ids']['application_business_action'][] = $l04MultiRequest . '-l04-action-2';
+    $l04MultiStore = new AcceptanceFixtureMemoryStore($l04MultiRows, $l04MultiAudits);
+    [$l04MultiIdempotent, $l04MultiAudit] = acceptanceFixtureDoubles();
+    $l04MultiService = new AcceptanceFixtureService($l04MultiStore, $l04MultiIdempotent, $l04MultiAudit);
+    $l04Multi = $l04MultiService->cleanup($l04MultiPayload, 1, $l04MultiRequest);
+    acceptanceFixtureAssert(
+        ($l04Multi['purged']['application_business_action'] ?? 0) === 2
+        && ($l04Multi['residual']['application_business_action'] ?? -1) === 0,
+        'L04 did not aggregate distinct creation request audits for one object type',
+    );
+
+    $l04Request = ACCEPTANCE_FIXTURE_PREFIX . 'l04-cleanup';
+    $l04Store = new AcceptanceFixtureMemoryStore(acceptanceFixtureRows(), acceptanceFixtureAudits($l04Request));
+    [$l04Idempotent, $l04Audit] = acceptanceFixtureDoubles();
+    $l04Service = new AcceptanceFixtureService($l04Store, $l04Idempotent, $l04Audit);
+    $l04 = $l04Service->cleanup(acceptanceFixtureL04Payload($l04Request), 1, $l04Request);
+    foreach (['application_business_action', 'resource', 'api_resource', 'api_route_binding', 'policy', 'policy_version'] as $type) {
+        acceptanceFixtureAssert(($l04['residual'][$type] ?? -1) === 0, "L04 did not reach zero residual for {$type}");
+    }
+    acceptanceFixtureAssert(
+        array_values(array_filter($l04Store->operations, static fn (string $operation): bool => str_starts_with($operation, 'revoke:') || str_starts_with($operation, 'detach:') || str_starts_with($operation, 'purge:'))) === [
+            'revoke:api_route_binding', 'revoke:api_resource', 'revoke:policy', 'revoke:resource', 'revoke:application_business_action',
+            'purge:api_route_binding', 'purge:api_resource', 'detach:policy_version', 'purge:policy_version', 'purge:policy', 'purge:resource', 'purge:application_business_action',
+        ],
+        'L04 cleanup did not revoke and purge business authorization fixtures in foreign-key order',
+    );
+
+    $l04ExtraRequest = ACCEPTANCE_FIXTURE_PREFIX . 'l04-extra-resource';
+    $l04ExtraRows = acceptanceFixtureRows();
+    $l04ExtraRows['resource'][184] = ['id' => 184, 'application_id' => 22, 'code' => ACCEPTANCE_FIXTURE_PREFIX . 'work-item-extra', 'status' => 1];
+    $l04ExtraStore = new AcceptanceFixtureMemoryStore($l04ExtraRows, acceptanceFixtureAudits($l04ExtraRequest));
+    [$l04ExtraIdempotent, $l04ExtraAudit] = acceptanceFixtureDoubles();
+    $l04ExtraService = new AcceptanceFixtureService($l04ExtraStore, $l04ExtraIdempotent, $l04ExtraAudit);
+    $l04ExtraBefore = $l04ExtraStore->rows;
+    acceptanceFixtureExpect(static fn () => $l04ExtraService->cleanup(acceptanceFixtureL04Payload($l04ExtraRequest), 1, $l04ExtraRequest), 'SAND_IAM_ACCEPTANCE_FIXTURE_SET_DENIED');
+    acceptanceFixtureAssert($l04ExtraStore->rows === $l04ExtraBefore, 'L04 same-prefix extra resource changed rows before set rejection');
 
     echo 'acceptance fixture service non-PG checks passed' . PHP_EOL;
 }

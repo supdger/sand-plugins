@@ -16,6 +16,13 @@ export interface OnboardingApplyInput {
   requestId: string
 }
 
+export interface RouteSyncApplyInput {
+  manifest: SandIamManagementJson
+  previewHash: string
+  requestId: string
+  disableMissing?: boolean | undefined
+}
+
 export interface CredentialIssueInput {
   workloadClientId: number
   name: string
@@ -125,13 +132,18 @@ export class SandIamManagementClient {
     return this.objectRequest('POST', '/developer/onboarding/apply', { manifest: input.manifest, preview_hash: input.previewHash, apply: true }, input.requestId, true)
   }
 
-  /** Route sync is part of the official onboarding manifest; no standalone path is guessed. */
-  routeSyncPreview(manifest: SandIamManagementJson, requestId?: string): Promise<SandIamManagementJson> {
-    return this.onboardingPreview(manifest, requestId)
+  routeSyncPreview(manifest: SandIamManagementJson, disableMissing = false, requestId?: string): Promise<SandIamManagementJson> {
+    return this.objectRequest('POST', '/developer/route-manifest/preview', { manifest, disable_missing: disableMissing }, requestId, false)
   }
 
-  routeSyncApply(input: OnboardingApplyInput): Promise<SandIamManagementJson> {
-    return this.onboardingApply(input)
+  routeSyncApply(input: RouteSyncApplyInput): Promise<SandIamManagementJson> {
+    if (!/^[a-f0-9]{64}$/.test(input.previewHash)) throw new SandIamManagementError('SAND_IAM_SDK_INVALID_ARGUMENT', '路由清单必须提供有效预检哈希', 0)
+    return this.objectRequest('POST', '/developer/route-manifest/apply', {
+      manifest: input.manifest,
+      disable_missing: input.disableMissing ?? false,
+      preview_hash: input.previewHash,
+      apply: true
+    }, input.requestId, true)
   }
 
   policySimulate(input: SandIamManagementJson, requestId?: string): Promise<SandIamManagementJson> {

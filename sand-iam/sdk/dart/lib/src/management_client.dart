@@ -12,12 +12,29 @@ import 'models.dart';
 typedef SandIamAdministratorTokenProvider = FutureOr<String> Function();
 
 final class SandIamOnboardingOperation {
-  const SandIamOnboardingOperation(
-      {required this.manifest, required this.previewHash, required this.requestId});
+  const SandIamOnboardingOperation({
+    required this.manifest,
+    required this.previewHash,
+    required this.requestId,
+  });
 
   final SandIamJson manifest;
   final String previewHash;
   final String requestId;
+}
+
+final class SandIamRouteSyncOperation {
+  const SandIamRouteSyncOperation({
+    required this.manifest,
+    required this.previewHash,
+    required this.requestId,
+    this.disableMissing = false,
+  });
+
+  final SandIamJson manifest;
+  final String previewHash;
+  final String requestId;
+  final bool disableMissing;
 }
 
 final class SandIamCredentialIssueInput {
@@ -174,14 +191,33 @@ final class SandIamManagementClient {
         write: true));
   }
 
-  /// Route sync is an onboarding-manifest phase; no nonexistent standalone API
-  /// is guessed by this SDK.
-  Future<SandIamJson> routeSyncPreview(SandIamJson manifest,
-          {String? requestId}) =>
-      onboardingPreview(manifest, requestId: requestId);
+  Future<SandIamJson> routeSyncPreview(
+    SandIamJson manifest, {
+    bool disableMissing = false,
+    String? requestId,
+  }) async =>
+      _object(await _request('POST', SandIamApi.routeManifestPreview,
+          body: <String, Object?>{
+            'manifest': manifest,
+            'disable_missing': disableMissing,
+          },
+          requestId: requestId));
 
-  Future<SandIamJson> routeSyncApply(SandIamOnboardingOperation input) =>
-      onboardingApply(input);
+  Future<SandIamJson> routeSyncApply(SandIamRouteSyncOperation input) async {
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(input.previewHash)) {
+      throw const SandIamException('SAND_IAM_SDK_INVALID_ARGUMENT',
+          '路由清单必须提供有效预检哈希', 0);
+    }
+    return _object(await _request('POST', SandIamApi.routeManifestApply,
+        body: <String, Object?>{
+          'manifest': input.manifest,
+          'disable_missing': input.disableMissing,
+          'preview_hash': input.previewHash,
+          'apply': true,
+        },
+        requestId: input.requestId,
+        write: true));
+  }
 
   Future<SandIamJson> policySimulate(SandIamJson input,
           {String? requestId}) async =>
