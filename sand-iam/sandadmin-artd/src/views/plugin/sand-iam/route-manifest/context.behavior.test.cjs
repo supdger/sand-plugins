@@ -5,7 +5,7 @@ const source = fs.readFileSync(path.join(__dirname, 'index.vue'), 'utf8')
 const ast = ts.createSourceFile('page.ts', source.slice(source.indexOf('>') + 1, source.indexOf('</script>')), ts.ScriptTarget.Latest, true)
 const printer = ts.createPrinter()
 const body = ast.statements.filter(node => !ts.isImportDeclaration(node)).map(node => printer.printNode(ts.EmitHint.Unspecified, node, ast)).join('\n')
-const code = ts.transpileModule(`${body}; globalThis.page = { manifestText, preview, requestError, disableMissing, previewKind, runPreview, confirmApply, acting, issuedCredential, applied, acknowledgeCredential, openApiImportText, openApiImportPreview, openApiImportApplied, openApiImportError, runOpenApiImportPreview, confirmOpenApiImportApply };`,
+const code = ts.transpileModule(`${body}; globalThis.page = { manifestText, preview, requestError, disableMissing, previewKind, runPreview, confirmApply, acting, issuedCredential, applied, acknowledgeCredential, openApiImportText, openApiImportPreview, openApiImportApplied, openApiImportError, fillOpenApiImportExample, runOpenApiImportPreview, confirmOpenApiImportApply };`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 function harness(allowed = true) {
@@ -73,13 +73,12 @@ async function run() {
   assert.match(blocked.p.requestError.value.detail, /重新确认|重新预检|先生成变更预览/)
   blocked.stop()
   const openapi = harness()
-  openapi.p.openApiImportText.value = JSON.stringify({
-    organization_code: 'sand',
-    application_code: 'app',
-    environment_code: 'production',
-    document: { openapi: '3.1.0', paths: {} },
-    mappings: []
-  })
+  openapi.p.fillOpenApiImportExample()
+  const example = JSON.parse(openapi.p.openApiImportText.value)
+  assert.equal(example.mappings[0].operation_key, 'GET /work-items/{id}')
+  assert.equal(example.mappings[0].resource_code, 'work_item')
+  assert.equal(example.mappings[0].action, 'work_item.read')
+  assert.equal(example.document.paths['/work-items/{id}'].get['x-sand-iam'].riskLevel, 'low')
   const openapiPreview = openapi.p.runOpenApiImportPreview()
   assert.equal(openapi.writes[0].path, 'developer/openapi-import/preview')
   openapi.writes[0].resolve(preview('c'.repeat(64))); await openapiPreview

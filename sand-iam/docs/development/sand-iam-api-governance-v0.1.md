@@ -221,6 +221,99 @@ await iam.authorize({ apiCode: "record.detail", attributes: { organization_id: 4
 
 PHP、TypeScript 和 Dart 管理 SDK 分别提供 `openApiImportPreview` 与 `openApiImportApply`。导入包不得包含密码、令牌、客户端密钥或示例真实凭证。
 
+下面是可以直接复制的完整导入包；同一内容也作为
+[可下载 JSON 示例](../user-guide/examples/openapi-import.json) 随插件发布。先把 `organization_code`、`application_code`、
+`environment_code`、`resource_code` 和 `action` 替换为管理台中已经存在的代码。每个
+OpenAPI operation 都必须有且只能有一条 `mappings` 记录；`operation_key` 固定为
+大写 HTTP 方法、一个空格和 OpenAPI `paths` 中的原始路径模板。
+
+```json
+{
+  "organization_code": "sand",
+  "application_code": "work",
+  "environment_code": "production",
+  "document": {
+    "openapi": "3.1.0",
+    "info": {
+      "title": "工作项 API",
+      "version": "1.0.0"
+    },
+    "paths": {
+      "/work-items/{id}": {
+        "get": {
+          "summary": "查看工作项",
+          "x-sand-iam": {
+            "riskLevel": "low"
+          },
+          "responses": {
+            "200": {
+              "description": "成功"
+            }
+          }
+        }
+      }
+    }
+  },
+  "mappings": [
+    {
+      "operation_key": "GET /work-items/{id}",
+      "api_code": "work-item.read",
+      "api_version": "v1",
+      "resource_code": "work_item",
+      "action": "work_item.read",
+      "audience": "work-api",
+      "required_scope": "work.read"
+    }
+  ],
+  "disable_missing": false
+}
+```
+
+`mappings` 字段含义和限制：
+
+| 字段 | 必填 | 含义 |
+| --- | --- | --- |
+| `operation_key` | 是 | 文档中的 operation，格式为 `GET /path/{parameter}`。 |
+| `api_code` | 是 | SandIAM 接口目录代码，小写字母开头，可含数字、`.`、`_`、`:`、`-`，2–96 字符。 |
+| `api_version` | 否 | 接口版本，默认 `v1`，1–32 字符。 |
+| `resource_code` | 是 | 当前应用中已存在的业务资源代码。 |
+| `action` | 是 | 当前应用中已发布的业务动作代码。 |
+| `audience` | 是 | 访问令牌受众，1–128 字符。 |
+| `required_scope` | 否 | 调用所需 scope；不需要时传空字符串或省略。 |
+
+SDK 调用时把上面的整个 JSON 对象作为 `input` 参数传给预检。取得
+`preview_hash` 后，应用必须复用完全相同的 `input`；任何字段变化都要重新预检：
+
+```php
+$preview = $management->openApiImportPreview($input, 'openapi-preview-001');
+$management->openApiImportApply(new SandIamOpenApiImportOperation(
+    $input,
+    $preview['preview_hash'],
+    'openapi-apply-001',
+));
+```
+
+```ts
+const preview = await management.openApiImportPreview(input, 'openapi-preview-001')
+await management.openApiImportApply({
+  input,
+  previewHash: String(preview.preview_hash),
+  requestId: 'openapi-apply-001'
+})
+```
+
+```dart
+final preview = await management.openApiImportPreview(
+  input,
+  requestId: 'openapi-preview-001',
+);
+await management.openApiImportApply(SandIamOpenApiImportOperation(
+  input: input,
+  previewHash: preview['preview_hash']! as String,
+  requestId: 'openapi-apply-001',
+));
+```
+
 ### 6.2 Webman 路由清单同步（P0）
 
 业务应用使用 `RouteBindingSynchronizer::synchronize($manifest, $apply, $disableMissing)` 同步路由绑定。它是插件权威源码中的正式开发者入口；应用可从自己的 Webman 路由定义导出同一份 JSON/PHP 数组清单，但 SandIAM **不会**自动遍历宿主的全部路由。

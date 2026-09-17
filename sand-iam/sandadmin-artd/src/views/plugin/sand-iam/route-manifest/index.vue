@@ -32,6 +32,34 @@
   const openApiImportPreview = ref<SandIamOnboardingPreview | null>(null)
   const openApiImportApplied = ref(false)
   const openApiImportError = ref<SandIamRequestError | null>(null)
+  const openApiImportExample = {
+    organization_code: 'sand',
+    application_code: 'work',
+    environment_code: 'production',
+    document: {
+      openapi: '3.1.0',
+      info: { title: '工作项 API', version: '1.0.0' },
+      paths: {
+        '/work-items/{id}': {
+          get: {
+            summary: '查看工作项',
+            'x-sand-iam': { riskLevel: 'low' },
+            responses: { '200': { description: '成功' } }
+          }
+        }
+      }
+    },
+    mappings: [{
+      operation_key: 'GET /work-items/{id}',
+      api_code: 'work-item.read',
+      api_version: 'v1',
+      resource_code: 'work_item',
+      action: 'work_item.read',
+      audience: 'work-api',
+      required_scope: 'work.read'
+    }],
+    disable_missing: false
+  }
   let openApiImportVersion = 0
   let openApiFileVersion = 0
   let inputVersion = 0
@@ -106,6 +134,11 @@
       )
       return null
     }
+  }
+
+  function fillOpenApiImportExample(): void {
+    if (acting.value) return
+    openApiImportText.value = JSON.stringify(openApiImportExample, null, 2)
   }
 
   async function selectOpenApiImportFile(event: Event): Promise<void> {
@@ -399,6 +432,12 @@
             选择或粘贴 OpenAPI 3.0/3.1 JSON 导入包。每个接口必须明确映射到现有业务资源和已发布业务动作；系统只保存接口目录和路由绑定，不保存原始文档。
           </p>
           <ElAlert
+            class="mb-4"
+            type="info"
+            :closable="false"
+            title="先填入完整示例，再替换客户主体、应用、环境、资源和动作代码。operation_key 格式为“大写方法 + 空格 + 原始路径模板”。"
+          />
+          <ElAlert
             v-if="openApiImportError"
             class="mb-4"
             type="error"
@@ -429,6 +468,9 @@
                 :rows="14"
                 placeholder="粘贴包含客户主体、应用、环境、OpenAPI document 和显式 mappings 的 JSON 导入包"
               />
+              <ElButton class="mt-2" :disabled="acting" @click="fillOpenApiImportExample">
+                填入完整示例
+              </ElButton>
             </ElFormItem>
             <ElFormItem>
               <ElSpace>
