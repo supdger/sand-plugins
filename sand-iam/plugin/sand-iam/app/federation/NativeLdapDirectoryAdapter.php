@@ -13,11 +13,13 @@ use plugin\sandadmin\exception\ApiException;
  */
 final class NativeLdapDirectoryAdapter implements LdapDirectoryAdapter
 {
+    private const LDAPS_URI_PATTERN = '~^ldaps://([^/?#:@]+)(?::([0-9]{1,5}))?$~';
+
     public function page(array $config, ?string $cursor): array
     {
         if (!function_exists('ldap_connect')) throw new ApiException('SAND_IAM_LDAP_EXTENSION_UNAVAILABLE', 503);
         $uri = (string) ($config['uri'] ?? '');
-        if (!preg_match('#^ldaps://([^/?#:]+)(?::([0-9]{1,5}))?$#', $uri, $uriMatch) || (isset($uriMatch[2]) && ((int) $uriMatch[2] < 1 || (int) $uriMatch[2] > 65535))) throw new ApiException('SAND_IAM_LDAP_TLS_REQUIRED', 400);
+        if (!preg_match(self::LDAPS_URI_PATTERN, $uri, $uriMatch) || (isset($uriMatch[2]) && ((int) $uriMatch[2] < 1 || (int) $uriMatch[2] > 65535))) throw new ApiException('SAND_IAM_LDAP_TLS_REQUIRED', 400);
         $baseDn = trim((string) ($config['base_dn'] ?? ''));
         $filter = trim((string) ($config['filter'] ?? ''));
         $bindDn = trim((string) ($config['bind_dn'] ?? ''));
