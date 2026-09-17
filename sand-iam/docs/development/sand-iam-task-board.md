@@ -22,19 +22,21 @@
   已在固定前缀、禁用根锚点和精确对象全集断言后事务清除。
 - 四角色、两个目标视口、真实宿主 API、允许/拒绝、审计、撤销、清理和
   重复复核已闭合。严格计分更新为需求 **8/9**、模块 **20/20**、正式
-  FLOW **7/7**、本地业务闭环 **4/4**、可上线部署 **4/8**，合计
-  **43/48（89.6%）**；七链 **7/7**，发布门槛 **5/10**。
-- 已通过部署原子为 D01、D03、D05、D08。D07 已通过登录、Onboarding、
-  SecurityOperation、服务配额、Webhook、OIDC logout 和 MFA/Passkey
-  等真实 PostgreSQL/worker 回归，但冻结的完整并发、压力和故障注入集合
-  尚未全部执行，保持未通过。
-- 剩余原子为 R09、D02、D04、D06、D07。剩余发布门槛为标准客户端协议
+  FLOW **7/7**、本地业务闭环 **4/4**、可上线部署 **5/8**，合计
+  **44/48（91.7%）**；七链 **7/7**，发布门槛 **5/10**。
+- 已通过部署原子为 D01、D03、D05、D07、D08。D07 由登录重复竞争、
+  Onboarding 双 worker、SecurityOperation 双连接、C04 配额竞争、C02
+  两代同步、C07 Webhook worker、OIDC logout 恢复、MFA/Passkey、
+  OIDC signing-key 轮换及 Webhook 密钥轮换/双连接重放竞争共同闭合；
+  两个密钥轮换测试已保证失败同样进入 `finally` 清理。24 小时资源曲线
+  仍是独立发布门槛，不由 D07 代替。
+- 剩余原子为 R09、D02、D04、D06。剩余发布门槛为标准客户端协议
   互操作、并发加隔离备份恢复、同一最终候选 24 小时、未参与开发者 Casdoor
   对照，以及正式包外签名与独立文档交付。D06 需要预创建的隔离恢复目标；
   本任务不建数据库。D02 需要独立可信公钥/发布渠道和未参与开发者实跑；
   D04、R09 与 Casdoor 需要独立外部客户端/参与者。
 - 证据见
-  [`../../../.artifacts/sand-iam-0.7.3-v16-20260917T065035Z/current-candidate-live-evidence.md`](../../../.artifacts/sand-iam-0.7.3-v16-20260917T065035Z/current-candidate-live-evidence.md)。
+  [`../../../.artifacts/sand-iam-0.7.3-current-candidate-evidence.md`](../../../.artifacts/sand-iam-0.7.3-current-candidate-evidence.md)。
   PostgreSQL 未被检查或启动；未 push、公开 Release、部署生产或线上验证。
 
 ### 签名链初审 checkpoint（2026-09-12）

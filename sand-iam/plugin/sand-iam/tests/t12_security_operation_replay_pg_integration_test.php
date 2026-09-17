@@ -19,7 +19,7 @@ if ((string) getenv('SAND_IAM_T12_PG_ENABLED') !== '1') {
     exit(0);
 }
 
-function t12PgFail(string $message): never { fwrite(STDERR, "T12 PostgreSQL idempotency fixture failed: {$message}\n"); exit(1); }
+function t12PgFail(string $message): never { throw new RuntimeException("T12 PostgreSQL idempotency fixture failed: {$message}"); }
 function t12PgAssert(bool $condition, string $message): void { if (!$condition) t12PgFail($message); }
 
 $hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';

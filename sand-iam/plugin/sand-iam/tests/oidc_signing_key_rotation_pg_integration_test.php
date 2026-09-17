@@ -18,7 +18,7 @@ if ((string) getenv('SAND_IAM_OIDC_KEY_ROTATION_PG_ENABLED') !== '1') {
     exit(0);
 }
 
-function oidcRotationPgFail(string $message): never { fwrite(STDERR, "OIDC signing-key PostgreSQL fixture failed: {$message}\n"); exit(1); }
+function oidcRotationPgFail(string $message): never { throw new RuntimeException("OIDC signing-key PostgreSQL fixture failed: {$message}"); }
 function oidcRotationPgAssert(bool $condition, string $message): void { if (!$condition) oidcRotationPgFail($message); }
 
 $hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';

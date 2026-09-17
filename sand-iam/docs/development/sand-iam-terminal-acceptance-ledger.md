@@ -26,17 +26,22 @@
 - 四角色、两个目标视口、宿主 API、跨组织/应用/角色拒绝、撤权、审计、
   正常清理和重复复核已由上述同候选证据闭合，F01–F07 更新为通过；C01–C07
   更新为 **7/7**。D05 四角色 UI 与 D08 失败安装恢复/回滚更新为通过。
-  D07 仍缺全部冻结并发/压力/故障注入集合，不因本轮登录、Onboarding、
-  SecurityOperation、C04、Webhook、OIDC logout 和 MFA/Passkey
-  PostgreSQL 回归提前计分。
-- 当前严格计分为 **R 8/9、P 20/20、F 7/7、L 4/4、D 4/8，
-  43/48（89.6%）**。剩余原子为 R09、D02、D04、D06、D07。
+- D07 当前候选已完成登录重复竞争、Onboarding 双 worker、SecurityOperation
+  双连接、C04 配额竞争、C02 两代同步、C07 Webhook worker 重试、
+  OIDC logout 恢复、MFA/Passkey 边界、OIDC signing-key 轮换，以及
+  Webhook 密钥轮换/双连接重放竞争；秘密不落持久化结果、错误 audience/action、
+  跨范围、重放与撤权后拒绝均由真实 PostgreSQL、HTTP 或独立 Provider 证据覆盖。
+  两个密钥轮换夹具的失败辅助函数已从 `exit(1)` 改为抛异常，保证失败也进入
+  `finally` 精确清理。D07 更新为通过；24 小时资源曲线仍只属于独立发布门槛，
+  不由 D07 代替。
+- 当前严格计分为 **R 8/9、P 20/20、F 7/7、L 4/4、D 5/8，
+  44/48（91.7%）**。剩余原子为 R09、D02、D04、D06。
 - 发布门槛为 **5/10**：安装升级、七条业务链、四角色页面、权限安全和
   非 AI 业务应用加机器服务接入通过；剩余协议互操作、并发加备份恢复、
   同一最终候选 24 小时、Casdoor 对照及签名/独立文档交付。
 
 完整脱敏记录见
-[`../../../.artifacts/sand-iam-0.7.3-v16-20260917T065035Z/current-candidate-live-evidence.md`](../../../.artifacts/sand-iam-0.7.3-v16-20260917T065035Z/current-candidate-live-evidence.md)。
+[`../../../.artifacts/sand-iam-0.7.3-current-candidate-evidence.md`](../../../.artifacts/sand-iam-0.7.3-current-candidate-evidence.md)。
 未检查或启动 PostgreSQL；未 push、公开 Release、部署生产或线上验证。
 
 ## 2026-09-17 0.7.3 schema 审计修复
