@@ -161,6 +161,15 @@ final class ManagementApiCatalog
                     'content' => ['application/json' => ['schema' => ['$ref' => '#/components/schemas/ManagementInput']]],
                 ];
             }
+            $inputSchema = match ($route['path']) {
+                '/grant/save' => 'ServiceGrantCreateInput',
+                '/grant/update' => 'ServiceGrantUpdateInput',
+                '/identity-role/revoke' => 'IdentityRoleRevokeInput',
+                default => null,
+            };
+            if ($inputSchema !== null && $route['method'] === 'POST') {
+                $operation['requestBody']['content']['application/json']['schema']['$ref'] = '#/components/schemas/' . $inputSchema;
+            }
             if ($route['path'] === '/policy/versions') {
                 $operation['parameters'] = array_merge($operation['parameters'], [
                     self::queryParameter('id', true, ['type' => 'integer', 'minimum' => 1], '已获应用管理授权的策略主键；不支持全局版本查询。'),
@@ -244,6 +253,74 @@ final class ManagementApiCatalog
                         ],
                     ],
                     'ManagementInput' => ['type' => 'object', 'additionalProperties' => true, 'description' => '控制器按白名单字段校验；密钥只允许发送到敏感输入接口。'],
+                    'ServiceGrantCreateInput' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['workload_client_id', 'service_action_id', 'audience'],
+                        'properties' => [
+                            'workload_client_id' => ['type' => 'integer', 'minimum' => 1],
+                            'service_action_id' => ['type' => 'integer', 'minimum' => 1, 'description' => '服务动作主键；不是 action_id。'],
+                            'audience' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 128],
+                            'quota_policy' => ['$ref' => '#/components/schemas/ServiceGrantQuotaPolicy'],
+                            'data_class' => ['type' => ['string', 'null'], 'pattern' => '^[a-z0-9][a-z0-9._-]{1,31}$'],
+                            'network_policy' => ['$ref' => '#/components/schemas/ServiceGrantNetworkPolicy'],
+                            'expire_time' => ['type' => ['string', 'null']],
+                            'status' => ['type' => 'integer', 'enum' => [1, 2]],
+                        ],
+                    ],
+                    'ServiceGrantUpdateInput' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['id'],
+                        'properties' => [
+                            'id' => ['type' => 'integer', 'minimum' => 1],
+                            'workload_client_id' => ['type' => 'integer', 'minimum' => 1, 'description' => '不可修改；仅用于显式校验已有值。'],
+                            'service_action_id' => ['type' => 'integer', 'minimum' => 1, 'description' => '不可修改；仅用于显式校验已有值。'],
+                            'audience' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 128, 'description' => '不可修改；仅用于显式校验已有值。'],
+                            'quota_policy' => ['$ref' => '#/components/schemas/ServiceGrantQuotaPolicy'],
+                            'data_class' => ['type' => ['string', 'null'], 'pattern' => '^[a-z0-9][a-z0-9._-]{1,31}$'],
+                            'network_policy' => ['$ref' => '#/components/schemas/ServiceGrantNetworkPolicy'],
+                            'expire_time' => ['type' => ['string', 'null']],
+                            'status' => ['type' => 'integer', 'enum' => [1, 2]],
+                        ],
+                    ],
+                    'ServiceGrantQuotaPolicy' => [
+                        'oneOf' => [
+                            ['type' => 'null'],
+                            ['type' => 'object', 'additionalProperties' => false, 'maxProperties' => 0],
+                            [
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'required' => ['max_invocation_attempts', 'window_seconds'],
+                                'properties' => [
+                                    'max_invocation_attempts' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 2147483647],
+                                    'window_seconds' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 31536000],
+                                ],
+                            ],
+                        ],
+                    ],
+                    'ServiceGrantNetworkPolicy' => [
+                        'oneOf' => [
+                            ['type' => 'null'],
+                            [
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'properties' => [
+                                    'allow_cidrs' => ['type' => 'array', 'maxItems' => 64, 'uniqueItems' => true, 'items' => ['type' => 'string']],
+                                    'deny_cidrs' => ['type' => 'array', 'maxItems' => 64, 'uniqueItems' => true, 'items' => ['type' => 'string']],
+                                ],
+                            ],
+                        ],
+                        'description' => 'CIDR 值由服务端做 IPv4/IPv6 规范校验。',
+                    ],
+                    'IdentityRoleRevokeInput' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['id'],
+                        'properties' => [
+                            'id' => ['type' => 'integer', 'minimum' => 1, 'description' => '身份角色关系列表返回的关系主键；不是 identity_id 或 role_id。'],
+                        ],
+                    ],
                     'OidcLogoutDeliveryListItem' => [
                         'type' => 'object',
                         'additionalProperties' => false,

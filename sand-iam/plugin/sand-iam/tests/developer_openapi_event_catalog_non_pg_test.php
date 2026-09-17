@@ -136,9 +136,51 @@ if (!is_array($policySimulation) || ($policySimulation['x-sand-iam-permission'] 
 $policyRollback = $openApi['paths']['/policy/rollback']['post'] ?? null;
 if (!is_array($policyRollback) || ($policyRollback['x-sand-iam-permission'] ?? null) !== 'sand_iam:policy:publish') t12DeveloperFail('policy rollback OpenAPI permission is missing or incorrect');
 
+$serviceGrantSave = $openApi['paths']['/grant/save']['post'] ?? null;
+$serviceGrantUpdate = $openApi['paths']['/grant/update']['post'] ?? null;
+$identityRoleRevoke = $openApi['paths']['/identity-role/revoke']['post'] ?? null;
+$schemas = $openApi['components']['schemas'] ?? [];
+if (!is_array($serviceGrantSave) || !is_array($serviceGrantUpdate) || !is_array($identityRoleRevoke) || !is_array($schemas)) {
+    t12DeveloperFail('operation-specific management input contracts are missing');
+}
+if (($serviceGrantSave['requestBody']['content']['application/json']['schema']['$ref'] ?? null) !== '#/components/schemas/ServiceGrantCreateInput'
+    || ($serviceGrantUpdate['requestBody']['content']['application/json']['schema']['$ref'] ?? null) !== '#/components/schemas/ServiceGrantUpdateInput'
+    || ($identityRoleRevoke['requestBody']['content']['application/json']['schema']['$ref'] ?? null) !== '#/components/schemas/IdentityRoleRevokeInput') {
+    t12DeveloperFail('operation-specific management input schemas are not bound');
+}
+$serviceGrantCreateInput = $schemas['ServiceGrantCreateInput'] ?? null;
+$serviceGrantUpdateInput = $schemas['ServiceGrantUpdateInput'] ?? null;
+$serviceGrantQuotaPolicy = $schemas['ServiceGrantQuotaPolicy'] ?? null;
+$serviceGrantNetworkPolicy = $schemas['ServiceGrantNetworkPolicy'] ?? null;
+$identityRoleRevokeInput = $schemas['IdentityRoleRevokeInput'] ?? null;
+if (!is_array($serviceGrantCreateInput)
+    || ($serviceGrantCreateInput['required'] ?? null) !== ['workload_client_id', 'service_action_id', 'audience']
+    || ($serviceGrantCreateInput['additionalProperties'] ?? true) !== false
+    || array_key_exists('action_id', $serviceGrantCreateInput['properties'] ?? [])
+    || ($serviceGrantCreateInput['properties']['quota_policy']['$ref'] ?? null) !== '#/components/schemas/ServiceGrantQuotaPolicy'
+    || ($serviceGrantCreateInput['properties']['network_policy']['$ref'] ?? null) !== '#/components/schemas/ServiceGrantNetworkPolicy'
+    || ($serviceGrantCreateInput['properties']['data_class']['type'] ?? null) !== ['string', 'null']
+    || !is_array($serviceGrantUpdateInput)
+    || ($serviceGrantUpdateInput['required'] ?? null) !== ['id']
+    || ($serviceGrantUpdateInput['additionalProperties'] ?? true) !== false
+    || !is_array($serviceGrantQuotaPolicy)
+    || ($serviceGrantQuotaPolicy['oneOf'][2]['required'] ?? null) !== ['max_invocation_attempts', 'window_seconds']
+    || ($serviceGrantQuotaPolicy['oneOf'][2]['additionalProperties'] ?? true) !== false
+    || ($serviceGrantQuotaPolicy['oneOf'][2]['properties']['max_invocation_attempts']['maximum'] ?? null) !== 2147483647
+    || ($serviceGrantQuotaPolicy['oneOf'][2]['properties']['window_seconds']['maximum'] ?? null) !== 31536000
+    || !is_array($serviceGrantNetworkPolicy)
+    || ($serviceGrantNetworkPolicy['oneOf'][1]['additionalProperties'] ?? true) !== false
+    || ($serviceGrantNetworkPolicy['oneOf'][1]['properties']['allow_cidrs']['maxItems'] ?? null) !== 64
+    || ($serviceGrantNetworkPolicy['oneOf'][1]['properties']['deny_cidrs']['maxItems'] ?? null) !== 64
+    || !is_array($identityRoleRevokeInput)
+    || ($identityRoleRevokeInput['required'] ?? null) !== ['id']
+    || ($identityRoleRevokeInput['additionalProperties'] ?? true) !== false
+    || array_keys($identityRoleRevokeInput['properties'] ?? []) !== ['id']) {
+    t12DeveloperFail('operation-specific management input schemas are incomplete');
+}
+
 $logoutList = $openApi['paths']['/oauth-client/logout-delivery/index']['get'] ?? null;
 $logoutReissue = $openApi['paths']['/oauth-client/logout-delivery/reissue']['post'] ?? null;
-$schemas = $openApi['components']['schemas'] ?? [];
 if (!is_array($logoutList) || !is_array($logoutReissue) || !is_array($schemas)) t12DeveloperFail('OIDC logout recovery OpenAPI operations are missing');
 $listParameters = [];
 foreach ($logoutList['parameters'] ?? [] as $parameter) {
