@@ -16,7 +16,7 @@ JSON 导入包。导入包把文档中的每个 HTTP operation 映射到当前�
 
 | 字段 | 必填 | 含义 |
 | --- | --- | --- |
-| `operation_key` | 是 | 大写 HTTP 方法、一个空格和 `paths` 中的原始路径模板，例如 `GET /work-items/{id}`。 |
+| `operation_key` | 是 | 大写 HTTP 方法、一个空格和规范化路径模板，例如 `GET /work-items/{id}`；非根路径末尾不带 `/`。 |
 | `api_code` | 是 | 接口目录代码，小写字母开头，可含数字、`.`、`_`、`:`、`-`，2–96 字符。 |
 | `api_version` | 否 | 接口版本，默认 `v1`，1–32 字符。 |
 | `resource_code` | 是 | 当前应用中已存在的业务资源代码。 |

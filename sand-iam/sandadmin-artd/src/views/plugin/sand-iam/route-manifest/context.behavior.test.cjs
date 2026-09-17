@@ -79,6 +79,12 @@ async function run() {
   assert.equal(example.mappings[0].resource_code, 'work_item')
   assert.equal(example.mappings[0].action, 'work_item.read')
   assert.equal(example.document.paths['/work-items/{id}'].get['x-sand-iam'].riskLevel, 'low')
+  assert.deepEqual(example.document.paths['/work-items/{id}'].get.parameters[0], {
+    name: 'id',
+    in: 'path',
+    required: true,
+    schema: { type: 'string' }
+  })
   const openapiPreview = openapi.p.runOpenApiImportPreview()
   assert.equal(openapi.writes[0].path, 'developer/openapi-import/preview')
   openapi.writes[0].resolve(preview('c'.repeat(64))); await openapiPreview

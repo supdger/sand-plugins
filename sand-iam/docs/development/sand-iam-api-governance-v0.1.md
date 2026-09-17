@@ -225,7 +225,7 @@ PHP、TypeScript 和 Dart 管理 SDK 分别提供 `openApiImportPreview` 与 `op
 [可下载 JSON 示例](../user-guide/examples/openapi-import.json) 随插件发布。先把 `organization_code`、`application_code`、
 `environment_code`、`resource_code` 和 `action` 替换为管理台中已经存在的代码。每个
 OpenAPI operation 都必须有且只能有一条 `mappings` 记录；`operation_key` 固定为
-大写 HTTP 方法、一个空格和 OpenAPI `paths` 中的原始路径模板。
+大写 HTTP 方法、一个空格和规范化路径模板。规范化会移除非根路径末尾的 `/`。
 
 ```json
 {
@@ -245,6 +245,16 @@ OpenAPI operation 都必须有且只能有一条 `mappings` 记录；`operation_
           "x-sand-iam": {
             "riskLevel": "low"
           },
+          "parameters": [
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
           "responses": {
             "200": {
               "description": "成功"
@@ -273,7 +283,7 @@ OpenAPI operation 都必须有且只能有一条 `mappings` 记录；`operation_
 
 | 字段 | 必填 | 含义 |
 | --- | --- | --- |
-| `operation_key` | 是 | 文档中的 operation，格式为 `GET /path/{parameter}`。 |
+| `operation_key` | 是 | 文档中的 operation，格式为 `GET /path/{parameter}`；使用规范化路径，非根路径末尾不带 `/`。 |
 | `api_code` | 是 | SandIAM 接口目录代码，小写字母开头，可含数字、`.`、`_`、`:`、`-`，2–96 字符。 |
 | `api_version` | 否 | 接口版本，默认 `v1`，1–32 字符。 |
 | `resource_code` | 是 | 当前应用中已存在的业务资源代码。 |

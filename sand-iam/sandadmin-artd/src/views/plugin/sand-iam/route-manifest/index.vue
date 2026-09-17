@@ -44,6 +44,12 @@
           get: {
             summary: '查看工作项',
             'x-sand-iam': { riskLevel: 'low' },
+            parameters: [{
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }],
             responses: { '200': { description: '成功' } }
           }
         }
@@ -435,7 +441,7 @@
             class="mb-4"
             type="info"
             :closable="false"
-            title="先填入完整示例，再替换客户主体、应用、环境、资源和动作代码。operation_key 格式为“大写方法 + 空格 + 原始路径模板”。"
+            title="先填入完整示例，再替换客户主体、应用、环境、资源和动作代码。operation_key 使用“大写方法 + 空格 + 规范化路径”，非根路径末尾不带斜杠。"
           />
           <ElAlert
             v-if="openApiImportError"
