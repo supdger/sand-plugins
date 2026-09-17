@@ -195,7 +195,7 @@ namespace {
         public function scimArtifacts(array $providerIds, int $applicationId, bool $lock): array
         {
             $this->operations[] = 'records:scim_artifacts:' . ($lock ? 'lock' : 'read');
-            $types = ['identity_provider_application', 'scim_token', 'scim_resource', 'identity_binding', 'provisioning_event'];
+            $types = ['identity_provider_application', 'scim_token', 'scim_resource', 'scim_group', 'identity_binding', 'provisioning_event'];
             $result = [];
             foreach ($types as $type) {
                 $result[$type] = array_values(array_filter($this->rows[$type] ?? [], static fn (array $row): bool =>
@@ -203,6 +203,11 @@ namespace {
                     && in_array((int) ($row['identity_provider_id'] ?? 0), $providerIds, true)
                 ));
             }
+            $groupIds = array_values(array_unique(array_map(static fn (array $row): int => (int) ($row['id'] ?? 0), $result['scim_group'])));
+            $result['scim_group_member'] = array_values(array_filter($this->rows['scim_group_member'] ?? [], static fn (array $row): bool =>
+                (int) ($row['application_id'] ?? 0) === $applicationId
+                && in_array((int) ($row['group_id'] ?? 0), $groupIds, true)
+            ));
             $identityIds = array_values(array_unique(array_map(static fn (array $row): int => (int) ($row['identity_id'] ?? 0), $result['scim_resource'])));
             $result['scim_identity'] = array_values(array_filter($this->rows['scim_identity'] ?? [], static fn (array $row): bool =>
                 (int) ($row['application_id'] ?? 0) === $applicationId
@@ -1093,6 +1098,8 @@ namespace {
     $chainTwoSyncRows['identity_binding'][224] = ['id' => 224, 'identity_provider_id' => 220, 'application_id' => 22, 'identity_id' => 223, 'status' => 2];
     $chainTwoSyncRows['scim_resource'][225] = ['id' => 225, 'identity_provider_id' => 220, 'application_id' => 22, 'identity_id' => 223, 'source_state' => 'deleted'];
     $chainTwoSyncRows['provisioning_event'][226] = ['id' => 226, 'identity_provider_id' => 220, 'application_id' => 22, 'scim_resource_id' => 225];
+    $chainTwoSyncRows['scim_group'][227] = ['id' => 227, 'identity_provider_id' => 220, 'application_id' => 22, 'source_state' => 'deleted'];
+    $chainTwoSyncRows['scim_group_member'][228] = ['id' => 228, 'application_id' => 22, 'group_id' => 227, 'identity_id' => 223, 'status' => 2];
     $chainTwoSyncPayload = acceptanceFixtureChainTwoPayload($chainTwoSyncRequest);
     $chainTwoSyncPayload['object_ids']['sync_connector'] = [201];
     $chainTwoSyncPayload['object_request_ids']['sync_connector'] = [$chainTwoSyncRequest . '-chain2-sync-connector'];
@@ -1120,6 +1127,8 @@ namespace {
         && ($chainTwoSync['matched']['import_invitation'] ?? 0) === 1
         && ($chainTwoSync['matched']['scim_token'] ?? 0) === 1
         && ($chainTwoSync['matched']['scim_resource'] ?? 0) === 1
+        && ($chainTwoSync['matched']['scim_group'] ?? 0) === 1
+        && ($chainTwoSync['matched']['scim_group_member'] ?? 0) === 1
         && ($chainTwoSync['matched']['scim_identity'] ?? 0) === 1
         && array_sum($chainTwoSync['residual']) === 0,
         'chain 2 did not discover and clean the complete lifecycle and directory artifact sets',
@@ -1129,6 +1138,7 @@ namespace {
             'purge:identity_group_role', 'purge:identity_group_member',
             'purge:sync_resource', 'purge:directory_identity', 'purge:sync_run', 'purge:sync_connector',
             'purge:identity_import_row', 'purge:import_invitation', 'purge:identity_invitation', 'purge:identity_import_job',
+            'purge:scim_group_member', 'purge:scim_group',
             'purge:provisioning_event', 'purge:scim_resource', 'purge:identity_binding', 'purge:scim_token',
             'purge:scim_identity', 'purge:identity_provider_application', 'purge:identity_provider',
             'purge:identity_group', 'purge:identity',

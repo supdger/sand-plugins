@@ -29,15 +29,26 @@ namespace ScimGroupTest {
     final class Query {
         private array $filters = [];
         private array $sets = [];
+        private ?string $caseInsensitiveUserName = null;
         public function __construct(private string $model) {}
         public function where(string $key, mixed ...$values): self { $this->filters[] = [$key, ...$values]; return $this; }
         public function whereIn(string $key, array $values): self { $this->sets[$key] = $values; return $this; }
+        public function whereRaw(string $sql, array $bindings): self {
+            check($sql === "lower(source_attributes->>'userName') = lower(?)" && count($bindings) === 1 && is_string($bindings[0]), 'Unexpected raw SCIM query');
+            $this->caseInsensitiveUserName = strtolower($bindings[0]);
+            return $this;
+        }
         public function column(string $key): array { return array_map(static fn (object $row): mixed => $row->{$key}, $this->all()); }
         public function lock(bool $lock): self { check(State::$transaction !== null, 'Lock outside transaction'); return $this; }
         public function select(): self { return $this; }
         public function all(): array {
             $result = [];
             foreach (State::$rows[$this->model] ?? [] as $row) {
+                if ($this->caseInsensitiveUserName !== null) {
+                    $attributes = $row['source_attributes'] ?? [];
+                    if (is_string($attributes)) $attributes = json_decode($attributes, true);
+                    if (!is_array($attributes) || strtolower((string) ($attributes['userName'] ?? '')) !== $this->caseInsensitiveUserName) continue;
+                }
                 foreach ($this->sets as $key => $values) if (!in_array($row[$key] ?? null, $values, true)) continue 2;
                 foreach ($this->filters as $filter) {
                     [$key, $value] = $filter;
@@ -185,8 +196,46 @@ namespace {
     State::$fail = false;
     $user = $createUser();
     check($user['userName'] === 'user.one' && $user['active'] === true && $user['meta']['version'] === 'W/"1"', 'User creation contract incorrect');
+    $beforeDuplicate = [State::$rows, State::$audits];
+    try {
+        $service->createUser($provider, 2, [
+            'urn:sand:params:scim:schemas:extension:source:1.0' => ['sourceKey' => 'user-key-duplicate'],
+            'userName' => 'USER.ONE',
+            'displayName' => 'Duplicate',
+        ], 'duplicate-create');
+        throw new \RuntimeException('Case-insensitive duplicate userName accepted');
+    } catch (ApiException $exception) {
+        check($exception->getCode() === 409, 'Duplicate userName returned wrong status');
+    }
+    check([State::$rows, State::$audits] === $beforeDuplicate && State::$transaction === null, 'Duplicate userName create retained partial state');
+    $otherUser = $service->createUser($provider, 2, [
+        'urn:sand:params:scim:schemas:extension:source:1.0' => ['sourceKey' => 'user-key-other'],
+        'userName' => 'user.other',
+        'displayName' => 'Other',
+    ], 'other-create');
+    $beforeDuplicatePatch = [State::$rows, State::$audits];
+    try {
+        $service->patchUser($provider, 2, $otherUser['id'], [
+            'Operations' => [['op' => 'replace', 'path' => 'userName', 'value' => 'USER.ONE']],
+        ], 'W/"1"', 'duplicate-patch');
+        throw new \RuntimeException('Case-insensitive duplicate userName PATCH accepted');
+    } catch (ApiException $exception) {
+        check($exception->getCode() === 409, 'Duplicate PATCH userName returned wrong status');
+    }
+    check([State::$rows, State::$audits] === $beforeDuplicatePatch && State::$transaction === null, 'Duplicate userName PATCH retained partial state');
     State::$rows[AuthSession::class] = [20 => ['id' => 20, 'identity_binding_id' => 1, 'status' => 1], 21 => ['id' => 21, 'identity_binding_id' => 99, 'status' => 1]];
     State::$rows[AuthRefreshToken::class] = [30 => ['id' => 30, 'session_id' => 20, 'status' => 1], 31 => ['id' => 31, 'session_id' => 21, 'status' => 1]];
+    $legacyDuplicateBaseline = [State::$rows, State::$audits];
+    foreach (State::$rows[ScimResource::class] as $resourceId => $resourceRow) {
+        if (($resourceRow['scim_id'] ?? null) !== $otherUser['id']) continue;
+        State::$rows[ScimResource::class][$resourceId]['source_attributes']['userName'] = 'USER.ONE';
+    }
+    $disabledLegacyDuplicate = $service->patchUser($provider, 2, $user['id'], [
+        'Operations' => [['op' => 'replace', 'path' => 'active', 'value' => false]],
+    ], 'W/"1"', 'legacy-duplicate-disable');
+    check($disabledLegacyDuplicate['active'] === false, 'Historical duplicate userName blocked deactivation');
+    check(State::$rows[AuthSession::class][20]['status'] === 2 && State::$rows[AuthRefreshToken::class][30]['status'] === 2, 'Historical duplicate userName deactivation did not revoke sessions');
+    [State::$rows, State::$audits] = $legacyDuplicateBaseline;
     $baseline = [State::$rows, State::$audits];
     foreach (['replace', 'patch', 'delete'] as $method) {
         [State::$rows, State::$audits] = $baseline;

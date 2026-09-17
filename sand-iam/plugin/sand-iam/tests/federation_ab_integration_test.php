@@ -430,6 +430,17 @@ t04Assert(ScimToken::find((int) $token['id'])?->expire_time !== null, 'SCIM defa
 $sourceExtension = 'urn:sand:params:scim:schemas:extension:source:1.0';
 $scimUserA = $scim->createUser($scimProvider, (int) $application->id, ['externalId' => 't04-scim-a', $sourceExtension => ['sourceKey' => 't04-source-a'], 'userName' => 't04.scim.a', 'displayName' => 'T04 SCIM A', 'active' => true], 't04-scim-a');
 $scimUserB = $scim->createUser($scimProvider, (int) $application->id, ['externalId' => 't04-scim-b', $sourceExtension => ['sourceKey' => 't04-source-b'], 'userName' => 't04.scim.b', 'displayName' => 'T04 SCIM B', 'active' => true], 't04-scim-b');
+t04Expect(static fn () => $scim->createUser($scimProvider, (int) $application->id, ['externalId' => 't04-scim-duplicate', $sourceExtension => ['sourceKey' => 't04-source-duplicate'], 'userName' => 'T04.SCIM.A', 'displayName' => 'T04 duplicate', 'active' => true], 't04-scim-duplicate'), 'SAND_IAM_SCIM_CONFLICT');
+t04Expect(static fn () => $scim->patchUser($scimProvider, (int) $application->id, (string) $scimUserB['id'], ['Operations' => [['op' => 'replace', 'path' => 'userName', 'value' => 'T04.SCIM.A']]], (string) $scimUserB['meta']['version'], 't04-scim-duplicate-patch'), 'SAND_IAM_SCIM_CONFLICT');
+$scimUserBRecord = ScimResource::where('scim_id', (string) $scimUserB['id'])->find();
+$legacyAttributes = $scimUserBRecord?->source_attributes;
+if (is_string($legacyAttributes)) $legacyAttributes = json_decode($legacyAttributes, true);
+if (!is_array($legacyAttributes) || $scimUserBRecord === null) throw new RuntimeException('SCIM user B source attributes unavailable');
+$legacyAttributes['userName'] = 'T04.SCIM.A';
+$scimUserBRecord->save(['source_attributes' => $legacyAttributes]);
+$legacyDisabled = $scim->patchUser($scimProvider, (int) $application->id, (string) $scimUserB['id'], ['Operations' => [['op' => 'replace', 'path' => 'active', 'value' => false]]], (string) $scimUserB['meta']['version'], 't04-scim-legacy-duplicate-disable');
+t04Assert($legacyDisabled['active'] === false, 'SCIM legacy duplicate userName blocked source deactivation');
+$scimUserB = $scim->patchUser($scimProvider, (int) $application->id, (string) $scimUserB['id'], ['Operations' => [['op' => 'replace', 'path' => 'userName', 'value' => 't04.scim.b'], ['op' => 'replace', 'path' => 'active', 'value' => true]]], (string) $legacyDisabled['meta']['version'], 't04-scim-legacy-duplicate-restore');
 $scimGroup = $scim->createGroup($scimProvider, (int) $application->id, ['externalId' => 't04-scim-group', $sourceExtension => ['sourceKey' => 't04-source-group'], 'displayName' => 'T04 SCIM Group', 'members' => [['value' => $scimUserA['id']]]], 't04-scim-group');
 $groupId = (int) \plugin\SandIam\app\model\ScimGroup::where('scim_id', (string) $scimGroup['id'])->value('id');
 $scimGroup = $scim->patchGroup($scimProvider, (int) $application->id, (string) $scimGroup['id'], ['Operations' => [['op' => 'replace', 'value' => ['externalId' => 't04-scim-group-editable', 'displayName' => 'T04 SCIM Group Updated', 'members' => ['value' => $scimUserA['id']]]]]], (string) $scimGroup['meta']['version'], 't04-scim-pathless-single');

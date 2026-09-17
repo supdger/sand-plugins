@@ -33,6 +33,8 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
         'identity_provider_application' => 'sand_iam_identity_provider_application',
         'scim_token' => 'sand_iam_scim_token',
         'scim_resource' => 'sand_iam_scim_resource',
+        'scim_group' => 'sand_iam_scim_group',
+        'scim_group_member' => 'sand_iam_scim_group_member',
         'identity_binding' => 'sand_iam_identity_binding',
         'provisioning_event' => 'sand_iam_provisioning_event',
         'scim_identity' => 'sand_iam_identity',
@@ -347,6 +349,7 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
     {
         $empty = [
             'identity_provider_application' => [], 'scim_token' => [], 'scim_resource' => [],
+            'scim_group' => [], 'scim_group_member' => [],
             'identity_binding' => [], 'provisioning_event' => [], 'scim_identity' => [],
         ];
         if ($providerIds === []) return $empty;
@@ -358,6 +361,16 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
             return $this->queryRows($query);
         };
         $resources = $read('sand_iam_scim_resource');
+        $groups = $read('sand_iam_scim_group');
+        $groupIds = $this->sortedIds($groups);
+        $groupMembers = [];
+        if ($groupIds !== []) {
+            $query = Db::table('sand_iam_scim_group_member')
+                ->where('application_id', $applicationId)
+                ->whereIn('group_id', $groupIds);
+            if ($lock) $query->lock(true);
+            $groupMembers = $this->queryRows($query);
+        }
         $identityIds = array_values(array_unique(array_filter(array_map(
             static fn (array $row): int => (int) ($row['identity_id'] ?? 0),
             $resources,
@@ -375,6 +388,8 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
             'identity_provider_application' => $read('sand_iam_identity_provider_application'),
             'scim_token' => $read('sand_iam_scim_token'),
             'scim_resource' => $resources,
+            'scim_group' => $groups,
+            'scim_group_member' => $groupMembers,
             'identity_binding' => $read('sand_iam_identity_binding'),
             'provisioning_event' => $read('sand_iam_provisioning_event'),
             'scim_identity' => $identities,

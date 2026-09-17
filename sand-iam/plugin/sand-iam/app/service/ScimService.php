@@ -105,6 +105,7 @@ final class ScimService
         Db::startTrans();
         try {
             $provider = $this->lockedProvider($provider, $applicationId);
+            $this->assertUserNameAvailable($provider, $applicationId, $username);
             $code = $this->identityCode($provider, $subject);
             $identity = Identity::where('application_id', $applicationId)->where('code', $code)->find();
             if ($identity !== null) throw new ApiException('SAND_IAM_SCIM_CONFLICT', 409);
@@ -140,6 +141,7 @@ final class ScimService
             if ($scim === null || $scim->source_state === 'deleted') throw new ApiException('SAND_IAM_SCIM_NOT_FOUND', 404);
             $this->assertResourceVersion($scim, $ifMatch);
             $attributes = $scim->source_attributes; if (is_string($attributes)) $attributes = json_decode($attributes, true); if (!is_array($attributes)) $attributes = [];
+            $originalUserName = (string) ($attributes['userName'] ?? '');
             $changes = []; $paths = [];
             foreach ($operations as $operation) {
                 if (!is_array($operation) || !in_array(strtolower((string) ($operation['op'] ?? '')), ['add', 'remove', 'replace'], true)) throw new ApiException('SAND_IAM_SCIM_INVALID_PATCH', 400);
@@ -162,6 +164,10 @@ final class ScimService
                 elseif ($path === 'externalId') { if ($op === 'remove') unset($attributes['externalId']); else { $externalId = $this->externalId(['externalId' => $value]); if ($externalId === null) unset($attributes['externalId']); else $attributes['externalId'] = $externalId; } $paths[] = 'externalId'; }
                 elseif ($path === self::SOURCE_EXTENSION || str_starts_with($path, self::SOURCE_EXTENSION . ':')) throw new ApiException('SAND_IAM_SCIM_IMMUTABLE_SOURCE_KEY', 400);
                 else throw new ApiException('SAND_IAM_SCIM_INVALID_PATCH', 400);
+            }
+            $nextUserName = (string) ($attributes['userName'] ?? '');
+            if (strcasecmp($originalUserName, $nextUserName) !== 0) {
+                $this->assertUserNameAvailable($provider, $applicationId, $nextUserName, (int) $scim->id);
             }
             $scim->save($changes + ['source_attributes' => $attributes, 'version' => (int) $scim->version + 1]);
             if (array_key_exists('displayName', $attributes)) {
@@ -288,9 +294,86 @@ final class ScimService
     }
 
     /** @return array<string,mixed> */
-    public function schemas(): array { return ['schemas' => ['urn:ietf:params:scim:api:messages:2.0:ListResponse'], 'totalResults' => 3, 'Resources' => [['id' => 'urn:ietf:params:scim:schemas:core:2.0:User', 'name' => 'User', 'attributes' => [['name' => 'userName', 'required' => true, 'mutability' => 'readWrite'], ['name' => 'externalId', 'mutability' => 'readWrite'], ['name' => 'displayName', 'mutability' => 'readWrite'], ['name' => 'active', 'mutability' => 'readWrite']]], ['id' => 'urn:ietf:params:scim:schemas:core:2.0:Group', 'name' => 'Group', 'attributes' => [['name' => 'externalId', 'mutability' => 'readWrite'], ['name' => 'displayName', 'required' => true, 'mutability' => 'readWrite'], ['name' => 'members', 'multiValued' => true, 'mutability' => 'readWrite']]], ['id' => self::SOURCE_EXTENSION, 'name' => 'SandIAM source', 'attributes' => [['name' => 'sourceKey', 'required' => true, 'mutability' => 'immutable']]]]]; }
+    public function schemas(): array
+    {
+        $attribute = static fn (string $name, string $type, bool $multiValued = false, bool $required = false, string $mutability = 'readWrite', array $extra = []): array => array_merge([
+            'name' => $name,
+            'type' => $type,
+            'multiValued' => $multiValued,
+            'required' => $required,
+            'caseExact' => false,
+            'mutability' => $mutability,
+            'returned' => 'default',
+            'uniqueness' => 'none',
+        ], $extra);
+        return [
+            'schemas' => ['urn:ietf:params:scim:api:messages:2.0:ListResponse'],
+            'totalResults' => 3,
+            'Resources' => [
+                [
+                    'schemas' => ['urn:ietf:params:scim:schemas:core:2.0:Schema'],
+                    'id' => 'urn:ietf:params:scim:schemas:core:2.0:User',
+                    'name' => 'User',
+                    'attributes' => [
+                        $attribute('userName', 'string', false, true, 'readWrite', ['uniqueness' => 'server']),
+                        $attribute('externalId', 'string', false, false, 'readWrite', ['caseExact' => true]),
+                        $attribute('displayName', 'string'),
+                        $attribute('active', 'boolean'),
+                    ],
+                ],
+                [
+                    'schemas' => ['urn:ietf:params:scim:schemas:core:2.0:Schema'],
+                    'id' => 'urn:ietf:params:scim:schemas:core:2.0:Group',
+                    'name' => 'Group',
+                    'attributes' => [
+                        $attribute('externalId', 'string', false, false, 'readWrite', ['caseExact' => true]),
+                        $attribute('displayName', 'string', false, true),
+                        $attribute('members', 'complex', true, false, 'readWrite', [
+                            'subAttributes' => [
+                                $attribute('value', 'string', false, false, 'immutable', ['caseExact' => true]),
+                            ],
+                        ]),
+                    ],
+                ],
+                [
+                    'schemas' => ['urn:ietf:params:scim:schemas:core:2.0:Schema'],
+                    'id' => self::SOURCE_EXTENSION,
+                    'name' => 'SandIAM source',
+                    'attributes' => [
+                        $attribute('sourceKey', 'string', false, true, 'immutable', ['caseExact' => true]),
+                    ],
+                ],
+            ],
+        ];
+    }
+
     /** @return array<string,mixed> */
-    public function resourceTypes(): array { return ['schemas' => ['urn:ietf:params:scim:api:messages:2.0:ListResponse'], 'totalResults' => 2, 'Resources' => [['id' => 'User', 'name' => 'User', 'endpoint' => '/Users', 'schema' => 'urn:ietf:params:scim:schemas:core:2.0:User'], ['id' => 'Group', 'name' => 'Group', 'endpoint' => '/Groups', 'schema' => 'urn:ietf:params:scim:schemas:core:2.0:Group']]]; }
+    public function resourceTypes(): array
+    {
+        $extension = [['schema' => self::SOURCE_EXTENSION, 'required' => true]];
+        return [
+            'schemas' => ['urn:ietf:params:scim:api:messages:2.0:ListResponse'],
+            'totalResults' => 2,
+            'Resources' => [
+                [
+                    'schemas' => ['urn:ietf:params:scim:schemas:core:2.0:ResourceType'],
+                    'id' => 'User',
+                    'name' => 'User',
+                    'endpoint' => '/Users',
+                    'schema' => 'urn:ietf:params:scim:schemas:core:2.0:User',
+                    'schemaExtensions' => $extension,
+                ],
+                [
+                    'schemas' => ['urn:ietf:params:scim:schemas:core:2.0:ResourceType'],
+                    'id' => 'Group',
+                    'name' => 'Group',
+                    'endpoint' => '/Groups',
+                    'schema' => 'urn:ietf:params:scim:schemas:core:2.0:Group',
+                    'schemaExtensions' => $extension,
+                ],
+            ],
+        ];
+    }
 
     private function provider(int $providerId, int $applicationId): IdentityProvider { $provider = IdentityProvider::where('id', $providerId)->where('provider_type', 'scim')->where('status', 1)->find(); return $this->assertProviderAvailable($provider, $applicationId, false); }
     private function lockedProvider(IdentityProvider $provider, int $applicationId): IdentityProvider { $live = IdentityProvider::where('id', (int) $provider->id)->where('provider_type', 'scim')->where('status', 1)->lock(true)->find(); return $this->assertProviderAvailable($live, $applicationId, true); }
@@ -303,6 +386,15 @@ final class ScimService
     private function displayName(array $resource, string $fallback): string { $value = $resource['displayName'] ?? ($resource['name']['formatted'] ?? $fallback); if (!is_string($value)) throw new ApiException('SAND_IAM_SCIM_INVALID_RESOURCE', 400); return $this->cleanDisplayName($value, $fallback); }
     private function cleanDisplayName(string $value, string $fallback): string { if (!preg_match('//u', $value)) throw new ApiException('SAND_IAM_SCIM_INVALID_RESOURCE', 400); $value = preg_replace('/[\p{Cc}\p{Cf}]+/u', '', $value) ?? ''; $value = preg_replace('/\s+/u', ' ', trim($value)) ?? ''; $value = mb_substr($value, 0, 128); return $value === '' ? $fallback : $value; }
     private function groupDisplayName(mixed $value): string { if (!is_string($value)) throw new ApiException('SAND_IAM_SCIM_INVALID_RESOURCE', 400); $value = $this->cleanDisplayName($value, ''); if ($value === '') throw new ApiException('SAND_IAM_SCIM_INVALID_RESOURCE', 400); return $value; }
+    private function assertUserNameAvailable(IdentityProvider $provider, int $applicationId, string $userName, ?int $exceptResourceId = null): void
+    {
+        $query = ScimResource::where('identity_provider_id', (int) $provider->id)
+            ->where('application_id', $applicationId)
+            ->where('source_state', '<>', 'deleted')
+            ->whereRaw("lower(source_attributes->>'userName') = lower(?)", [$userName]);
+        if ($exceptResourceId !== null) $query->where('id', '<>', $exceptResourceId);
+        if ($query->find() !== null) throw new ApiException('SAND_IAM_SCIM_CONFLICT', 409);
+    }
     private function identityCode(IdentityProvider $provider, string $subject): string { return 'scim-p' . (int) $provider->id . '-' . substr(hash('sha256', 'scim-subject:v1\0' . $subject), 0, 32); }
     private function active(array $resource): bool { if (!array_key_exists('active', $resource)) return true; if (!is_bool($resource['active'])) throw new ApiException('SAND_IAM_SCIM_INVALID_RESOURCE', 400); return $resource['active']; }
     private function tokenExpireTime(?string $expireTime): string { if ($expireTime === null || trim($expireTime) === '') return date('Y-m-d H:i:s', time() + 90 * 86400); $date = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $expireTime); $errors = \DateTimeImmutable::getLastErrors(); if ($date === false || ($errors !== false && ($errors['warning_count'] > 0 || $errors['error_count'] > 0)) || $date->format('Y-m-d H:i:s') !== $expireTime || $date->getTimestamp() <= time() || $date->getTimestamp() > time() + 366 * 86400) throw new ApiException('SAND_IAM_SCIM_TOKEN_EXPIRE_INVALID', 400); return $expireTime; }
