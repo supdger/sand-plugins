@@ -195,7 +195,7 @@ namespace {
         public function scimArtifacts(array $providerIds, int $applicationId, bool $lock): array
         {
             $this->operations[] = 'records:scim_artifacts:' . ($lock ? 'lock' : 'read');
-            $types = ['identity_provider_application', 'scim_token', 'scim_resource', 'scim_group', 'identity_binding', 'provisioning_event'];
+            $types = ['identity_provider_application', 'scim_token', 'scim_resource', 'scim_group', 'identity_binding', 'directory_sync_run', 'provisioning_event'];
             $result = [];
             foreach ($types as $type) {
                 $result[$type] = array_values(array_filter($this->rows[$type] ?? [], static fn (array $row): bool =>
@@ -1186,6 +1186,8 @@ namespace {
     $chainTwoLdapRows['scim_identity'][232] = ['id' => 232, 'application_id' => 22, 'code' => 'bob', 'status' => 2];
     $chainTwoLdapRows['identity_binding'][233] = ['id' => 233, 'identity_provider_id' => 229, 'application_id' => 22, 'identity_id' => 231, 'status' => 1];
     $chainTwoLdapRows['identity_binding'][234] = ['id' => 234, 'identity_provider_id' => 229, 'application_id' => 22, 'identity_id' => 232, 'status' => 1];
+    $chainTwoLdapRows['directory_sync_run'][235] = ['id' => 235, 'identity_provider_id' => 229, 'application_id' => 22, 'state' => 'succeeded'];
+    $chainTwoLdapRows['directory_sync_run'][236] = ['id' => 236, 'identity_provider_id' => 229, 'application_id' => 22, 'state' => 'succeeded'];
     $chainTwoLdapPayload = acceptanceFixtureChainTwoPayload($chainTwoLdapRequest);
     $chainTwoLdapPayload['object_ids'] = ['identity_provider' => [229]];
     $chainTwoLdapPayload['object_request_ids'] = ['identity_provider' => [$chainTwoLdapRequest . '-provider']];
@@ -1198,6 +1200,7 @@ namespace {
     $chainTwoLdap = $chainTwoLdapService->cleanup($chainTwoLdapPayload, 1, $chainTwoLdapRequest);
     acceptanceFixtureAssert(
         ($chainTwoLdap['matched']['identity_binding'] ?? 0) === 2
+        && ($chainTwoLdap['matched']['directory_sync_run'] ?? 0) === 2
         && ($chainTwoLdap['matched']['scim_identity'] ?? 0) === 2
         && ($chainTwoLdap['matched']['identity_provider'] ?? 0) === 1
         && array_sum($chainTwoLdap['residual']) === 0,

@@ -51,6 +51,7 @@ final class AcceptanceFixtureService
                 'sync_resource', 'directory_identity', 'sync_run', 'sync_connector',
                 'identity_import_row', 'import_invitation', 'identity_invitation', 'identity_import_job',
                 'scim_group_member', 'scim_group',
+                'directory_sync_run',
                 'provisioning_event', 'scim_resource', 'identity_binding', 'scim_token',
                 'scim_identity', 'identity_provider_application', 'identity_provider',
                 'identity_group', 'identity',
@@ -522,6 +523,7 @@ final class AcceptanceFixtureService
             if (!isset($objectIds['identity_provider'])) {
                 $scimTypes = [
                     'scim_group_member', 'scim_group',
+                    'directory_sync_run',
                     'provisioning_event', 'scim_resource', 'identity_binding', 'scim_token',
                     'scim_identity', 'identity_provider_application', 'identity_provider',
                 ];
@@ -1405,7 +1407,7 @@ final class AcceptanceFixtureService
         }
         $resourceIds = $this->sortedIds($artifacts['scim_resource'] ?? []);
         $groupIds = $this->sortedIds($artifacts['scim_group'] ?? []);
-        foreach (['identity_provider_application', 'scim_token', 'scim_resource', 'scim_group', 'identity_binding', 'provisioning_event'] as $type) {
+        foreach (['identity_provider_application', 'scim_token', 'scim_resource', 'scim_group', 'identity_binding', 'directory_sync_run', 'provisioning_event'] as $type) {
             foreach ($artifacts[$type] ?? [] as $row) {
                 if (!in_array((int) ($row['identity_provider_id'] ?? 0), $providerIds, true)) {
                     throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: SCIM 派生对象不属于本轮身份源', 400);
@@ -1638,7 +1640,7 @@ final class AcceptanceFixtureService
                 $request['application_id'],
                 false,
             );
-            foreach (['identity_provider_application', 'scim_token', 'scim_resource', 'scim_group', 'scim_group_member', 'identity_binding', 'provisioning_event', 'scim_identity'] as $type) {
+            foreach (['identity_provider_application', 'scim_token', 'scim_resource', 'scim_group', 'scim_group_member', 'identity_binding', 'directory_sync_run', 'provisioning_event', 'scim_identity'] as $type) {
                 $residual[$type] = count($scimArtifacts[$type] ?? []);
             }
         }
@@ -1727,7 +1729,7 @@ final class AcceptanceFixtureService
             foreach (['identity_import_row', 'import_invitation'] as $type) {
                 $ids[$type] = $this->sortedIds($records[$type] ?? []);
             }
-            foreach (['identity_provider_application', 'scim_token', 'scim_resource', 'scim_group', 'scim_group_member', 'identity_binding', 'provisioning_event', 'scim_identity'] as $type) {
+            foreach (['identity_provider_application', 'scim_token', 'scim_resource', 'scim_group', 'scim_group_member', 'identity_binding', 'directory_sync_run', 'provisioning_event', 'scim_identity'] as $type) {
                 $ids[$type] = $this->sortedIds($records[$type] ?? []);
             }
         }

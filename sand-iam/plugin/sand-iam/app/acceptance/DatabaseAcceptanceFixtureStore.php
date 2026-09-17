@@ -36,6 +36,7 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
         'scim_group' => 'sand_iam_scim_group',
         'scim_group_member' => 'sand_iam_scim_group_member',
         'identity_binding' => 'sand_iam_identity_binding',
+        'directory_sync_run' => 'sand_iam_directory_sync_run',
         'provisioning_event' => 'sand_iam_provisioning_event',
         'scim_identity' => 'sand_iam_identity',
         'identity_auth' => 'sand_iam_identity_auth',
@@ -400,6 +401,7 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
         }
         return [
             'identity_provider_application' => $read('sand_iam_identity_provider_application'),
+            'directory_sync_run' => $read('sand_iam_directory_sync_run'),
             'scim_token' => $read('sand_iam_scim_token'),
             'scim_resource' => $resources,
             'scim_group' => $groups,

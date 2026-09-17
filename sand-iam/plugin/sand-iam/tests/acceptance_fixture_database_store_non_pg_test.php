@@ -110,6 +110,7 @@ namespace {
         "->where('provider_type', 'ldap')",
         "in_array((int) (\$binding['identity_provider_id'] ?? 0), \$ldapProviderIds, true)",
         "'identity_binding' => \$bindings",
+        "'directory_sync_run' => \$read('sand_iam_directory_sync_run')",
         'function detachPolicyVersions(array $policyVersionIds, array $policyIds, int $applicationId): void',
         "Db::table('sand_iam_policy')->where('application_id', \$applicationId)->whereIn('id', \$policyIds)->lock(true)",
         "Db::table('sand_iam_policy_version')->where('id', \$publishedVersionId)->lock(true)",

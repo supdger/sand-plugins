@@ -90,8 +90,8 @@ interface AcceptanceFixtureStore
     public function identityLifecycleArtifacts(array $importJobIds, int $applicationId, bool $lock): array;
 
     /**
-     * Discovers the mounted SCIM token, user and binding universe owned by the
-     * submitted provider roots.
+     * Discovers mounted protocol artifacts, including SCIM resources and LDAP
+     * directory runs, owned by the submitted provider roots.
      *
      * @param list<int> $providerIds
      * @return array<string,list<array<string,mixed>>>
