@@ -1394,6 +1394,15 @@ final class AcceptanceFixtureService
         $artifacts = $this->store->scimArtifacts($providerIds, $request['application_id'], $lock);
         if ($providerIds === []) return $artifacts;
         $identityIds = $this->sortedIds($artifacts['scim_identity'] ?? []);
+        $resourceIdentityIds = array_values(array_unique(array_filter(array_map(
+            static fn (array $row): int => (int) ($row['identity_id'] ?? 0),
+            $artifacts['scim_resource'] ?? [],
+        ), static fn (int $id): bool => $id > 0)));
+        sort($resourceIdentityIds);
+        $providerTypes = [];
+        foreach ($records['identity_provider'] ?? [] as $provider) {
+            $providerTypes[(int) ($provider['id'] ?? 0)] = (string) ($provider['provider_type'] ?? '');
+        }
         $resourceIds = $this->sortedIds($artifacts['scim_resource'] ?? []);
         $groupIds = $this->sortedIds($artifacts['scim_group'] ?? []);
         foreach (['identity_provider_application', 'scim_token', 'scim_resource', 'scim_group', 'identity_binding', 'provisioning_event'] as $type) {
@@ -1409,7 +1418,9 @@ final class AcceptanceFixtureService
             }
         }
         foreach ($artifacts['identity_binding'] ?? [] as $row) {
-            if (!in_array((int) ($row['identity_id'] ?? 0), $identityIds, true)) {
+            $providerType = $providerTypes[(int) ($row['identity_provider_id'] ?? 0)] ?? '';
+            $allowedIdentityIds = $providerType === 'ldap' ? $identityIds : $resourceIdentityIds;
+            if (!in_array((int) ($row['identity_id'] ?? 0), $allowedIdentityIds, true)) {
                 throw new ApiException('SAND_IAM_ACCEPTANCE_FIXTURE_SCOPE_DENIED: SCIM 绑定未归属本轮派生身份', 400);
             }
         }

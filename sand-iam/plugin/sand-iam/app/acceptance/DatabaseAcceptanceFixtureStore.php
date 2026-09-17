@@ -361,6 +361,7 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
             return $this->queryRows($query);
         };
         $resources = $read('sand_iam_scim_resource');
+        $bindings = $read('sand_iam_identity_binding');
         $groups = $read('sand_iam_scim_group');
         $groupIds = $this->sortedIds($groups);
         $groupMembers = [];
@@ -375,6 +376,19 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
             static fn (array $row): int => (int) ($row['identity_id'] ?? 0),
             $resources,
         ), static fn (int $id): bool => $id > 0)));
+        $ldapProviderIds = array_map(
+            'intval',
+            Db::table('sand_iam_identity_provider')
+                ->whereIn('id', $providerIds)
+                ->where('provider_type', 'ldap')
+                ->column('id'),
+        );
+        foreach ($bindings as $binding) {
+            if (in_array((int) ($binding['identity_provider_id'] ?? 0), $ldapProviderIds, true)) {
+                $identityIds[] = (int) ($binding['identity_id'] ?? 0);
+            }
+        }
+        $identityIds = array_values(array_unique(array_filter($identityIds, static fn (int $id): bool => $id > 0)));
         sort($identityIds);
         $identities = [];
         if ($identityIds !== []) {
@@ -390,7 +404,7 @@ final class DatabaseAcceptanceFixtureStore implements AcceptanceFixtureStore
             'scim_resource' => $resources,
             'scim_group' => $groups,
             'scim_group_member' => $groupMembers,
-            'identity_binding' => $read('sand_iam_identity_binding'),
+            'identity_binding' => $bindings,
             'provisioning_event' => $read('sand_iam_provisioning_event'),
             'scim_identity' => $identities,
         ];

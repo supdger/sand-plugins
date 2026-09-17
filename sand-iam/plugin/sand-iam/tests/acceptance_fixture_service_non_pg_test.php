@@ -209,6 +209,19 @@ namespace {
                 && in_array((int) ($row['group_id'] ?? 0), $groupIds, true)
             ));
             $identityIds = array_values(array_unique(array_map(static fn (array $row): int => (int) ($row['identity_id'] ?? 0), $result['scim_resource'])));
+            $ldapProviderIds = array_values(array_map(
+                static fn (array $row): int => (int) ($row['id'] ?? 0),
+                array_filter($this->rows['identity_provider'] ?? [], static fn (array $row): bool =>
+                    in_array((int) ($row['id'] ?? 0), $providerIds, true)
+                    && ($row['provider_type'] ?? null) === 'ldap'
+                ),
+            ));
+            foreach ($result['identity_binding'] as $binding) {
+                if (in_array((int) ($binding['identity_provider_id'] ?? 0), $ldapProviderIds, true)) {
+                    $identityIds[] = (int) ($binding['identity_id'] ?? 0);
+                }
+            }
+            $identityIds = array_values(array_unique($identityIds));
             $result['scim_identity'] = array_values(array_filter($this->rows['scim_identity'] ?? [], static fn (array $row): bool =>
                 (int) ($row['application_id'] ?? 0) === $applicationId
                 && in_array((int) ($row['id'] ?? 0), $identityIds, true)
@@ -1144,6 +1157,51 @@ namespace {
             'purge:identity_group', 'purge:identity',
         ],
         'chain 2 did not remove directory and import children before their roots',
+    );
+
+    $chainTwoLdapRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain2-ldap-cleanup';
+    $chainTwoLdapRows = acceptanceFixtureRows();
+    unset(
+        $chainTwoLdapRows['identity'][34],
+        $chainTwoLdapRows['identity_group'][35],
+        $chainTwoLdapRows['identity_group_member'][36],
+        $chainTwoLdapRows['identity_group_role'][37],
+    );
+    $chainTwoLdapRows['identity_provider'][229] = [
+        'id' => 229,
+        'organization_id' => 11,
+        'application_id' => 22,
+        'code' => ACCEPTANCE_FIXTURE_PREFIX . 'ldap',
+        'provider_type' => 'ldap',
+        'status' => 1,
+    ];
+    $chainTwoLdapRows['identity_provider_application'][230] = [
+        'id' => 230,
+        'identity_provider_id' => 229,
+        'organization_id' => 11,
+        'application_id' => 22,
+        'status' => 1,
+    ];
+    $chainTwoLdapRows['scim_identity'][231] = ['id' => 231, 'application_id' => 22, 'code' => 'alice', 'status' => 1];
+    $chainTwoLdapRows['scim_identity'][232] = ['id' => 232, 'application_id' => 22, 'code' => 'bob', 'status' => 2];
+    $chainTwoLdapRows['identity_binding'][233] = ['id' => 233, 'identity_provider_id' => 229, 'application_id' => 22, 'identity_id' => 231, 'status' => 1];
+    $chainTwoLdapRows['identity_binding'][234] = ['id' => 234, 'identity_provider_id' => 229, 'application_id' => 22, 'identity_id' => 232, 'status' => 1];
+    $chainTwoLdapPayload = acceptanceFixtureChainTwoPayload($chainTwoLdapRequest);
+    $chainTwoLdapPayload['object_ids'] = ['identity_provider' => [229]];
+    $chainTwoLdapPayload['object_request_ids'] = ['identity_provider' => [$chainTwoLdapRequest . '-provider']];
+    $chainTwoLdapPayload['partial_recovery'] = true;
+    $chainTwoLdapAudits = acceptanceFixtureAudits($chainTwoLdapRequest);
+    $chainTwoLdapAudits[$chainTwoLdapRequest . '-provider|identity_provider.create|identity_provider'] = [229];
+    $chainTwoLdapStore = new AcceptanceFixtureMemoryStore($chainTwoLdapRows, $chainTwoLdapAudits);
+    [$chainTwoLdapIdempotent, $chainTwoLdapAudit] = acceptanceFixtureDoubles();
+    $chainTwoLdapService = new AcceptanceFixtureService($chainTwoLdapStore, $chainTwoLdapIdempotent, $chainTwoLdapAudit);
+    $chainTwoLdap = $chainTwoLdapService->cleanup($chainTwoLdapPayload, 1, $chainTwoLdapRequest);
+    acceptanceFixtureAssert(
+        ($chainTwoLdap['matched']['identity_binding'] ?? 0) === 2
+        && ($chainTwoLdap['matched']['scim_identity'] ?? 0) === 2
+        && ($chainTwoLdap['matched']['identity_provider'] ?? 0) === 1
+        && array_sum($chainTwoLdap['residual']) === 0,
+        'chain 2 did not clean LDAP identities derived exclusively from fixture-owned provider bindings',
     );
 
     $chainTwoPartialScimRequest = ACCEPTANCE_FIXTURE_PREFIX . 'chain2-scim-partial';
