@@ -8,7 +8,7 @@ use plugin\SandIam\app\service\AuditWriter;
 use plugin\SandIam\app\service\RequestId;
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** Keeps rejected initialization manifests out of generic request logs. */
 final class InitializationSensitiveMiddleware

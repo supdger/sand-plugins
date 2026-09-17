@@ -6,7 +6,7 @@ namespace plugin\SandIam\app\middleware;
 
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** Prevents one-time dynamic registration access tokens from entering host request logs. */
 final class OAuthRegistrationSensitiveMiddleware

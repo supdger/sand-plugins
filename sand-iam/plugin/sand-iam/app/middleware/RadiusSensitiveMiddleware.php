@@ -6,7 +6,7 @@ namespace plugin\SandIam\app\middleware;
 
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** Keeps per-NAS shared secrets out of host request logs and error bodies. */
 final class RadiusSensitiveMiddleware

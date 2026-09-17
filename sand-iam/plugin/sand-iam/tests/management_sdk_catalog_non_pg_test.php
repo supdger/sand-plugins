@@ -26,6 +26,7 @@ foreach ([$catalog, $routes, $php, $phpDto, $typescript, $dart, $dartConstants, 
 $paths = [
     '/developer/onboarding/preview', '/developer/onboarding/apply',
     '/developer/route-manifest/preview', '/developer/route-manifest/apply',
+    '/developer/openapi-import/preview', '/developer/openapi-import/apply',
     '/policy/simulate', '/policy/rollback',
     '/credential/issue', '/credential/rotate', '/credential/revoke',
     '/identity-provider-preset/index', '/identity-provider-preset/draft',

@@ -209,7 +209,19 @@ await iam.authorize({ apiCode: "record.detail", attributes: { organization_id: 4
 
 `ApiGovernanceService::observeRoute()` 是受限适配入口：只接受已经登记的应用、接口代码和版本。扫描结果发生冲突时返回 `SAND_IAM_ROUTE_BINDING_CONFLICT`，不会覆盖原绑定。
 
-### 6.1 Webman 路由清单同步（P0）
+### 6.1 OpenAPI 接口目录导入
+
+管理端“路由清单”页面接受 OpenAPI 3.0/3.1 **JSON 导入包**。导入包包含现有客户主体、应用、环境代码，原始 `document`，以及逐接口 `mappings`；原始 OpenAPI 文档只在当前请求中解析，不写入数据库、审计或响应。每个 GET、POST、PUT、PATCH、DELETE operation 都必须：
+
+- 有不超过 128 字符的 `summary`；
+- 通过 `x-sand-iam.riskLevel` 标注 `low`、`medium`、`high` 或 `critical`；
+- 在 `mappings` 中明确给出接口代码/版本、现有业务资源、已发布业务动作、audience 和可选 scope。
+
+导入先调用 `POST /app/sand-iam/admin/developer/openapi-import/preview`。未映射 operation、资源不存在、动作未发布、接口归属冲突或路由已由其他来源维护时，`can_apply=false`，不写数据。确认时以同一导入包、`preview_hash` 和 `apply: true` 调用 `/openapi-import/apply`；服务会在事务内锁定并重新预检，状态变化时返回 `SAND_IAM_OPENAPI_IMPORT_PREVIEW_STALE`。`disable_missing=true` 只停用同一应用中来源为 `openapi` 且已不在本次完整文档中的路由，不接管 `manual` 或 `route_scan` 绑定。
+
+PHP、TypeScript 和 Dart 管理 SDK 分别提供 `openApiImportPreview` 与 `openApiImportApply`。导入包不得包含密码、令牌、客户端密钥或示例真实凭证。
+
+### 6.2 Webman 路由清单同步（P0）
 
 业务应用使用 `RouteBindingSynchronizer::synchronize($manifest, $apply, $disableMissing)` 同步路由绑定。它是插件权威源码中的正式开发者入口；应用可从自己的 Webman 路由定义导出同一份 JSON/PHP 数组清单，但 SandIAM **不会**自动遍历宿主的全部路由。
 

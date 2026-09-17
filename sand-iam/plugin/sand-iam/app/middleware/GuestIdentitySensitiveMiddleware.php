@@ -7,7 +7,7 @@ namespace plugin\SandIam\app\middleware;
 use plugin\SandIam\app\service\AuditWriter;
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** Keeps external guest references and identity contexts out of generic errors. */
 final class GuestIdentitySensitiveMiddleware

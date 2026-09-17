@@ -5,7 +5,7 @@ const source = fs.readFileSync(path.join(__dirname, 'index.vue'), 'utf8')
 const ast = ts.createSourceFile('page.ts', source.slice(source.indexOf('>') + 1, source.indexOf('</script>')), ts.ScriptTarget.Latest, true)
 const printer = ts.createPrinter()
 const body = ast.statements.filter(node => !ts.isImportDeclaration(node)).map(node => printer.printNode(ts.EmitHint.Unspecified, node, ast)).join('\n')
-const code = ts.transpileModule(`${body}; globalThis.page = { manifestText, preview, requestError, disableMissing, previewKind, runPreview, confirmApply, acting, issuedCredential, applied, acknowledgeCredential };`,
+const code = ts.transpileModule(`${body}; globalThis.page = { manifestText, preview, requestError, disableMissing, previewKind, runPreview, confirmApply, acting, issuedCredential, applied, acknowledgeCredential, openApiImportText, openApiImportPreview, openApiImportApplied, openApiImportError, runOpenApiImportPreview, confirmOpenApiImportApply };`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 function harness(allowed = true) {
@@ -14,6 +14,7 @@ function harness(allowed = true) {
     ElMessageBox: { confirm: () => { const d = deferred(); confirms.push(d); return d.promise } },
     SAND_IAM_ROUTE_SYNC_FORMAT: 'sand-iam.route-sync/v1',
     describeOnboardingManifestError: () => null, parseOnboardingPreview: value => value, parseRouteManifestPreview: value => value,
+    parseOpenApiImportPreview: value => value,
     describeSandIamError: error => ({ detail: error.message }),
     postSandIamAction: (path, params) => { const d = deferred(); writes.push({ ...d, path, params }); return d.promise } }
   const scope = vue.effectScope(); scope.run(() => vm.runInNewContext(code, context))
@@ -71,6 +72,24 @@ async function run() {
   assert.equal(blocked.confirms.length, 0)
   assert.match(blocked.p.requestError.value.detail, /重新确认|重新预检|先生成变更预览/)
   blocked.stop()
+  const openapi = harness()
+  openapi.p.openApiImportText.value = JSON.stringify({
+    organization_code: 'sand',
+    application_code: 'app',
+    environment_code: 'production',
+    document: { openapi: '3.1.0', paths: {} },
+    mappings: []
+  })
+  const openapiPreview = openapi.p.runOpenApiImportPreview()
+  assert.equal(openapi.writes[0].path, 'developer/openapi-import/preview')
+  openapi.writes[0].resolve(preview('c'.repeat(64))); await openapiPreview
+  const openapiApply = openapi.p.confirmOpenApiImportApply(); openapi.confirms[0].resolve(); await tick()
+  assert.equal(openapi.writes[1].path, 'developer/openapi-import/apply')
+  assert.equal(openapi.writes[1].params.preview_hash, 'c'.repeat(64))
+  assert.equal(openapi.writes[1].params.apply, true)
+  openapi.writes[1].resolve({ dry_run: false }); await openapiApply
+  assert.equal(openapi.p.openApiImportApplied.value, true)
+  openapi.stop()
   console.log('Route manifest context behavior PASS')
 }
 run().catch(error => { console.error(error); process.exitCode = 1 })

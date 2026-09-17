@@ -18,6 +18,11 @@ export interface RouteSyncApplyInput {
     requestId: string;
     disableMissing?: boolean | undefined;
 }
+export interface OpenApiImportApplyInput {
+    input: SandIamManagementJson;
+    previewHash: string;
+    requestId: string;
+}
 export interface CredentialIssueInput {
     workloadClientId: number;
     name: string;
@@ -81,6 +86,8 @@ export declare class SandIamManagementClient {
     onboardingApply(input: OnboardingApplyInput): Promise<SandIamManagementJson>;
     routeSyncPreview(manifest: SandIamManagementJson, disableMissing?: boolean, requestId?: string): Promise<SandIamManagementJson>;
     routeSyncApply(input: RouteSyncApplyInput): Promise<SandIamManagementJson>;
+    openApiImportPreview(input: SandIamManagementJson, requestId?: string): Promise<SandIamManagementJson>;
+    openApiImportApply(input: OpenApiImportApplyInput): Promise<SandIamManagementJson>;
     policySimulate(input: SandIamManagementJson, requestId?: string): Promise<SandIamManagementJson>;
     policyRollback(policyId: number, versionId: number, requestId: string): Promise<SandIamManagementJson>;
     credentialIssue(input: CredentialIssueInput): Promise<SandIamCredentialResult>;

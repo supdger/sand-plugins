@@ -371,6 +371,8 @@ const managementClient = new SandIamManagementClient({
         ? { id: 7, key_prefix: 'siam_wc_', credential: 'one-time-credential' }
         : path.endsWith('/developer/route-manifest/preview')
           ? { preview_hash: routePreviewHash }
+        : path.endsWith('/developer/openapi-import/preview')
+          ? { preview_hash: routePreviewHash }
         : { preview_hash: 'preview-1', route_sync: { created: 1 } }
     return new Response(JSON.stringify({ code: 200, data }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   },
@@ -380,6 +382,10 @@ const routePreview = await managementClient.routeSyncPreview(routeManifest, true
 assert(routePreview.preview_hash === routePreviewHash, 'route sync preview must use the route-manifest preview endpoint')
 const routeApply = await managementClient.routeSyncApply({ manifest: routeManifest, previewHash: routePreviewHash, requestId: 'management-apply-1', disableMissing: true })
 assert(routeApply.route_sync.created === 1, 'route sync apply must use the route-manifest apply endpoint')
+const openApiImport = { organization_code: 'sand', application_code: 'app', environment_code: 'production', document: { openapi: '3.1.0', paths: {} }, mappings: [] }
+const openApiPreview = await managementClient.openApiImportPreview(openApiImport, 'openapi-preview-1')
+assert(openApiPreview.preview_hash === routePreviewHash, 'OpenAPI import preview endpoint was not used')
+await managementClient.openApiImportApply({ input: openApiImport, previewHash: routePreviewHash, requestId: 'openapi-apply-1' })
 const issuedCredential = await managementClient.credentialIssue({ workloadClientId: 7, name: 'production', requestId: 'credential-issue-1' })
 assert(issuedCredential instanceof SandIamCredentialResult && issuedCredential.secretAvailable && issuedCredential.revealSecretOnce() === 'one-time-credential', 'management client did not protect one-time credential handoff')
 assert(JSON.stringify(issuedCredential).includes('one-time-credential') === false, 'credential result JSON leaked one-time secret')

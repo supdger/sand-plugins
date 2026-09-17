@@ -233,6 +233,31 @@ export function parseRouteManifestPreview(value: unknown): SandIamOnboardingPrev
   }
 }
 
+/**
+ * OpenAPI 导入只展示后端计算的变更。原始文档不会进入预览 DTO。
+ */
+export function parseOpenApiImportPreview(value: unknown): SandIamOnboardingPreview | null {
+  const record = unwrapData(value)
+  if (record === null || record.dry_run !== true) return null
+  const previewHash = readString(record.preview_hash)
+  if (!/^[a-f0-9]{64}$/.test(previewHash)) return null
+  const changes = Array.isArray(record.changes)
+    ? record.changes
+        .map((item) => parseOnboardingChange(item))
+        .filter((item): item is SandIamOnboardingChange => item !== null)
+    : []
+  return {
+    dryRun: true,
+    canApply: record.can_apply === true,
+    operationId: 'openapi-import',
+    previewHash,
+    organizationId: readPositiveInt(record.organization_id),
+    applicationId: readPositiveInt(record.application_id),
+    changeCount: changes.length,
+    changes
+  }
+}
+
 function parseRouteManifestChange(value: unknown): SandIamOnboardingChange | null {
   if (!isRecord(value)) return null
   const method = readString(value.method)

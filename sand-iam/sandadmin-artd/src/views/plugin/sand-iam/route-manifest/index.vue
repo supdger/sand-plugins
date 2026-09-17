@@ -7,6 +7,7 @@
   import {
     describeOnboardingManifestError,
     parseOnboardingPreview,
+    parseOpenApiImportPreview,
     parseRouteManifestPreview,
     SAND_IAM_ROUTE_SYNC_FORMAT,
     type SandIamOnboardingPreview
@@ -27,6 +28,12 @@
   const issuedCredential = ref('')
   const disableMissing = ref(false)
   const previewKind = ref<'onboarding' | 'route-manifest' | null>(null)
+  const openApiImportText = ref('')
+  const openApiImportPreview = ref<SandIamOnboardingPreview | null>(null)
+  const openApiImportApplied = ref(false)
+  const openApiImportError = ref<SandIamRequestError | null>(null)
+  let openApiImportVersion = 0
+  let openApiFileVersion = 0
   let inputVersion = 0
   let previewVersion = -1
   let disposed = false
@@ -38,9 +45,20 @@
     lastHint.value = ''
     previewKind.value = null
   }, { flush: 'sync' })
+  watch(openApiImportText, () => {
+    openApiImportVersion++
+    openApiImportPreview.value = null
+    openApiImportApplied.value = false
+    openApiImportError.value = null
+  }, { flush: 'sync' })
   onScopeDispose(() => { disposed = true; inputVersion++; issuedCredential.value = '' })
   const previewChanges = computed(() =>
     preview.value === null ? [] : preview.value.changes.map((change) => ({ ...change }))
+  )
+  const openApiImportChanges = computed(() =>
+    openApiImportPreview.value === null
+      ? []
+      : openApiImportPreview.value.changes.map((change) => ({ ...change }))
   )
 
   function isRecord(value: unknown): value is Record<string, unknown> {
@@ -72,6 +90,105 @@
   function resetApplyState(): void {
     applied.value = false
     lastHint.value = ''
+  }
+
+  function parseOpenApiImportJson(): Record<string, unknown> | null {
+    try {
+      const parsed: unknown = JSON.parse(openApiImportText.value)
+      if (!isRecord(parsed)) throw new Error('OpenAPI 导入包必须是 JSON 对象。')
+      if (!isRecord(parsed.document) || !Array.isArray(parsed.mappings)) {
+        throw new Error('导入包必须包含 document 对象和 mappings 列表。')
+      }
+      return parsed
+    } catch (error: unknown) {
+      openApiImportError.value = describeSandIamError(
+        error instanceof Error ? error : new Error('OpenAPI 导入包无法识别。')
+      )
+      return null
+    }
+  }
+
+  async function selectOpenApiImportFile(event: Event): Promise<void> {
+    const input = event.target
+    if (!(input instanceof HTMLInputElement) || input.files === null || input.files.length !== 1) return
+    const file = input.files[0]
+    if (file === undefined || file.size > 2 * 1024 * 1024) {
+      openApiImportError.value = describeSandIamError(new Error('OpenAPI JSON 文件不能超过 2 MB。'))
+      input.value = ''
+      return
+    }
+    const fileVersion = ++openApiFileVersion
+    const inputVersionAtRead = openApiImportVersion
+    input.value = ''
+    const text = await file.text()
+    if (disposed || fileVersion !== openApiFileVersion || inputVersionAtRead !== openApiImportVersion) return
+    openApiImportText.value = text
+  }
+
+  async function runOpenApiImportPreview(): Promise<void> {
+    if (disposed || acting.value || !canPreview.value) return
+    const version = openApiImportVersion
+    const input = parseOpenApiImportJson()
+    if (input === null) return
+    acting.value = true
+    openApiImportError.value = null
+    openApiImportApplied.value = false
+    try {
+      const result = await postSandIamAction('developer/openapi-import/preview', { import: input })
+      if (disposed || version !== openApiImportVersion) return
+      const parsed = parseOpenApiImportPreview(result)
+      if (parsed === null) throw new Error('服务器没有返回可确认的 OpenAPI 导入预览。')
+      openApiImportPreview.value = parsed
+    } catch (error: unknown) {
+      if (!disposed && version === openApiImportVersion) {
+        openApiImportPreview.value = null
+        openApiImportError.value = describeSandIamError(error)
+      }
+    } finally {
+      acting.value = false
+    }
+  }
+
+  async function confirmOpenApiImportApply(): Promise<void> {
+    if (disposed || acting.value || !canApply.value || openApiImportApplied.value) return
+    const selected = openApiImportPreview.value
+    const input = parseOpenApiImportJson()
+    const version = openApiImportVersion
+    if (selected === null || !selected.canApply || input === null) {
+      openApiImportError.value = describeSandIamError(new Error('请先生成无冲突的 OpenAPI 导入预览。'))
+      return
+    }
+    acting.value = true
+    try {
+      await ElMessageBox.confirm(
+        '确认按当前预览创建或更新接口目录与 OpenAPI 路由绑定吗？',
+        '确认导入 OpenAPI',
+        { type: 'warning', confirmButtonText: '确认导入', cancelButtonText: '取消' }
+      )
+    } catch {
+      acting.value = false
+      return
+    }
+    if (disposed || version !== openApiImportVersion || openApiImportPreview.value !== selected) {
+      acting.value = false
+      return
+    }
+    try {
+      await postSandIamAction('developer/openapi-import/apply', {
+        import: input,
+        preview_hash: selected.previewHash,
+        apply: true
+      })
+      if (disposed || version !== openApiImportVersion) return
+      openApiImportApplied.value = true
+      ElMessage.success('OpenAPI 接口目录已导入')
+    } catch (error: unknown) {
+      if (!disposed && version === openApiImportVersion) {
+        openApiImportError.value = describeSandIamError(error)
+      }
+    } finally {
+      acting.value = false
+    }
   }
 
   function acknowledgeCredential(): void {
@@ -272,6 +389,89 @@
               </ElSpace>
             </ElFormItem>
           </ElForm>
+        </ElCollapseItem>
+        <ElCollapseItem
+          data-openapi-import="true"
+          title="开发者详情：导入 OpenAPI 接口目录"
+          name="openapi-import"
+        >
+          <p class="mb-3 text-sm text-gray-500">
+            选择或粘贴 OpenAPI 3.0/3.1 JSON 导入包。每个接口必须明确映射到现有业务资源和已发布业务动作；系统只保存接口目录和路由绑定，不保存原始文档。
+          </p>
+          <ElAlert
+            v-if="openApiImportError"
+            class="mb-4"
+            type="error"
+            :closable="false"
+            :title="openApiImportError.title"
+            :description="openApiImportError.detail"
+          />
+          <ElAlert
+            v-else-if="openApiImportApplied"
+            class="mb-4"
+            type="success"
+            :closable="false"
+            title="OpenAPI 接口目录已导入"
+          />
+          <ElForm label-width="120px">
+            <ElFormItem label="JSON 文件">
+              <input
+                type="file"
+                accept=".json,application/json"
+                :disabled="acting || !canPreview"
+                @change="selectOpenApiImportFile"
+              />
+            </ElFormItem>
+            <ElFormItem label="导入包">
+              <ElInput
+                v-model="openApiImportText"
+                type="textarea"
+                :rows="14"
+                placeholder="粘贴包含客户主体、应用、环境、OpenAPI document 和显式 mappings 的 JSON 导入包"
+              />
+            </ElFormItem>
+            <ElFormItem>
+              <ElSpace>
+                <ElButton
+                  type="primary"
+                  :disabled="!canPreview || acting || openApiImportText.trim() === ''"
+                  @click="runOpenApiImportPreview"
+                >
+                  查看 OpenAPI 变更
+                </ElButton>
+                <ElButton
+                  type="warning"
+                  :disabled="!canApply || acting || openApiImportPreview === null || !openApiImportPreview.canApply || openApiImportApplied"
+                  @click="confirmOpenApiImportApply"
+                >
+                  确认导入
+                </ElButton>
+              </ElSpace>
+            </ElFormItem>
+          </ElForm>
+          <ElDescriptions v-if="openApiImportPreview !== null" :column="2" border class="mb-4">
+            <ElDescriptionsItem label="变更条数">{{ openApiImportPreview.changeCount }}</ElDescriptionsItem>
+            <ElDescriptionsItem label="核对结果">{{
+              openApiImportPreview.canApply ? '所有接口已映射，可以导入' : '存在未映射接口或归属冲突，不能导入'
+            }}</ElDescriptionsItem>
+          </ElDescriptions>
+          <ElTable
+            v-if="openApiImportPreview !== null"
+            :data="openApiImportChanges"
+            border
+            stripe
+            empty-text="预检没有变更项。"
+          >
+            <ElTableColumn label="对象类型" min-width="160">
+              <template #default="scope">{{ scope.row.objectType }}</template>
+            </ElTableColumn>
+            <ElTableColumn label="对象标识" min-width="180">
+              <template #default="scope">{{ scope.row.objectKey }}</template>
+            </ElTableColumn>
+            <ElTableColumn label="预检操作" min-width="120">
+              <template #default="scope">{{ scope.row.operation }}</template>
+            </ElTableColumn>
+          </ElTable>
         </ElCollapseItem>
       </ElCollapse>
 

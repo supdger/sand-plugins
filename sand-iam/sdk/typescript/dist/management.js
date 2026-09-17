@@ -92,6 +92,18 @@ export class SandIamManagementClient {
             apply: true
         }, input.requestId, true);
     }
+    openApiImportPreview(input, requestId) {
+        return this.objectRequest('POST', '/developer/openapi-import/preview', { import: input }, requestId, false);
+    }
+    openApiImportApply(input) {
+        if (!/^[a-f0-9]{64}$/.test(input.previewHash))
+            throw new SandIamManagementError('SAND_IAM_SDK_INVALID_ARGUMENT', 'OpenAPI 导入必须提供有效预检哈希', 0);
+        return this.objectRequest('POST', '/developer/openapi-import/apply', {
+            import: input.input,
+            preview_hash: input.previewHash,
+            apply: true
+        }, input.requestId, true);
+    }
     policySimulate(input, requestId) {
         return this.objectRequest('POST', '/policy/simulate', input, requestId, false);
     }

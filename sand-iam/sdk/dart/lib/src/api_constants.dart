@@ -40,6 +40,10 @@ abstract final class SandIamApi {
       '/app/sand-iam/admin/developer/route-manifest/preview';
   static const routeManifestApply =
       '/app/sand-iam/admin/developer/route-manifest/apply';
+  static const openApiImportPreview =
+      '/app/sand-iam/admin/developer/openapi-import/preview';
+  static const openApiImportApply =
+      '/app/sand-iam/admin/developer/openapi-import/apply';
   static const policySimulate = '/app/sand-iam/admin/policy/simulate';
   static const policyRollback = '/app/sand-iam/admin/policy/rollback';
   static const credentialIssue = '/app/sand-iam/admin/credential/issue';

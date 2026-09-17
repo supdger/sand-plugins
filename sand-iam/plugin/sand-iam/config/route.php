@@ -244,6 +244,8 @@ Route::post('/app/sand-iam/admin/developer/onboarding/preview', [DeveloperContro
 Route::post('/app/sand-iam/admin/developer/onboarding/apply', [DeveloperController::class, 'onboardingApply'])->middleware([InitializationSensitiveMiddleware::class, CheckLogin::class, CheckAuth::class]);
 Route::post('/app/sand-iam/admin/developer/route-manifest/preview', [DeveloperController::class, 'routeManifestPreview'])->middleware([InitializationSensitiveMiddleware::class, CheckLogin::class, CheckAuth::class]);
 Route::post('/app/sand-iam/admin/developer/route-manifest/apply', [DeveloperController::class, 'routeManifestApply'])->middleware([InitializationSensitiveMiddleware::class, CheckLogin::class, CheckAuth::class]);
+Route::post('/app/sand-iam/admin/developer/openapi-import/preview', [DeveloperController::class, 'openApiImportPreview'])->middleware([InitializationSensitiveMiddleware::class, CheckLogin::class, CheckAuth::class]);
+Route::post('/app/sand-iam/admin/developer/openapi-import/apply', [DeveloperController::class, 'openApiImportApply'])->middleware([InitializationSensitiveMiddleware::class, CheckLogin::class, CheckAuth::class]);
 
 Route::post('/app/sand-iam/runtime/context/issue', [RuntimeContextController::class, 'issue']);
 Route::post('/app/sand-iam/runtime/context/verify', [RuntimeContextController::class, 'verify']);

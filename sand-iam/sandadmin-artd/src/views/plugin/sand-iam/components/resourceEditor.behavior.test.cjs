@@ -22,8 +22,18 @@ function loadModule(filename) {
   return module.exports
 }
 const api = name => loadModule(path.resolve(__dirname, `../api/${name}.ts`))
-const { grantFields } = api('fields')
+const { applicationExperienceFields, grantFields } = api('fields')
 const source = fs.readFileSync(path.join(__dirname, 'ResourceEditor.vue'), 'utf8')
+assert.match(
+  source,
+  /<ElInput\s+v-if="field\.kind === 'text' \|\| field\.kind === 'number'"/,
+  'the generic input must render only for text and number fields'
+)
+assert.doesNotMatch(
+  source,
+  /<ElInput\s+v-else\s/,
+  'select, reference, status and specialized fields must not receive a second generic input'
+)
 const script = source.slice(source.indexOf('>') + 1, source.indexOf('</script>'))
 const ast = ts.createSourceFile('editor.ts', script, ts.ScriptTarget.Latest, true)
 const printer = ts.createPrinter()
@@ -31,7 +41,7 @@ const body = ast.statements.filter(node => !ts.isImportDeclaration(node))
   .map(node => printer.printNode(ts.EmitHint.Unspecified, node, ast)).join('\n')
 const code = ts.transpileModule(`${body}
 globalThis.editor = { form, buildPayload, resetForm, loadReferenceField, hydrateSelectedReference, searchReference, showAdvancedConfig,
- referenceOptions, referenceError, prepareEditor,
+ referenceOptions, referenceError, prepareEditor, visibleFields,
  activate: () => { editorSession = editorSessions.next(); return editorSession } };`, { compilerOptions: options }).outputText
 function harness(fields = grantFields, creating = false, row = { id: 8 }) {
   const requests = []
@@ -69,6 +79,13 @@ function fillRequired(editor) {
     if (field.required) editor.form[field.key] = field.kind === 'reference' ? 1 : 'sand-ai'
   }
 }
+const applicationContext = harness(applicationExperienceFields, true, null)
+assert.deepEqual(
+  Array.from(applicationContext.visibleFields.value.slice(0, 2), field => field.key),
+  ['application_id', 'organization_id'],
+  'application must be selected before the derived read-only organization'
+)
+applicationContext.stop()
 const edit = harness(grantFields, false, { id: 8, data_class: 'private', expire_time: '2027-01-01 00:00:00' })
 edit.resetForm()
 fillRequired(edit)

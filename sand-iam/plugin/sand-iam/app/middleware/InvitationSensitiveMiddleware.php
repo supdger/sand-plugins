@@ -7,7 +7,7 @@ namespace plugin\SandIam\app\middleware;
 use plugin\SandIam\app\service\AuditWriter;
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** Prevents invitation targets, tokens and chosen passwords from reaching generic error logs. */
 final class InvitationSensitiveMiddleware

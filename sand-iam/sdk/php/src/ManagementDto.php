@@ -28,6 +28,17 @@ final class SandIamRouteSyncOperation
     }
 }
 
+final class SandIamOpenApiImportOperation
+{
+    /** @param array<string,mixed> $input */
+    public function __construct(
+        public readonly array $input,
+        public readonly string $previewHash,
+        public readonly string $requestId,
+    ) {
+    }
+}
+
 final class SandIamCredentialIssueInput
 {
     public function __construct(

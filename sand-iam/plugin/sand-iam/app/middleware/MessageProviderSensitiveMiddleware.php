@@ -9,7 +9,7 @@ use plugin\SandIam\app\service\AuditWriter;
 use plugin\SandIam\app\service\RequestId;
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** Keeps provider config, test destinations and captcha tokens out of error reporting. */
 final class MessageProviderSensitiveMiddleware

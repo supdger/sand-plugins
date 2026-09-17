@@ -107,5 +107,48 @@ void main() {
         },
       );
     });
+
+    test('previews and applies an OpenAPI import with confirmation hash', () async {
+      final observed = <SandIamHttpRequest>[];
+      final previewHash = List<String>.filled(64, 'b').join();
+      final input = <String, Object?>{
+        'organization_code': 'sand',
+        'application_code': 'lawyer',
+        'environment_code': 'production',
+        'document': <String, Object?>{'openapi': '3.1.0', 'paths': <String, Object?>{}},
+        'mappings': <Object?>[],
+      };
+      final client = SandIamManagementClient(
+        baseUrl: 'https://iam.example.test',
+        administratorToken: () => 'admin-token',
+        transport: (SandIamHttpRequest request) async {
+          observed.add(request);
+          return SandIamHttpResponse(
+            status: 200,
+            body: observed.length == 1
+                ? '{"code":200,"data":{"preview_hash":"$previewHash"}}'
+                : '{"code":200,"data":{"application_id":2}}',
+          );
+        },
+      );
+
+      await client.openApiImportPreview(input, requestId: 'openapi-preview-1');
+      await client.openApiImportApply(SandIamOpenApiImportOperation(
+        input: input,
+        previewHash: previewHash,
+        requestId: 'openapi-apply-1',
+      ));
+
+      expect(observed[0].uri.path, SandIamApi.openApiImportPreview);
+      expect(observed[1].uri.path, SandIamApi.openApiImportApply);
+      expect(
+        jsonDecode(observed[1].body!) as Map<String, Object?>,
+        <String, Object?>{
+          'import': input,
+          'preview_hash': previewHash,
+          'apply': true,
+        },
+      );
+    });
   });
 }

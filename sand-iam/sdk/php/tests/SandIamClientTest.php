@@ -17,6 +17,7 @@ use Sand\Iam\Sdk\SandIamCredentialIssueInput;
 use Sand\Iam\Sdk\SandIamCredentialRevokeInput;
 use Sand\Iam\Sdk\SandIamManagementClient;
 use Sand\Iam\Sdk\SandIamOnboardingOperation;
+use Sand\Iam\Sdk\SandIamOpenApiImportOperation;
 use Sand\Iam\Sdk\SandIamProviderPresetDraftInput;
 use Sand\Iam\Sdk\SandIamRouteSyncOperation;
 
@@ -442,6 +443,8 @@ $management = new SandIamManagementClient(
             '/app/sand-iam/admin/credential/revoke' => ['id' => 7],
             '/app/sand-iam/admin/developer/route-manifest/preview' => ['preview_hash' => $routePreviewHash],
             '/app/sand-iam/admin/developer/route-manifest/apply' => ['route_sync' => ['created' => 1]],
+            '/app/sand-iam/admin/developer/openapi-import/preview' => ['preview_hash' => $routePreviewHash],
+            '/app/sand-iam/admin/developer/openapi-import/apply' => ['application_id' => 2],
             default => ['preview_hash' => 'preview-1', 'route_sync' => ['created' => 1]],
         };
         return ['status' => 200, 'body' => json_encode(['code' => 200, 'data' => $data], JSON_THROW_ON_ERROR)];
@@ -452,6 +455,10 @@ $preview = $management->routeSyncPreview($routeManifest, true, 'management-previ
 sdkAssert(($preview['preview_hash'] ?? '') === $routePreviewHash, 'management route preview response was not returned');
 $applied = $management->routeSyncApply(new SandIamRouteSyncOperation($routeManifest, $routePreviewHash, 'management-apply-1', true));
 sdkAssert(($applied['route_sync']['created'] ?? 0) === 1, 'route sync apply did not use the route-manifest apply endpoint');
+$openApiImport = ['organization_code' => 'sand', 'application_code' => 'app', 'environment_code' => 'production', 'document' => ['openapi' => '3.1.0', 'paths' => []], 'mappings' => []];
+$openApiPreview = $management->openApiImportPreview($openApiImport, 'openapi-preview-1');
+sdkAssert(($openApiPreview['preview_hash'] ?? '') === $routePreviewHash, 'OpenAPI import preview endpoint was not used');
+$management->openApiImportApply(new SandIamOpenApiImportOperation($openApiImport, $routePreviewHash, 'openapi-apply-1'));
 $issuedCredential = $management->credentialIssue(new SandIamCredentialIssueInput(7, 'production', null, 'credential-issue-1'));
 sdkAssert($issuedCredential->secretAvailable === true && $issuedCredential->replayed === false, 'one-time credential state is incorrect');
 $secret = $issuedCredential->revealSecretOnce();

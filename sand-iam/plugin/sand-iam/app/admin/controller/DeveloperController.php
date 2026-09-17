@@ -6,6 +6,7 @@ namespace plugin\SandIam\app\admin\controller;
 
 use plugin\SandIam\app\developer\ManagementApiCatalog;
 use plugin\SandIam\app\service\OnboardingService;
+use plugin\SandIam\app\service\OpenApiImportService;
 use plugin\SandIam\app\service\RequestId;
 use plugin\SandIam\app\service\RouteManifestService;
 use plugin\SandIam\app\admin\support\AdminOrganizationAccess;
@@ -73,6 +74,36 @@ final class DeveloperController extends BaseController
             ->withHeader('Pragma', 'no-cache');
     }
 
+    #[Permission('SandIAM OpenAPI 导入预检', 'sand_iam:onboarding:preview')]
+    public function openApiImportPreview(Request $request): Response
+    {
+        $input = $this->openApiImportInput($request, false);
+        $result = (new OpenApiImportService())->preview($input);
+        $this->onboardingAccess($request)->assertOrganization((int) $result['organization_id']);
+        $this->onboardingAccess($request)->assertApplication((int) $result['application_id']);
+        return $this->success($result);
+    }
+
+    #[Permission('SandIAM OpenAPI 导入确认', 'sand_iam:onboarding:apply')]
+    public function openApiImportApply(Request $request): Response
+    {
+        $input = $this->openApiImportInput($request, true);
+        $service = new OpenApiImportService();
+        $preview = $service->preview($input);
+        $this->onboardingAccess($request)->assertOrganization((int) $preview['organization_id']);
+        $this->onboardingAccess($request)->assertApplication((int) $preview['application_id']);
+        $admin = $request->header('check_admin', []);
+        $result = $service->apply(
+            $input,
+            trim((string) $request->post('preview_hash', '')),
+            is_array($admin) ? (int) ($admin['id'] ?? 0) : 0,
+            RequestId::fromRequestCached($request),
+        );
+        return $this->success($result, 'OpenAPI 接口目录已确认并应用')
+            ->withHeader('Cache-Control', 'no-store')
+            ->withHeader('Pragma', 'no-cache');
+    }
+
     /** @return array{0:array<string,mixed>,1:bool} */
     private function routeManifestInput(Request $request, bool $apply): array
     {
@@ -86,6 +117,20 @@ final class DeveloperController extends BaseController
             throw new \plugin\sandadmin\exception\ApiException('SAND_IAM_ROUTE_SYNC_APPLY_REQUIRED: 必须传 apply: true 和有效 preview_hash', 400);
         }
         return [$manifest, $disableMissing];
+    }
+
+    /** @return array<string,mixed> */
+    private function openApiImportInput(Request $request, bool $apply): array
+    {
+        $input = $request->post('import', null);
+        if (!is_array($input) || array_is_list($input)) {
+            throw new \plugin\sandadmin\exception\ApiException('SAND_IAM_OPENAPI_IMPORT_INVALID: import 必须是 JSON 对象', 400);
+        }
+        if ($apply && ($request->post('apply', false) !== true
+            || preg_match('/^[a-f0-9]{64}$/D', trim((string) $request->post('preview_hash', ''))) !== 1)) {
+            throw new \plugin\sandadmin\exception\ApiException('SAND_IAM_OPENAPI_IMPORT_APPLY_REQUIRED: 必须传 apply: true 和有效 preview_hash', 400);
+        }
+        return $input;
     }
 
     private function onboardingAccess(Request $request): AdminOrganizationAccess

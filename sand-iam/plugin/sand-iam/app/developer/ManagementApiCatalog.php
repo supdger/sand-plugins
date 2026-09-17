@@ -51,6 +51,8 @@ final class ManagementApiCatalog
         'POST /developer/onboarding/apply' => 'sand_iam:onboarding:apply',
         'POST /developer/route-manifest/preview' => 'sand_iam:onboarding:preview',
         'POST /developer/route-manifest/apply' => 'sand_iam:onboarding:apply',
+        'POST /developer/openapi-import/preview' => 'sand_iam:onboarding:preview',
+        'POST /developer/openapi-import/apply' => 'sand_iam:onboarding:apply',
         'POST /acceptance-fixture/cleanup' => 'sand_iam:acceptance_fixture:cleanup',
         'POST /acceptance-fixture/webhook-event' => 'sand_iam:acceptance_fixture:cleanup',
         'GET /acceptance-fixture/status' => 'sand_iam:acceptance_fixture:read',
@@ -469,6 +471,7 @@ final class ManagementApiCatalog
         $sensitive = [
             '/developer/onboarding/preview' => '预检开发者一份清单接入', '/developer/onboarding/apply' => '应用开发者一份清单接入',
             '/developer/route-manifest/preview' => '预检应用路由清单', '/developer/route-manifest/apply' => '确认并应用路由清单',
+            '/developer/openapi-import/preview' => '预检 OpenAPI 接口目录导入', '/developer/openapi-import/apply' => '确认并应用 OpenAPI 接口目录导入',
             '/federation/configure' => '配置联合身份源密钥', '/scim/token/revoke' => '撤销 SCIM 令牌',
             '/identity-provider-preset/draft' => '生成外部身份源配置草稿（不保存）',
             '/message-provider/configure' => '配置消息服务密钥', '/message-provider/test' => '测试消息服务',

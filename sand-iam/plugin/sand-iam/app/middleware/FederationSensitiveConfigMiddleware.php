@@ -7,7 +7,7 @@ namespace plugin\SandIam\app\middleware;
 use plugin\SandIam\app\service\AuditWriter;
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /**
  * Prevent nested federation credentials from escaping through the host's

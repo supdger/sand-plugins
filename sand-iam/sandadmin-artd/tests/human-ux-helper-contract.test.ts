@@ -122,6 +122,7 @@ import {
   describeOnboardingManifestError,
   describeSandIamObjectCodeError,
   parsePolicySimulation,
+  parseOpenApiImportPreview,
   parseRouteManifestPreview,
   sandIamActionImpact,
   sandIamReferenceLabel,
@@ -948,6 +949,24 @@ assert.equal(
   })?.canApply,
   false,
 );
+const openApiImportPreview = parseOpenApiImportPreview({
+  data: {
+    dry_run: true,
+    can_apply: true,
+    preview_hash: "b".repeat(64),
+    organization_id: 1,
+    application_id: 2,
+    changes: [
+      { object_type: "api_resource", object_key: "work-item.read@v1", operation: "create" },
+      { object_type: "api_route_binding", object_key: "GET /work-items/{id}", operation: "disable" },
+    ],
+  },
+});
+assert.equal(openApiImportPreview?.canApply, true);
+assert.deepEqual(openApiImportPreview?.changes, [
+  { objectType: "api_resource", objectKey: "work-item.read@v1", operation: "create" },
+  { objectType: "api_route_binding", objectKey: "GET /work-items/{id}", operation: "disable" },
+]);
 assert.equal(
   parsePolicySimulation({
     allowed: false,

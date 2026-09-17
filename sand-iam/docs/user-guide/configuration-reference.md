@@ -63,8 +63,8 @@ php -r 'echo bin2hex(random_bytes(32)), PHP_EOL;'
 | `SAND_IAM_MESSAGE_ENCRYPTION_KEY_VERSION` | `v1` | 当前消息配置密钥版本。 |
 | `SAND_IAM_MESSAGE_ENCRYPTION_KEYS` | 空 | 历史消息配置 JSON keyring。 |
 | `SAND_IAM_MESSAGE_DRIVERS` | 空 | driver code 到部署方 PHP 类的 JSON 映射；数据库内容不能选择任意类。 |
-| `SAND_IAM_AUTH_EMAIL_SENDER` | 空 | 兼容的邮件发送类；必须实现源码声明的静态 `send` 契约。 |
-| `SAND_IAM_AUTH_PHONE_SENDER` | 空 | 兼容的短信发送类；未配置时真实发送关闭失败。 |
+| `SAND_IAM_AUTH_EMAIL_SENDER` | 空 | 未挂载数据库消息供应商时使用的兼容邮件类；必须实现 `public static function send(string $destination, string $code, array $context): void`。`context` 含 `purpose` 与 `expire_time`；失败必须抛出异常。 |
+| `SAND_IAM_AUTH_PHONE_SENDER` | 空 | 未挂载数据库消息供应商时使用的兼容短信类；实现与邮件类相同的三参数静态 `send` 契约。未配置或发送异常时真实发送关闭失败。 |
 | `SAND_IAM_IDENTITY_LIFECYCLE_ENABLED` | `0` | 邀请、访客、导入与同步生命周期总开关。 |
 | `SAND_IAM_INVITATION_ENCRYPTION_KEY` | 空 | 邀请目标等可逆秘密，base64 32 字节。 |
 | `SAND_IAM_INVITATION_ENCRYPTION_KEY_VERSION` | `v1` | 当前邀请密钥版本。 |

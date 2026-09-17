@@ -37,6 +37,18 @@ final class SandIamRouteSyncOperation {
   final bool disableMissing;
 }
 
+final class SandIamOpenApiImportOperation {
+  const SandIamOpenApiImportOperation({
+    required this.input,
+    required this.previewHash,
+    required this.requestId,
+  });
+
+  final SandIamJson input;
+  final String previewHash;
+  final String requestId;
+}
+
 final class SandIamCredentialIssueInput {
   const SandIamCredentialIssueInput(
       {required this.workloadClientId,
@@ -212,6 +224,27 @@ final class SandIamManagementClient {
         body: <String, Object?>{
           'manifest': input.manifest,
           'disable_missing': input.disableMissing,
+          'preview_hash': input.previewHash,
+          'apply': true,
+        },
+        requestId: input.requestId,
+        write: true));
+  }
+
+  Future<SandIamJson> openApiImportPreview(SandIamJson input,
+          {String? requestId}) async =>
+      _object(await _request('POST', SandIamApi.openApiImportPreview,
+          body: <String, Object?>{'import': input}, requestId: requestId));
+
+  Future<SandIamJson> openApiImportApply(
+      SandIamOpenApiImportOperation input) async {
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(input.previewHash)) {
+      throw const SandIamException('SAND_IAM_SDK_INVALID_ARGUMENT',
+          'OpenAPI 导入必须提供有效预检哈希', 0);
+    }
+    return _object(await _request('POST', SandIamApi.openApiImportApply,
+        body: <String, Object?>{
+          'import': input.input,
           'preview_hash': input.previewHash,
           'apply': true,
         },

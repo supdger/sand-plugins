@@ -7,7 +7,7 @@ namespace plugin\SandIam\app\middleware;
 use plugin\SandIam\app\service\RequestId;
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** Public federation callbacks must fail closed without leaking protocol input. */
 final class FederationProtocolMiddleware

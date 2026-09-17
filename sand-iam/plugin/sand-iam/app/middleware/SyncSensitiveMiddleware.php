@@ -7,7 +7,7 @@ namespace plugin\SandIam\app\middleware;
 use plugin\SandIam\app\service\AuditWriter;
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** Keeps connector credentials, cursors and driver responses out of generic logs. */
 final class SyncSensitiveMiddleware

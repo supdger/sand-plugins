@@ -7,7 +7,7 @@ namespace plugin\SandIam\app\middleware;
 use plugin\SandIam\app\service\AuditWriter;
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** Keeps uploaded CSV rows and personal identifiers out of generic request/error logs. */
 final class IdentityImportSensitiveMiddleware

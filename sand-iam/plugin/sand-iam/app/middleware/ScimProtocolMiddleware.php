@@ -6,7 +6,7 @@ namespace plugin\SandIam\app\middleware;
 
 use plugin\sandadmin\exception\ApiException;
 use support\Request;
-use support\Response;
+use Webman\Http\Response;
 
 /** RFC 7644 response boundary; never forwards bearer tokens or request body. */
 final class ScimProtocolMiddleware

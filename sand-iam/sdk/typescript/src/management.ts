@@ -23,6 +23,12 @@ export interface RouteSyncApplyInput {
   disableMissing?: boolean | undefined
 }
 
+export interface OpenApiImportApplyInput {
+  input: SandIamManagementJson
+  previewHash: string
+  requestId: string
+}
+
 export interface CredentialIssueInput {
   workloadClientId: number
   name: string
@@ -141,6 +147,19 @@ export class SandIamManagementClient {
     return this.objectRequest('POST', '/developer/route-manifest/apply', {
       manifest: input.manifest,
       disable_missing: input.disableMissing ?? false,
+      preview_hash: input.previewHash,
+      apply: true
+    }, input.requestId, true)
+  }
+
+  openApiImportPreview(input: SandIamManagementJson, requestId?: string): Promise<SandIamManagementJson> {
+    return this.objectRequest('POST', '/developer/openapi-import/preview', { import: input }, requestId, false)
+  }
+
+  openApiImportApply(input: OpenApiImportApplyInput): Promise<SandIamManagementJson> {
+    if (!/^[a-f0-9]{64}$/.test(input.previewHash)) throw new SandIamManagementError('SAND_IAM_SDK_INVALID_ARGUMENT', 'OpenAPI 导入必须提供有效预检哈希', 0)
+    return this.objectRequest('POST', '/developer/openapi-import/apply', {
+      import: input.input,
       preview_hash: input.previewHash,
       apply: true
     }, input.requestId, true)

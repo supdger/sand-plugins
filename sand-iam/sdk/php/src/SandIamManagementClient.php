@@ -63,6 +63,26 @@ final class SandIamManagementClient
     }
 
     /** @param array<string,mixed> $input @return array<string,mixed> */
+    public function openApiImportPreview(array $input, string $requestId = ''): array
+    {
+        return $this->arrayData('POST', '/developer/openapi-import/preview', ['import' => $input], $requestId, false);
+    }
+
+    /** @return array<string,mixed> */
+    public function openApiImportApply(SandIamOpenApiImportOperation $operation): array
+    {
+        if (preg_match('/^[a-f0-9]{64}$/D', $operation->previewHash) !== 1) {
+            throw new SandIamException('SAND_IAM_SDK_INVALID_ARGUMENT', 'OpenAPI 导入必须提供有效预检哈希', 0);
+        }
+        $this->assertRequestId($operation->requestId);
+        return $this->arrayData('POST', '/developer/openapi-import/apply', [
+            'import' => $operation->input,
+            'preview_hash' => $operation->previewHash,
+            'apply' => true,
+        ], $operation->requestId, true);
+    }
+
+    /** @param array<string,mixed> $input @return array<string,mixed> */
     public function policySimulate(array $input, string $requestId = ''): array
     {
         return $this->arrayData('POST', '/policy/simulate', $input, $requestId, false);

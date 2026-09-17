@@ -70,12 +70,23 @@
     readonly row: SandIamResourceRow
   }
 
-  const visibleFields = computed(() =>
-    props.fields.filter((field) => {
+  const visibleFields = computed(() => {
+    const fields = props.fields.filter((field) => {
       if (props.creating) return field.updateOnly !== true
       return field.createOnly !== true
     })
-  )
+    const organizationIndex = fields.findIndex(
+      (field) => field.applicationGrantContext === 'organization'
+    )
+    const applicationIndex = fields.findIndex(
+      (field) => field.applicationGrantContext === 'application'
+    )
+    if (organizationIndex >= 0 && applicationIndex > organizationIndex) {
+      const [application] = fields.splice(applicationIndex, 1)
+      fields.splice(organizationIndex, 0, application)
+    }
+    return fields
+  })
   const usesApplicationGrantContext = computed(() =>
     visibleFields.value.some((field) => field.applicationGrantContext === 'application')
   )
@@ -910,7 +921,7 @@
           这是高级设置，基础流程可以留空。复杂规则请由熟悉接入约束的管理员填写。
         </p>
         <ElInput
-          v-else
+          v-if="field.kind === 'text' || field.kind === 'number'"
           :model-value="textFieldValue(field.key)"
           @update:model-value="(value: unknown) => setTextFieldValue(field.key, value)"
           :placeholder="
