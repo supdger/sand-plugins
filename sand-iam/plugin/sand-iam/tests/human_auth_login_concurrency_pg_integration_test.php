@@ -170,7 +170,7 @@ try {
     }
     $auth = IdentityAuth::where('application_id', (int) $application->id)->where('identity_id', $identityId)->find();
     loginRaceAssert($auth !== null && (int) $auth->failed_login_count === 1, 'concurrent duplicate login incremented failure count more than once');
-    loginRaceAssert(AuthRateLimit::where('application_id', (int) $application->id)->where('action', 'login')->sum('attempt_count') === 1, 'concurrent duplicate login consumed rate limit more than once');
+    loginRaceAssert((int) AuthRateLimit::where('application_id', (int) $application->id)->where('action', 'login')->sum('attempt_count') === 1, 'concurrent duplicate login consumed rate limit more than once');
     loginRaceAssert(AuditLog::where('request_id', $requestId)->where('action', 'identity.login')->count() === 1, 'concurrent duplicate login wrote more than one failure audit');
     loginRaceAssert(SecurityOperation::where('request_id', $requestId)->where('operation', 'identity.login.rate_limit')->count() === 1, 'concurrent duplicate login wrote more than one rate operation');
     loginRaceAssert(SecurityOperation::where('request_id', $requestId)->where('operation', 'identity.login.failure')->count() === 1, 'concurrent duplicate login wrote more than one failure operation');
