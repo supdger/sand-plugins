@@ -35,7 +35,16 @@ final class IdentityUserTypeController extends BaseController
         Db::startTrans();
         try {
             $binding = IdentityUserType::where('identity_id', $identity->id)->where('user_type_id', $userType->id)->find();
-            if ($binding) { $binding->save(['status' => 1]); } else { $binding = IdentityUserType::create(['identity_id' => $identity->id, 'user_type_id' => $userType->id, 'status' => 1]); }
+            if ($binding) {
+                $binding->save(['application_id' => (int) $identity->application_id, 'status' => 1]);
+            } else {
+                $binding = IdentityUserType::create([
+                    'identity_id' => $identity->id,
+                    'user_type_id' => $userType->id,
+                    'application_id' => (int) $identity->application_id,
+                    'status' => 1,
+                ]);
+            }
             $this->audit('identity_user_type.grant', (int) $binding->id, $identity, $request);
             Db::commit();
         } catch (\Throwable $exception) {

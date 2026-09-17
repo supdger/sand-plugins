@@ -59,7 +59,7 @@ try {
     if ($groupRole === null) { $groupRole = IdentityGroupRole::create(['identity_group_id' => $groupId, 'role_id' => $roleId, 'application_id' => $applicationId, 'status' => 1]); $groupRoleCreated = true; }
     else { $groupRoleOriginal = (int) $groupRole->status; $groupRole->save(['status' => 1]); }
     $directRole = IdentityRole::where('identity_id', $identityId)->where('role_id', $roleId)->find();
-    if ($directRole === null) { $directRole = IdentityRole::create(['identity_id' => $identityId, 'role_id' => $roleId, 'status' => 2]); $directRoleCreated = true; }
+    if ($directRole === null) { $directRole = IdentityRole::create(['identity_id' => $identityId, 'role_id' => $roleId, 'application_id' => $applicationId, 'status' => 2]); $directRoleCreated = true; }
     else { $directRoleOriginal = (int) $directRole->status; $directRole->save(['status' => 2]); }
     $group->save(['status' => 1]); $role->save(['status' => 1]);
 

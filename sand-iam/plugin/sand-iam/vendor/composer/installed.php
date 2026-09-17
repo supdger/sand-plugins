@@ -1,8 +1,8 @@
 <?php return array(
     'root' => array(
         'name' => 'sand/sand-iam',
-        'pretty_version' => '0.7.2',
-        'version' => '0.7.2.0',
+        'pretty_version' => '0.7.3',
+        'version' => '0.7.3.0',
         'reference' => null,
         'type' => 'library',
         'install_path' => __DIR__ . '/../../',
@@ -29,8 +29,8 @@
             'dev_requirement' => false,
         ),
         'sand/sand-iam' => array(
-            'pretty_version' => '0.7.2',
-            'version' => '0.7.2.0',
+            'pretty_version' => '0.7.3',
+            'version' => '0.7.3.0',
             'reference' => null,
             'type' => 'library',
             'install_path' => __DIR__ . '/../../',

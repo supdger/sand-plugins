@@ -398,9 +398,18 @@ $issueRequest = $workloadRequests[0];
 $issueBody = json_decode((string) $issueRequest['body'], true, 32, JSON_THROW_ON_ERROR);
 sdkAssert(($issueRequest['headers']['Authorization'] ?? '') === 'Bearer siam_wc_secret' && ($issueRequest['headers']['Cache-Control'] ?? '') === 'no-store', 'workload credential or no-store header is missing');
 sdkAssert(!str_contains((string) $issueRequest['body'], 'siam_wc_secret') && !isset($issueBody['organization_id'], $issueBody['application_id'], $issueBody['environment_id'], $issueBody['workload_client_id']), 'workload request leaked credential or caller-controlled scope IDs');
+$action96 = str_repeat('a', 96);
+$workloadClient->issueContext('siam_wc_secret', 'sand-ai', 'sand-ai', [$action96], null, 'workload-action-96');
+sdkAssert(json_decode((string) $workloadRequests[1]['body'], true, 32, JSON_THROW_ON_ERROR)['actions'] === [$action96], '96-character workload action was not accepted');
+try {
+    $workloadClient->issueContext('siam_wc_secret', 'sand-ai', 'sand-ai', [str_repeat('a', 97)], null, 'workload-action-97');
+    throw new RuntimeException('97-character workload action did not throw');
+} catch (SandIamException $exception) {
+    sdkAssert($exception->errorCode === 'SAND_IAM_SDK_INVALID_ARGUMENT', '97-character workload action used the wrong error code');
+}
 $claims = $workloadClient->verifyContext('signed-context', 'sand-ai', 'sand-ai', ['inference.chat', 'inference.embed'], '127.0.0.1', 'workload-verify-1');
-sdkAssert(($claims['context_id'] ?? '') === 'ctx-1' && count($workloadRequests) === 3, 'workload verify did not verify every action');
-foreach (array_slice($workloadRequests, 1) as $verifyRequest) {
+sdkAssert(($claims['context_id'] ?? '') === 'ctx-1' && count($workloadRequests) === 4, 'workload verify did not verify every action');
+foreach (array_slice($workloadRequests, 2) as $verifyRequest) {
     $verifyBody = json_decode((string) $verifyRequest['body'], true, 32, JSON_THROW_ON_ERROR);
     sdkAssert(!isset($verifyRequest['headers']['Authorization']) && !isset($verifyBody['source_ip']), 'verify must not send context as Bearer or caller-supplied source IP');
 }

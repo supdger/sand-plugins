@@ -140,7 +140,7 @@
 | 根/插件迁移 | 当前 `001–039` 共有 39 个修订号、40 个迁移文件；根/插件同名迁移逐个 SHA-256 一致，两个 `006` 为不同内容的独立迁移；021 固定为已发布 0.6.0 哈希，034 仅补三项用户组角色权限且不得自动授予既有角色，035 的文件名/修订号/hash/包版本账本必须在结构指纹通过后才收养，036–039 的规范化自校验值必须精确匹配，037 增加草稿/修订表且新权限不得自动授予角色，038 只增加认证限流过期清理索引，039 只解除服务授权数据分级列的非空约束并保留类型、默认值、数据和检查约束 |
 | lifecycle | 根与插件 install/update/uninstall 实际展开结果一致；包含表、约束、索引、菜单和权限；卸载逆序清理 |
 | 元数据 | 根/插件 `info.ini` 版本一致，README 状态不超过证据 |
-| 包内容 | PHP 依赖、管理端载荷、运行面静态资源、SDK、文档和迁移均按[当前包契约](sand-iam-package-integrity.md)进入发布包，不含 node_modules、测试密钥和本机路径。0.7.2 正常包排除根/插件的历史 `recovery/failed-upgrade.v2.json`，不得为满足历史条款重新加入或改绑当前版本。仅对实际声明该描述器、绑定对应历史版本的受控恢复包，核验根/插件字节一致、递归 canonical、内联受限 profile、descriptor-excluded 载荷摘要及根 `update.sql` 摘要；历史恢复要求仍须在其适用场景验收 |
+| 包内容 | PHP 依赖、管理端载荷、运行面静态资源、SDK、文档和迁移均按[当前包契约](sand-iam-package-integrity.md)进入发布包，不含 node_modules、测试密钥和本机路径。0.7.3 正常包排除根/插件的历史 `recovery/failed-upgrade.v2.json`，不得为满足历史条款重新加入或改绑当前版本。仅对实际声明该描述器、绑定对应历史版本的受控恢复包，核验根/插件字节一致、递归 canonical、内联受限 profile、descriptor-excluded 载荷摘要及根 `update.sql` 摘要；历史恢复要求仍须在其适用场景验收 |
 | PostgreSQL | 无 `AUTO_INCREMENT`、`UNSIGNED`、`ENGINE=`、反引号或新增 `sa_*` 业务表 |
 
 ### 3. 既有受控 PostgreSQL 环境中的生命周期

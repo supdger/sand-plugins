@@ -340,9 +340,19 @@ assert(issued.context === 'signed-context', 'workload context was not returned')
 const issueBody = JSON.parse(workloadRequests[0].init.body)
 assert(workloadRequests[0].init.headers.Authorization === 'Bearer siam_wc_secret' && workloadRequests[0].init.headers['Cache-Control'] === 'no-store', 'credential must be Bearer with no-store')
 assert(!JSON.stringify(issueBody).includes('siam_wc_secret') && issueBody.organization_id === undefined && issueBody.application_id === undefined, 'workload body leaked secret or scope identifiers')
+const action96 = 'a'.repeat(96)
+await workloadClient.issueContext({ credential: 'siam_wc_secret', serviceCode: 'sand-ai', audience: 'sand-ai', actions: [action96], requestId: 'workload-action-96' })
+assert(JSON.parse(workloadRequests[1].init.body).actions[0] === action96, '96-character workload action was not accepted')
+let action97Rejected = false
+try {
+  await workloadClient.issueContext({ credential: 'siam_wc_secret', serviceCode: 'sand-ai', audience: 'sand-ai', actions: ['a'.repeat(97)], requestId: 'workload-action-97' })
+} catch (error) {
+  action97Rejected = error instanceof SandIamError && error.code === 'SAND_IAM_SDK_INVALID_ARGUMENT'
+}
+assert(action97Rejected, '97-character workload action was not rejected with the stable SDK error')
 const claims = await workloadClient.verifyContext({ context: 'signed-context', serviceCode: 'sand-ai', audience: 'sand-ai', actions: ['inference.chat', 'inference.embed'], sourceIp: '127.0.0.1', requestId: 'workload-verify-1' })
-assert(claims.context_id === 'ctx-1' && workloadRequests.length === 3, 'verify did not check every requested action')
-for (const request of workloadRequests.slice(1)) {
+assert(claims.context_id === 'ctx-1' && workloadRequests.length === 4, 'verify did not check every requested action')
+for (const request of workloadRequests.slice(2)) {
   const body = JSON.parse(request.init.body)
   assert(request.init.headers.Authorization === undefined && body.source_ip === undefined, 'verify must not send caller source IP or context as Bearer')
 }

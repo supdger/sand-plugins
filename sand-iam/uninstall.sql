@@ -10,6 +10,7 @@ ALTER TABLE IF EXISTS sand_iam_auth_session DROP CONSTRAINT IF EXISTS fk_sand_ia
 -- back to sand_iam_policy_version. Remove that reverse dependency before the
 -- snapshot table so uninstall remains explicit and never needs CASCADE.
 ALTER TABLE IF EXISTS sand_iam_policy DROP CONSTRAINT IF EXISTS fk_sand_iam_policy_published_version;
+ALTER TABLE IF EXISTS sand_iam_policy DROP CONSTRAINT IF EXISTS fk_sand_iam_policy_published_version_owner;
 
 DROP TABLE IF EXISTS sand_iam_initialization_draft_revision;
 DROP TABLE IF EXISTS sand_iam_initialization_draft;

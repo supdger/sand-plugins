@@ -18,7 +18,7 @@
     "lock_sha256": "cb6457572b7e68697ae82b2a282dbf5e67cb4c0626b92696163123579eed9b88",
     "environment": {
       "COMPOSER_DISABLE_NETWORK": "1",
-      "COMPOSER_ROOT_VERSION": "0.7.2"
+      "COMPOSER_ROOT_VERSION": "0.7.3"
     },
     "arguments": [
       "install",
@@ -50,7 +50,7 @@
   "generated_payloads": {
     "plugin/sand-iam/vendor": {
       "file_count": 58,
-      "tree_sha256": "4557092760a293ac8ff43419b853e90e2a4900f7b04405809e9ac8aae465ba11"
+      "tree_sha256": "e35c67c2bff009a454b03d96bd182ec7fdec01948740b2d5208c44af5ffa934a"
     },
     "sdk/typescript/dist": {
       "file_count": 6,

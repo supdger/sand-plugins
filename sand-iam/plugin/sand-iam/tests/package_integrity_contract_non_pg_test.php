@@ -122,8 +122,8 @@ $checks = [
         $source = file_get_contents($tool);
         return is_string($source)
             && str_contains($source, 'composer declares complete platform and locked SAML runtime dependency')
-            && str_contains($source, "'COMPOSER_ROOT_VERSION' => '0.7.2'")
-            && str_contains($source, "\"'pretty_version' => '0.7.2'\"")
+            && str_contains($source, "'COMPOSER_ROOT_VERSION' => '0.7.3'")
+            && str_contains($source, "\"'pretty_version' => '0.7.3'\"")
             && str_contains($source, 'SAML dependency resolves through composer autoload')
             && str_contains($source, 'protocol adapter guards and references the declared SAML runtime');
     },

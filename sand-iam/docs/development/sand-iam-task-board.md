@@ -6,12 +6,15 @@
 
 ## 2026-09-12 完整开源成品 Goal
 
-### 当前状态（2026-09-16）
+### 当前状态（2026-09-17）
 
-- 严格计分：需求 **8/9**、模块 **20/20**、正式 FLOW **0/7**、本地业务闭环 **4/4**、可上线部署 **1/8**，合计 **33/48（68.8%）**；发布门槛 **2/10**。
-- 当前源码功能范围为 **20/20**；L01–L04 本地真实业务闭环均已完成。最近一次 L01+C02+C05+C06+C07 实跑为 **113/113**，临时用户、角色、JWT、业务表、密钥、配置、服务和夹具均已清理，SandAdmin API 后置残留为 **0**。
-- 完整 non-PG **144/144**，PHP 与 TypeScript SDK 回归通过，Dart SDK **63/63**，发布卫生 **16/16**。使用可用 Git 的 package integrity 为 **25/26**，唯一失败是当前 `sand-iam/` 尚未形成新的 clean commit。
-- 当前直接依赖是：授权提交 `sand-iam/**`，从该 clean revision 重建并签名候选，再将七链、四角色、协议互操作、备份恢复、并发安全、回滚、独立开发者交付、Casdoor 对照和 24 小时稳定性证据绑定到同一最终候选。未完成前不得称为可发布、已部署或线上验证。
+- 当前 0.7.3 review candidate 绑定的严格计分：需求 **8/9**、模块 **20/20**、正式 FLOW **0/7**、本地业务闭环 **0/4**、可上线部署 **1/8**，合计 **29/48（60.4%）**；发布门槛 **1/10**。D03 与安装/升级门槛已由当前候选的正式生命周期通过；D01 仍等待本批源码提交后从 clean Git 来源重建。0.7.2 v25 已取得的 L01–L04、D01 和其余运行证据只保留为可复用历史基线，不能自动继承。
+- 当前源码功能范围为 **20/20**；0.7.2 v25 的 L01–L04 本地真实业务闭环均已完成。最近一次 L01+C02+C05+C06+C07 实跑为 **113/113**，临时用户、角色、JWT、业务表、密钥、配置、服务和夹具均已清理，SandAdmin API 后置残留为 **0**。这些结果等待 0.7.3 当前候选重绑，不代表功能回退或需要重新实现。
+- v25 unsigned 候选已绑定 clean commit `090992b74e79a7bf8478ee6ee2f9bc5f36cf6c4b`、tree `65492ea8dd66046451b78f9e5da475091b3bc70d` 和 ZIP `4e0ffc8c…63827`；独立 Git blob 重建字节一致，package integrity **26/26**、发布卫生 **16/16**，Astra/high 独立来源复核 PASS。D01 据此通过。
+- 当前 demo 最终安装的是 review candidate v14，registry 为 `0.7.3/state=1/package_sha256=e7c93250…db801`；数据库为 86 张表、迁移账本 **42/max41**，`policy.action` 为 96 字符、两张关系表含 `application_id`、十个同应用/同策略约束存在。前后端运行载荷与 v14 snapshot 无差异，Webman `/core/captcha` 返回 HTTP/业务码 **200/200**；48 张非 SandIAM 表的名称指纹在升级、同版本拒绝、卸载、新装、失败恢复及最终重装前后保持 `9f990d1c…b4ec6`。
+- 0.7.3 正式生命周期已完成：0.7.2→0.7.3 升级、同版本安全拒绝、卸载、fresh install 均通过。冻结的故障包 0.7.2-v24 重新触发确定性迁移失败后，SandPackage 官方 `inspect-fresh` 判定 `sql_commit_unknown`；绑定候选身份且逐表证明归属的 86 表计划经 `manual-cleanup-fresh` 返回 `phase=cleaned/sql_executed=true`，随后同一 v14 再次 fresh install 成功。041 事务回滚演练和授权范围 PostgreSQL 集成均通过，最终安装后又复跑通过，夹具全部回滚。证据见 [`../../../.artifacts/sand-iam-0.7.3-v14-20260917T053614Z/host-lifecycle/0.7.3-lifecycle-evidence.md`](../../../.artifacts/sand-iam-0.7.3-v14-20260917T053614Z/host-lifecycle/0.7.3-lifecycle-evidence.md)。
+- schema 审计已按[数据库审计跟进](sand-iam-schema-audit-follow-up.md)分流：当前 0.7.3 已实现并实证动作长度、同应用授权、策略版本归属和审计物理清除四项确定缺口；删表、同步运行表合并、SCIM/本地组映射和全表数据字典进入后续版本评审。PHP、TypeScript、Dart SDK 均覆盖动作代码 96 字符放行、97 字符拒绝，真实非 AI 业务示例审计列对齐 `varchar(96)`，跨载荷静态契约 **9/9**；完整非数据库 PHP 回归 **171/171**、PHP lint **672/672**、TypeScript/PHP/Dart SDK 回归通过、release hygiene **16/16**、SBOM **80/current**。Astra/high 对主体修复及 SDK 增量的独立源码与测试设计复核均为 **ACCEPT（P0/P1/P2=0）**。dirty review candidate v14 的两次归档字节一致，ZIP SHA-256 为 `e7c932508fba63cec3a0e3776bed9de102f37780ed72ed7d830f1b7315adb801`；package integrity **25/26**，唯一失败仍是提交前的 clean/tracked 来源，因此不是正式发布候选。
+- 当前直接依赖是：提交已通过生命周期的 0.7.3 源码，从 clean Git 来源重建并把演示宿主切换到该 clean 候选；随后把七链、四角色、协议互操作、备份恢复、并发安全、回滚、独立开发者交付、Casdoor 对照和 24 小时稳定性证据绑定到同一最终候选。D02 还需正式包外签名、独立可信公钥/发布渠道、可信验签和未参与开发者八步实跑。未完成前不得称为可发布、已部署或线上验证。
 
 ### 签名链初审 checkpoint（2026-09-12）
 

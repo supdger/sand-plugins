@@ -61,35 +61,74 @@ final class SecurityOperationsService
         return ['archived' => $archived];
     }
 
-    /** @return array{purged:int} */
+    /** @return array{purged:int,physical_rows:int} */
     public function purgeBatch(int $organizationId, string $confirmation, int $limit = 200, string $requestId = ''): array
     {
-        $policy = AuditRetentionPolicy::where('organization_id', $organizationId)->where('status', 1)->find();
-        if ($policy === null || !(bool) $policy->purge_enabled || (int) config('plugin.sand-iam.app.audit_purge_enabled', 0) !== 1) {
-            throw new ApiException('SAND_IAM_AUDIT_PURGE_DISABLED: 审计清除未同时获得主体策略与部署开关授权', 403);
-        }
-        $cutoff = date('Y-m-d', time() - (int) $policy->retention_days * 86400);
-        $expected = hash('sha256', "sand-iam-audit-purge\0{$organizationId}\0{$cutoff}");
-        if (!hash_equals($expected, $confirmation)) throw new ApiException('SAND_IAM_AUDIT_PURGE_CONFIRMATION_INVALID', 403);
         $limit = min(max($limit, 1), 1000);
         Db::startTrans();
         try {
-            $archives = AuditArchive::where('organization_id', $organizationId)
-                ->where('original_create_time', '<', $cutoff . ' 00:00:00')
-                ->order('id')->limit($limit)->lock('FOR UPDATE SKIP LOCKED')->select();
-            $ids = [];
-            foreach ($archives as $archive) $ids[] = (int) $archive->original_audit_id;
-            if ($ids !== []) {
-                AuditLog::where('organization_id', $organizationId)->whereIn('id', $ids)->delete();
-                AuditArchive::whereIn('original_audit_id', $ids)->delete();
+            $policy = AuditRetentionPolicy::where('organization_id', $organizationId)
+                ->where('status', 1)
+                ->lock(true)
+                ->find();
+            if ($policy === null || !(bool) $policy->purge_enabled || (int) config('plugin.sand-iam.app.audit_purge_enabled', 0) !== 1) {
+                throw new ApiException('SAND_IAM_AUDIT_PURGE_DISABLED: 审计清除未同时获得主体策略与部署开关授权', 403);
             }
-            (new AuditWriter())->write('system', 'audit_retention_worker', $organizationId, null, 'audit.retention_purge', 'audit_archive', null, 'succeeded', $requestId !== '' ? substr($requestId, 0, 96) : 'purge_' . bin2hex(random_bytes(12)), ['purged_count' => count($ids), 'retention_cutoff' => $cutoff]);
+            $cutoff = date('Y-m-d', time() - (int) $policy->retention_days * 86400);
+            $expected = hash('sha256', "sand-iam-audit-purge\0{$organizationId}\0{$cutoff}");
+            if (!hash_equals($expected, $confirmation)) throw new ApiException('SAND_IAM_AUDIT_PURGE_CONFIRMATION_INVALID', 403);
+
+            // Use the raw table so historical rows that were accidentally
+            // soft-deleted remain eligible for the authorized physical purge.
+            $archives = Db::table('sand_iam_audit_archive')
+                ->where('organization_id', $organizationId)
+                ->where('original_create_time', '<', $cutoff . ' 00:00:00')
+                ->field('id, original_audit_id')
+                ->order('id')
+                ->limit($limit)
+                ->lock('FOR UPDATE SKIP LOCKED')
+                ->select()
+                ->toArray();
+            $archiveIds = [];
+            $auditIds = [];
+            foreach ($archives as $archive) {
+                $archiveIds[] = (int) $archive['id'];
+                $auditIds[] = (int) $archive['original_audit_id'];
+            }
+
+            $hotRows = $auditIds === [] ? [] : Db::table('sand_iam_audit_log')
+                ->whereIn('id', $auditIds)
+                ->field('id, organization_id, create_time')
+                ->lock('FOR UPDATE')
+                ->select()
+                ->toArray();
+            foreach ($hotRows as $hotRow) {
+                if ((int) $hotRow['organization_id'] !== $organizationId
+                    || (string) $hotRow['create_time'] >= $cutoff . ' 00:00:00') {
+                    throw new ApiException('SAND_IAM_AUDIT_PURGE_SCOPE_CONFLICT: 归档与热审计的主体或保留期不一致', 409);
+                }
+            }
+
+            $hotDeleted = $auditIds === [] ? 0 : Db::table('sand_iam_audit_log')
+                ->where('organization_id', $organizationId)
+                ->where('create_time', '<', $cutoff . ' 00:00:00')
+                ->whereIn('id', $auditIds)
+                ->delete();
+            $archiveDeleted = $archiveIds === [] ? 0 : Db::table('sand_iam_audit_archive')
+                ->where('organization_id', $organizationId)
+                ->whereIn('id', $archiveIds)
+                ->delete();
+            if ($archiveDeleted !== count($archiveIds)) {
+                throw new ApiException('SAND_IAM_AUDIT_PURGE_CONCURRENT_CHANGE: 归档清除范围在事务内发生变化', 409);
+            }
+            $physicalRows = $hotDeleted + $archiveDeleted;
+            (new AuditWriter())->write('system', 'audit_retention_worker', $organizationId, null, 'audit.retention_purge', 'audit_archive', null, 'succeeded', $requestId !== '' ? substr($requestId, 0, 96) : 'purge_' . bin2hex(random_bytes(12)), ['purged_count' => count($archiveIds), 'physical_rows' => $physicalRows, 'retention_cutoff' => $cutoff]);
             Db::commit();
         } catch (\Throwable $exception) {
             Db::rollback();
             throw $exception;
         }
-        return ['purged' => count($ids)];
+        return ['purged' => count($archiveIds), 'physical_rows' => $physicalRows];
     }
 
     public function observeAudit(AuditLog $audit): void

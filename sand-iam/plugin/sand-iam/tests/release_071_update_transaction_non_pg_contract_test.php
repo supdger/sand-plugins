@@ -87,36 +87,36 @@ $executorInstance = new PostgresLifecycleSqlExecutor();
 $success = new Release071RecordingPdo();
 $executorInstance->executeFile($update, $success);
 release071Assert(
-    '0.7.1 to 0.7.2 update executes through the real executor with one explicit transaction and no nesting',
+    '0.7.2 to 0.7.3 update executes through the real executor with one explicit transaction and no nesting',
     release071TransactionCommands($success->executed) === ['BEGIN', 'COMMIT']
 );
 
 $preflightFailure = new Release071RecordingPdo(
-    static fn (string $statement): bool => str_contains($statement, 'requires exact 001-038 ledger identities before executing 039')
+    static fn (string $statement): bool => str_contains($statement, 'requires exact 001-040 ledger identities before executing 041')
 );
 try {
     $executorInstance->executeFile($update, $preflightFailure);
     throw new RuntimeException('preflight failure was accepted');
 } catch (RuntimeException) {
     release071Assert(
-        'preflight failure rolls back before any 039 body statement executes',
+        'preflight failure rolls back before any 041 body statement executes',
         release071TransactionCommands($preflightFailure->executed) === ['BEGIN', 'ROLLBACK']
-        && !release071Contains($preflightFailure->executed, static fn (string $statement): bool => str_contains($statement, 'ALTER COLUMN data_class'))
+        && !release071Contains($preflightFailure->executed, static fn (string $statement): bool => str_contains($statement, 'ALTER COLUMN action TYPE varchar(96)'))
     );
 }
 
 $migrationFailure = new Release071RecordingPdo(
-    static fn (string $statement): bool => str_contains($statement, 'ALTER COLUMN data_class')
+    static fn (string $statement): bool => str_contains($statement, 'ALTER COLUMN action TYPE varchar(96)')
 );
 try {
     $executorInstance->executeFile($update, $migrationFailure);
-    throw new RuntimeException('039 failure was accepted');
+    throw new RuntimeException('041 failure was accepted');
 } catch (RuntimeException) {
     release071Assert(
-        '039 body failure rolls back the shared preflight and migration transaction',
+        '041 body failure rolls back the shared preflight and migration transaction',
         release071TransactionCommands($migrationFailure->executed) === ['BEGIN', 'ROLLBACK']
-        && release071Contains($migrationFailure->executed, static fn (string $statement): bool => str_contains($statement, 'requires exact 001-038 ledger identities before executing 039'))
+        && release071Contains($migrationFailure->executed, static fn (string $statement): bool => str_contains($statement, 'requires exact 001-040 ledger identities before executing 041'))
     );
 }
 
-echo "SandIAM 0.7.1 to 0.7.2 update transaction non-PG contract passed\n";
+echo "SandIAM 0.7.2 to 0.7.3 update transaction non-PG contract passed\n";

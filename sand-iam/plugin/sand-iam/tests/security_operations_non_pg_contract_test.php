@@ -23,6 +23,10 @@ t12SecurityRequire($plugin . '/app/service/SecurityOperationsService.php', [
     "purge_enabled",
     "audit_purge_enabled",
     "hash_equals(\$expected, \$confirmation)",
+    "Db::table('sand_iam_audit_archive')",
+    "field('id, original_audit_id')",
+    "SAND_IAM_AUDIT_PURGE_SCOPE_CONFLICT",
+    "'physical_rows' => \$physicalRows",
     "audit.retention_purge",
     "security.alert.raised",
     "alert_failure_threshold",
@@ -30,6 +34,11 @@ t12SecurityRequire($plugin . '/app/service/SecurityOperationsService.php', [
     "SAND_IAM_SECURITY_ALERT_KEY_INVALID",
     "'23505'",
 ]);
+$securityOperations = (string) file_get_contents($plugin . '/app/service/SecurityOperationsService.php');
+if (str_contains($securityOperations, "AuditArchive::whereIn('original_audit_id', \$ids)->delete()")) {
+    fwrite(STDERR, "purge still uses AuditArchive soft delete\n");
+    exit(1);
+}
 t12SecurityRequire($plugin . '/app/service/AuditWriter.php', ['observeAudit($audit)', 'Never replace the audited', 'security alert projection failed']);
 t12SecurityRequire($plugin . '/app/model/SecurityAlert.php', ["protected \$hidden = ['fingerprint']"]);
 t12SecurityRequire($plugin . '/app/model/SecurityOperation.php', [

@@ -104,7 +104,7 @@ if (count($openApi['paths'] ?? []) < 100) t12DeveloperFail('management OpenAPI i
 $root = dirname($plugin, 2);
 $rootInfo = parse_ini_file($root . '/info.ini');
 $pluginInfo = parse_ini_file($plugin . '/info.ini');
-if (($rootInfo['version'] ?? null) !== '0.7.2' || ($pluginInfo['version'] ?? null) !== '0.7.2') t12DeveloperFail('plugin package version is not consistently 0.7.2');
+if (($rootInfo['version'] ?? null) !== '0.7.3' || ($pluginInfo['version'] ?? null) !== '0.7.3') t12DeveloperFail('plugin package version is not consistently 0.7.3');
 if (($openApi['info']['version'] ?? null) !== '0.13.0-candidate') t12DeveloperFail('management OpenAPI contract version drifted');
 $managementContract = file_get_contents($root . '/docs/development/sand-iam-management-api-v0.1.md');
 $packageContract = file_get_contents($root . '/docs/development/sand-iam-package-integrity.md');

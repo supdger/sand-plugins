@@ -357,6 +357,27 @@ void main() {
       expect(requests.first.headers['Cache-Control'], 'no-store');
       expect(issueBody.containsKey('organization_id'), isFalse);
       expect(requests.first.body!.contains('siam_wc_secret'), isFalse);
+      final action96 = List<String>.filled(96, 'a').join();
+      await client.issueContext(
+          credential: 'siam_wc_secret',
+          serviceCode: 'sand-ai',
+          audience: 'sand-ai',
+          actions: <String>[action96],
+          requestId: 'workload-action-96');
+      expect(
+          (jsonDecode(requests[1].body!) as Map<String, Object?>)['actions'],
+          <String>[action96]);
+      await expectLater(
+          client.issueContext(
+              credential: 'siam_wc_secret',
+              serviceCode: 'sand-ai',
+              audience: 'sand-ai',
+              actions: <String>[List<String>.filled(97, 'a').join()],
+              requestId: 'workload-action-97'),
+          throwsA(isA<SandIamException>().having(
+              (SandIamException error) => error.code,
+              'code',
+              'SAND_IAM_SDK_INVALID_ARGUMENT')));
       final claims = await client.verifyContext(
           context: 'signed-context',
           serviceCode: 'sand-ai',
@@ -365,8 +386,8 @@ void main() {
           sourceIp: '127.0.0.1',
           requestId: 'workload-verify-1');
       expect(claims.contextId, 'ctx-1');
-      expect(requests, hasLength(3));
-      for (final request in requests.skip(1)) {
+      expect(requests, hasLength(4));
+      for (final request in requests.skip(2)) {
         final body = jsonDecode(request.body!) as Map<String, Object?>;
         expect(request.headers.containsKey('Authorization'), isFalse);
         expect(body.containsKey('source_ip'), isFalse);

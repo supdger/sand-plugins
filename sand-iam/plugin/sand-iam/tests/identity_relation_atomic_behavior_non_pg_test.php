@@ -227,7 +227,7 @@ namespace {
         $auditFailure($grant, $case['name'] . ' new grant');
         $grant();
         $relation = $model::where('identity_id', 10)->where($case['reference'], $case['local'])->find();
-        check($relation !== null && $relation->status === 1, $case['name'] . ' retry did not create relation');
+        check($relation !== null && $relation->status === 1 && $relation->application_id === 1, $case['name'] . ' retry did not create an application-owned relation');
         $id = (int) $relation->id;
         $revoke = static fn () => $controller->revoke(new Request(['id' => $id, '_request_id' => 'relation-revoke']));
         $auditFailure($revoke, $case['name'] . ' revoke');

@@ -6,6 +6,64 @@
 
 后续实现核查曾发现 P02、P14、P18 的功能缺口，因此当时的历史 `P=20/20` 不能直接代表当前全需求完成。上述缺口和随后发现的 P03、P07、P11、P14、P15 契约问题已修复；2026-09-15 按 P01–P20 重新对账后，当前模块源码实现为 **20/20**。它只表示功能源码层完成，不替代真实 FLOW、业务闭环或发布门槛；具体实现、离线验证和未验证层以[原任务板当前执行顺序](sand-iam-task-board.md#当前执行顺序)为准。
 
+## 2026-09-17 0.7.3 schema 审计修复
+
+- 当前权威源码已进入 0.7.3：新增 041 迁移，补齐身份授权、策略目标和策略版本的同应用/同策略
+  数据库约束，把策略动作扩展到 96 字符，并修复审计归档 purge 误用软删除的问题。
+- PHP、TypeScript、Dart SDK 均已运行覆盖动作代码 96 字符放行、97 字符拒绝；跨载荷静态契约
+  **9/9**，并经 Astra/high 增量复核 **ACCEPT（P0/P1/P2=0）**，防止数据库与公开客户端
+  边界再次漂移。真实非 AI 业务示例审计列保存配置的公开 API code，也同步扩展为
+  `varchar(96)`，避免合法长代码在业务侧审计落库时被拒绝；该增量经 Astra/high 复核
+  **ACCEPT（P0/P1/P2=0）**。
+- 非数据库 PHP 回归 **171/171**、PHP lint **672/672**、TypeScript/PHP/Dart SDK 回归、
+  release hygiene **16/16** 和 SBOM current 均通过；package integrity **25/26**，唯一失败为
+  当前 0.7.3 工作树尚未成为 clean tracked HEAD。
+- 生命周期重新生成前后六个 SQL 载荷摘要一致。dirty review candidate v14 已完成两次字节一致构建：
+  700 个条目，ZIP SHA-256 `e7c932508fba63cec3a0e3776bed9de102f37780ed72ed7d830f1b7315adb801`，
+  source snapshot SHA-256 `b5248b76696686559f1339e6d06dff26b94ee053582949e493f2709aedc965e4`。
+  Astra/high 对源码与测试设计独立复核 **ACCEPT（P0/P1/P2=0）**。
+- 041 事务回滚演练和授权范围 PostgreSQL 集成已通过。SandPackage 已完成 0.7.2→0.7.3、
+  同版本安全拒绝、卸载、fresh install、冻结故障包的官方
+  `inspect-fresh → manual-cleanup-fresh` 恢复以及恢复后再次 fresh install；最终 registry
+  为 `0.7.3/state=1`，86 张表、账本 **42/max41**、十个新约束和双端载荷均正确，48 张
+  非 SandIAM 表指纹不变，HTTP/业务码 **200/200**。D03 与安装/升级发布门槛据此通过。
+- 0.7.2 v25 的 L01–L04、D01、D03 和两项发布门槛证据继续保留，作为 0.7.3 重跑时可复用的
+  基线与差异依据。由于当前候选已经变化，这些证据不能自动计入 0.7.3。
+- 当前候选绑定的严格计分为 **R 8/9、P 20/20、F 0/7、L 0/4、D 1/8，
+  29/48（60.4%）**，发布门槛 **1/10**。源码需求层仍为 **28/29（96.6%）**；
+  下降来自当前候选尚未重绑运行与发布证据，不是功能被删除。
+
+## 2026-09-17 v25 干净来源候选
+
+- SandIAM `0.7.2` v25 unsigned 候选绑定 clean commit
+  `090992b74e79a7bf8478ee6ee2f9bc5f36cf6c4b`、tree
+  `65492ea8dd66046451b78f9e5da475091b3bc70d` 和 697 项 ZIP
+  `4e0ffc8c4c8a121d0fe067c345a9b7425129c26e23f7d93ccf3e59e5cc263827`。
+  两套独立 Git blob stage、冻结 snapshot 和重建 ZIP 字节一致；package
+  integrity **26/26**、release hygiene **16/16**，许可证、SBOM 和构建环境
+  均已绑定。
+- Astra/high 独立来源复核对该候选给出 **PASS（P0/P1/P2=0）**。这满足
+  D01 的 clean revision、来源、许可、环境和 bit-identical 重建定义，因此
+  D01 更新为通过。D02 仍缺正式包外签名、独立可信公钥/发布渠道、可信验签记录
+  和未参与开发者的八步交付实跑，不能随 D01 提前通过。
+- 当前严格计分为 **R 8/9、P 20/20、F 0/7、L 4/4、D 2/8，
+  34/48（70.8%）**。发布门槛仍为 **2/10**；D01 的来源通过不等于“发布包”
+  门槛通过。
+- HOST-003 已使用独立复核通过的最终 v3 计划完成正式
+  `manual-cleanup-fresh`：执行前官方 inspect 仍为 `sql_commit_unknown`，
+  指纹 `09c38e74…e7d048e`，且唯一动作精确绑定 86 张
+  `public.sand_iam_*` 普通表；清理返回 `phase=cleaned/sql_executed=true`，
+  后置 inspect 无剩余动作。随后 SandPackage 正式安装 v25
+  `4e0ffc8c…63827`；当前 registry 为 `0.7.2/state=1`，Webman PDO
+  READ ONLY 事务核验 86 张表、迁移账本 **41/max40**，前后端运行载荷与
+  v25 snapshot 的 `diff -qr` 均为零。Workerman 清理 install reload 遗留的
+  陈旧 PID 后在 8797 正常启动，40 个 HTTP worker 与 SandIAM webhook worker
+  均健康，`/core/captcha` 返回 HTTP/业务码 **200/200**。证据见
+  [`../../../.artifacts/sand-iam-0.7.2-v25-20260917T015450Z/host-recovery/HOST-003-v25-install-evidence.md`](../../../.artifacts/sand-iam-0.7.2-v25-20260917T015450Z/host-recovery/HOST-003-v25-install-evidence.md)。
+  本批关闭 HOST-003 并把最终候选装入受控宿主，但尚未以 v25 重跑全部
+  F01–F07、七链、连续升级/卸载、协议、四角色、备份恢复和 24 小时稳定性，
+  因此严格计分和发布门槛暂不增加。
+
 ## 2026-09-15 clean 0.7.2 候选与发布卫生返工
 
 - 当前宿主锁为 SandAdmin `07d83d591b85deb83875473687a0d033a418c778`，消费仓提交为 `c7aaad447de551f4524044788814953b2cb468f5`；SandIAM 最后源码变更为 `2f65ac6d964c385b4b7987cce4c6d6a831cd5c37`。
@@ -203,7 +261,7 @@ Provider、接收器和 worker 已清理或恢复；未检查或启动 PostgreSQ
 
 L01 复用此前四角色页面和授权边界证据，本批补齐其唯一缺失的管理员身份、
 授权与通知配置，因此 L01 更新为通过，本地业务闭环为 **4/4**；严格计分更新为
-**R 8/9、P 20/20、F 0/7、L 4/4、D 1/8，33/48（68.8%）**。C02、C05、
+**R 8/9、P 20/20、F 0/7、L 4/4、D 2/8，34/48（70.8%）**。C02、C05、
 C06、C07 的真实 API/数据库/受控对端切片已经通过，但尚未在同一 clean 最终
 候选完成全部适用浏览器、标准外部客户端和 F01–F07 纵向证据，故 C01–C07
 完整链门槛、发布门槛仍不提前增加，发布仍为 **2/10**。
@@ -347,7 +405,7 @@ L01–L04 在 2026-09-08 的严格计数为 **0/4**。
 
 | ID | 部署原子与完成定义 | 允许证据 | 不计分证据 | 2026-09-08 证据与状态 |
 | --- | --- | --- | --- | --- |
-| D01 | **干净可重建源码。** 从干净、可追溯 revision 构建相同候选，来源、许可和构建环境明确。 | clean checkout、revision、构建命令、bit-identical SHA。 | 脏工作树 snapshot 单独可重复。 | 2026-09-15 的 clean `c7aaad4` 包虽可重复且与 SandAdmin 独立宿主使用的包摘要一致，但独立审查发现行业示例残留，已废止为发布候选。当前修复尚未提交和从新 clean revision 重建。**◻ 未通过** |
+| D01 | **干净可重建源码。** 从干净、可追溯 revision 构建相同候选，来源、许可和构建环境明确。 | clean checkout、revision、构建命令、bit-identical SHA。 | 脏工作树 snapshot 单独可重复。 | v25 绑定 clean commit `090992b74e79a7bf8478ee6ee2f9bc5f36cf6c4b`、tree `65492ea8dd66046451b78f9e5da475091b3bc70d` 和 ZIP `4e0ffc8c…63827`；两套独立 Git blob stage、冻结 snapshot 与重建 ZIP 字节一致，package integrity **26/26**、release hygiene **16/16**，来源、许可和构建环境明确，并经 Astra/high 独立复核 PASS。**✅ 通过** |
 | D02 | **完整插件包。** 根文件、完整 runtime、管理端、门户、SDK、迁移、恢复描述器、元数据和许可经过独立发布审查。 | 最终 ZIP 清单、独立 checker、签名/来源记录。 | 离线 package ACCEPT。 | 已有未参与开发者公开文档八步交付模板与关闭失败验证器；尚无最终许可、签名候选或真人执行记录。**◻ 未通过** |
 | D03 | **当前宿主生命周期。** 演示宿主完成受控同步、安装/连续升级/重复升级/卸载、服务重载和无残留。 | 当前宿主、当前候选、数据库和服务证据。 | 早于 033 的 82 表、恢复前 83 表、其他插件生命周期。 | 2026-09-16 当前 demo 使用同一 v17 review candidate 完成 0.7.0→0.7.1→0.7.2 连续升级；同版本重传在 SQL/文件替换前被安全拒绝且 0.7.2 健康状态不变。正式卸载后 registry 为空、SandIAM 表 0，48 张非 SandIAM 表的名称集合摘要保持 `9f990d1c…f5b4ec6`；同包 fresh install 后 registry `0.7.2/state=1`、SandIAM 表 86、ledger 40/max39，后端和管理端运行载荷均与 v17 snapshot 相同。Webman captcha、Vite、真实后台登录及平台管理员 **12/12** SandIAM 一级子入口逐项加载通过；Astra/high 独立终态复核 ACCEPT（P0/P1/P2=0）。v17 的 dirty 来源只阻 D01/D02，不抹去该候选的当前宿主生命周期事实。**✅ 通过** |
 | D04 | **标准客户端与外部系统。** OIDC/SAML/LDAP/SCIM/CAS/Kerberos/RADIUS、消息/目录等按声明范围完成真实互操作。 | 标准客户端、临时 Realm/NAS、受控外部服务正负报告。 | 自写单测、fake transport。 | 已有候选绑定的七类互操作模板与关闭失败验证器，但没有标准客户端、真实对端或原始运行证据。**◻ 未通过** |
@@ -356,7 +414,7 @@ L01–L04 在 2026-09-08 的严格计数为 **0/4**。
 | D07 | **安全与并发。** 秘密泄露扫描、限流/重放、并发消费/撤权/刷新、密钥轮换和 fail-closed 全部通过。 | 当前候选压力/并发/故障注入及安全报告。 | lint、静态安全规则、单线程测试。 | 历史 v70 的默认关闭 retention worker 已以有限批次覆盖过期 succeeded 幂等记录和过期认证限流窗口，pending/审计保留；目录 outbox 与 OIDC back-channel dead 都已补人工恢复并发门禁，OIDC 恢复重新签发令牌而不复用过期密文。24 小时两类 retention backlog 及 queue/unrecoverable backlog 都有精确 PostgreSQL 状态公式和零容忍阈值。相关 PostgreSQL 夹具未获授权执行，且尚无压力、并发、故障注入或 24 小时资源曲线，因此仍不计分。**◻ 未通过** |
 | D08 | **回滚与发布。** 失败停止、候选替换、数据库/运行文件回滚、残留清理、发布审批和线上验证计划均闭合。 | 恢复/回滚演练、最终报告、审批与可追溯发行物。 | 升级票据 5/7、恢复 UI staging。 | 快照中的实际恢复为 2/8，未进入候选替换、重试、回滚发布结论。**◻ 未通过** |
 
-D01–D08 当前严格计数为 **1/8**；D03 已由 2026-09-16 当前 demo 的真实生命周期通过。D01/D02 仍因最终 clean revision、正式签名和独立发布包未闭合而未通过，其余 D 项不变。
+D01–D08 当前严格计数为 **2/8**；D01 已由 v25 干净来源候选与独立重建通过，D03 已由 2026-09-16 当前 demo 的真实生命周期通过。D02 仍因正式签名、可信验签和独立开发者交付未闭合而未通过，其余 D 项不变。
 
 ## 7. 七条业务链 C01–C07 映射
 

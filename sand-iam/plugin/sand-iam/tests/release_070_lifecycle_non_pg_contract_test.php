@@ -243,8 +243,7 @@ $packageUpdate = (string) file_get_contents($package . '/update.sql');
 $uninstall = (string) file_get_contents($root . '/uninstall.sql');
 $packageUninstall = (string) file_get_contents($package . '/uninstall.sql');
 $expectedUpdate = [
-    '039_service_grant_nullable_data_class.pgsql',
-    '040_passkey_auth_challenge_identity.pgsql',
+    '041_authorization_scope_integrity.pgsql',
 ];
 $updatePreflight = (string) file_get_contents($root . '/lifecycle/update-070-to-071-preflight.pgsql');
 preg_match_all("/\\('(sand_iam_[a-z0-9_]+)'\\)/", $updatePreflight, $preflightTableMatches);
@@ -297,12 +296,15 @@ release070Assert('0.7.1 and 0.7.2 preflights admit only the verified historical 
     && str_contains($updatePreflight, 'recorded.revision = 35')
     && str_contains($updatePreflight, "recorded.package_version = '0.7.0'")
     && substr_count((string) file_get_contents($root . '/lifecycle/update-071-to-072-preflight.pgsql'), '4372ad7731e2dae60e51b7b2448a95971c5b22db06fc9678fb1d076d6e28ea25') === 1);
-release070Assert('fresh-install lifecycle is root/package identical and contains the 035-038 release migrations',
+release070Assert('fresh-install lifecycle is root/package identical and contains the 035-041 release migrations',
     hash('sha256', $install) === hash('sha256', $packageInstall)
     && str_contains($install, '-- lifecycle source: migrations/035_schema_migration_ledger.pgsql')
     && str_contains($install, '-- lifecycle source: migrations/036_acceptance_fixture_support.pgsql')
     && str_contains($install, '-- lifecycle source: migrations/037_initialization_draft.pgsql')
-    && str_contains($install, '-- lifecycle source: migrations/038_auth_rate_limit_retention.pgsql'));
+    && str_contains($install, '-- lifecycle source: migrations/038_auth_rate_limit_retention.pgsql')
+    && str_contains($install, '-- lifecycle source: migrations/039_service_grant_nullable_data_class.pgsql')
+    && str_contains($install, '-- lifecycle source: migrations/040_passkey_auth_challenge_identity.pgsql')
+    && str_contains($install, '-- lifecycle source: migrations/041_authorization_scope_integrity.pgsql'));
 release070Assert('generated lifecycle preserves 038 identity while using the PostgreSQL-compatible index arity check',
     str_contains($retentionMigration, 'pg_get_indexdef(actual_index.indexrelid, 3, true) IS NULL')
     && !str_contains($retentionMigration, 'actual_index.indnatts = 2 AND actual_index.indnkeyatts = 2')
@@ -319,14 +321,16 @@ release070Assert('0.7.2 preflight admits only the exact historical NOT VALID ser
         === "checkdata_classisnullordata_class~'^[a-z0-9][a-z0-9._-]{1,31}$'"
     && $normalizeServiceGrantConstraint("CHECK (data_class IS NULL OR data_class::text ~ '^[A-Z]+$'::text) NOT VALID")
         !== "checkdata_classisnullordata_class~'^[a-z0-9][a-z0-9._-]{1,31}$'");
-release070Assert('0.7.1 to 0.7.2 update lifecycle is root/package identical, gates exact 001-038, then contains only immutable 039 and 040',
+$update073Preflight = (string) file_get_contents($root . '/lifecycle/update-072-to-073-preflight.pgsql');
+release070Assert('0.7.2 to 0.7.3 update lifecycle is root/package identical, gates exact 001-040, then contains only 041',
     hash('sha256', $update) === hash('sha256', $packageUpdate)
     && release070PayloadSources($update) === $expectedUpdate
-    && str_contains($update, '-- lifecycle source: lifecycle/update-071-to-072-preflight.pgsql')
-    && strpos($update, '-- lifecycle source: lifecycle/update-071-to-072-preflight.pgsql') < strpos($update, '-- lifecycle source: migrations/039_service_grant_nullable_data_class.pgsql')
-    && strpos($update, '-- lifecycle source: migrations/039_service_grant_nullable_data_class.pgsql') < strpos($update, '-- lifecycle source: migrations/040_passkey_auth_challenge_identity.pgsql')
-    && str_contains($update, 'requires exact 001-038 ledger identities before executing 039')
-    && str_contains($update, 'requires the exact non-null service-grant data-class column')
+    && str_contains($update, '-- lifecycle source: lifecycle/update-072-to-073-preflight.pgsql')
+    && strpos($update, '-- lifecycle source: lifecycle/update-072-to-073-preflight.pgsql') < strpos($update, '-- lifecycle source: migrations/041_authorization_scope_integrity.pgsql')
+    && str_contains($update, 'requires exact 001-040 ledger identities before executing 041')
+    && str_contains($update, 'requires the completed nullable service-grant data-class column')
+    && str_contains($update073Preflight, "('039_service_grant_nullable_data_class.pgsql', 39")
+    && str_contains($update073Preflight, "('040_passkey_auth_challenge_identity.pgsql', 40")
     && str_contains($update, 'AND NOT actual.convalidated')
     && !str_contains($update, 'AND actual.convalidated')
     && str_contains($update, "'notvalid$', ''")
@@ -342,13 +346,13 @@ $packageInfo = parse_ini_file($package . '/info.ini');
 $appConfig = (string) file_get_contents($package . '/config/app.php');
 $portal = json_decode((string) file_get_contents($root . '/portal/package.json'), true);
 $managementCatalog = (string) file_get_contents($package . '/app/developer/ManagementApiCatalog.php');
-release070Assert('0.7.2 release metadata declares matching SandAdmin 6.x support while OpenAPI stays 0.13.0-candidate',
-    ($rootInfo['version'] ?? null) === '0.7.2'
-    && ($packageInfo['version'] ?? null) === '0.7.2'
+release070Assert('0.7.3 release metadata declares matching SandAdmin 6.x support while OpenAPI stays 0.13.0-candidate',
+    ($rootInfo['version'] ?? null) === '0.7.3'
+    && ($packageInfo['version'] ?? null) === '0.7.3'
     && ($rootInfo['support'] ?? null) === '6.x'
     && ($packageInfo['support'] ?? null) === '6.x'
-    && str_contains($appConfig, "'version' => '0.7.2'")
-    && is_array($portal) && ($portal['version'] ?? null) === '0.7.2'
+    && str_contains($appConfig, "'version' => '0.7.3'")
+    && is_array($portal) && ($portal['version'] ?? null) === '0.7.3'
     && str_contains($managementCatalog, "'version' => '0.13.0-candidate'"));
 
 $rootRecovery = (string) file_get_contents($root . '/recovery/failed-upgrade.v2.json');
@@ -356,7 +360,7 @@ $packageRecovery = (string) file_get_contents($package . '/recovery/failed-upgra
 $recovery = json_decode($rootRecovery, true);
 require_once $root . '/tools/package-payload-policy.php';
 $normalPayload = sandIamPayloadFiles($root, true);
-release070Assert('historical 0.7.0 recovery descriptor remains root/plugin-identical but is excluded from normal 0.7.2 payloads',
+release070Assert('historical 0.7.0 recovery descriptor remains root/plugin-identical but is excluded from normal 0.7.3 payloads',
     $rootRecovery !== ''
     && $rootRecovery === $packageRecovery
     && is_array($recovery)
@@ -369,10 +373,10 @@ release070Assert('historical 0.7.0 recovery descriptor remains root/plugin-ident
     && !in_array('recovery/failed-upgrade.v2.json', $normalPayload, true)
     && !in_array('plugin/sand-iam/recovery/failed-upgrade.v2.json', $normalPayload, true));
 
-release070Assert('0.7.2 schema source retains exactly 86 SandIAM tables including editable initialization drafts',
+release070Assert('0.7.3 schema source retains exactly 86 SandIAM tables including editable initialization drafts',
     count($sourceTables) === 86
     && in_array('sand_iam_schema_migration', $sourceTables, true)
     && in_array('sand_iam_initialization_draft', $sourceTables, true)
     && in_array('sand_iam_initialization_draft_revision', $sourceTables, true));
 
-echo 'SandIAM 0.7.2 lifecycle non-PG contract passed' . PHP_EOL;
+echo 'SandIAM 0.7.3 lifecycle non-PG contract passed' . PHP_EOL;

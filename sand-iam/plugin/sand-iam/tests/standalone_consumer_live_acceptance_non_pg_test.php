@@ -46,6 +46,10 @@ foreach (['CREATE DATABASE', 'createdb ', 'DROP DATABASE'] as $forbidden) {
         exit(1);
     }
 }
+if (!str_contains($schema, 'action varchar(96) NOT NULL')) {
+    fwrite(STDERR, "standalone business audit API code does not match the public 96-character contract\n");
+    exit(1);
+}
 foreach (['SAND_IAM_READ_API_CODE', 'SAND_IAM_CLOSE_API_CODE'] as $name) {
     if (!str_contains($config, $name)) {
         fwrite(STDERR, "standalone consumer does not expose {$name}\n");
