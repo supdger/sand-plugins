@@ -53,6 +53,10 @@ namespace plugin\sandadmin\exception {
     class ApiException extends \RuntimeException
     {
     }
+
+    class SystemException extends \RuntimeException
+    {
+    }
 }
 
 namespace plugin\sandadmin\app\exception {
@@ -76,6 +80,7 @@ namespace support {
 namespace {
     use plugin\SandIam\app\exception\Handler;
     use plugin\sandadmin\exception\ApiException;
+    use plugin\sandadmin\exception\SystemException;
     use support\Log;
     use Webman\Http\Request;
 
@@ -114,6 +119,20 @@ namespace {
             fwrite(STDERR, "invalid ApiException code {$code} changed the host HTTP status\n");
             exit(1);
         }
+    }
+
+    $response = $handler->render($request, new SystemException('权限不足，无法访问或操作', 400));
+    if ($response->status !== 403
+        || $response->body !== '{"code":403,"message":"权限不足，无法访问或操作","type":"failed"}') {
+        fwrite(STDERR, "SystemException permission denial was not normalized to HTTP 403\n");
+        exit(1);
+    }
+
+    Log::$entries = [];
+    $handler->report(new SystemException('权限不足，无法访问或操作', 400));
+    if (Log::$entries !== []) {
+        fwrite(STDERR, "handled SystemException was reported as an internal failure\n");
+        exit(1);
     }
 
     $response = $handler->render($request, new RuntimeException('unexpected challenge-secret failure', 503));

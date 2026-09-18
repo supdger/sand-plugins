@@ -6,6 +6,7 @@ namespace plugin\SandIam\app\exception;
 
 use plugin\sandadmin\app\exception\Handler as SandAdminHandler;
 use plugin\sandadmin\exception\ApiException;
+use plugin\sandadmin\exception\SystemException;
 use support\Log;
 use Throwable;
 use Webman\Http\Request;
@@ -15,7 +16,7 @@ final class Handler extends SandAdminHandler
 {
     public function report(Throwable $exception)
     {
-        if ($exception instanceof ApiException) {
+        if ($exception instanceof ApiException || $exception instanceof SystemException) {
             return;
         }
 
@@ -44,6 +45,10 @@ final class Handler extends SandAdminHandler
             }
 
             return $response;
+        }
+
+        if ($exception instanceof SystemException) {
+            return $this->response(403, '权限不足，无法访问或操作')->withStatus(403);
         }
 
         return $this->response(500, 'Server internal error');
