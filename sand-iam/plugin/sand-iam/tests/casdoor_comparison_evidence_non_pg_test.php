@@ -37,6 +37,23 @@ try {
             foreach ([1, 2] as $round) {
                 $duration = $system === 'sandiam' ? $sandiamDuration + $round : $sandiamDuration + 101 + $round;
                 $operations = $system === 'sandiam' ? $sandiamOperations : $sandiamOperations + 1;
+                $measurementComplete = $system === 'sandiam';
+                $securityTargetMet = $system === 'sandiam';
+                $metrics = $measurementComplete ? [
+                    'duration_seconds' => $duration,
+                    'manual_operations' => $operations,
+                    'commands' => 2,
+                    'recovery_attempts' => 0,
+                    'unresolved_failures' => 0,
+                    'business_code_change_points' => 1,
+                ] : [
+                    'duration_seconds' => null,
+                    'manual_operations' => null,
+                    'commands' => null,
+                    'recovery_attempts' => null,
+                    'unresolved_failures' => null,
+                    'business_code_change_points' => null,
+                ];
                 $startedAt = '2026-09-12T00:00:00Z';
                 $endedAt = gmdate('Y-m-d\TH:i:s\Z', strtotime($startedAt) + $duration);
                 $runDirectory = 'evidence/' . $journeyId . '/' . $system . '-' . $round;
@@ -51,7 +68,7 @@ try {
                     $pathsByKind[$kind] = $relative;
                 }
                 $structured = [
-                    'schema' => 'sand-iam.casdoor-comparison-evidence/v1',
+                    'schema' => 'sand-iam.casdoor-comparison-evidence/v2',
                     'journey' => $journeyId,
                     'system' => $system,
                     'round' => $round,
@@ -59,18 +76,12 @@ try {
                     'environment_fingerprint' => $environmentHash,
                     'started_at' => $startedAt,
                     'ended_at' => $endedAt,
-                    'metrics' => [
-                        'duration_seconds' => $duration,
-                        'manual_operations' => $operations,
-                        'commands' => 2,
-                        'recovery_attempts' => 0,
-                        'unresolved_failures' => 0,
-                        'business_code_change_points' => 1,
-                    ],
+                    'metrics' => $metrics,
                     'assertions' => [
+                        'measurement_complete' => $measurementComplete,
                         'completed' => true,
-                        'result_equivalent' => true,
-                        'security_equivalent' => true,
+                        'business_outcome_achieved' => true,
+                        'security_target_met' => $securityTargetMet,
                         'cleanup_verified' => true,
                     ],
                     'request_ids' => ['compare-' . $journeyId . '-' . $system . '-' . $round],
@@ -91,10 +102,9 @@ try {
                     'system' => $system, 'round' => $round,
                     'started_at' => $startedAt,
                     'ended_at' => $endedAt,
-                    'duration_seconds' => $duration, 'manual_operations' => $operations,
-                    'commands' => 2, 'recovery_attempts' => 0, 'unresolved_failures' => 0,
-                    'business_code_change_points' => 1, 'completed' => true,
-                    'result_equivalent' => true, 'security_equivalent' => true, 'cleanup_verified' => true,
+                    ...$metrics, 'measurement_complete' => $measurementComplete,
+                    'completed' => true, 'business_outcome_achieved' => true,
+                    'security_target_met' => $securityTargetMet, 'cleanup_verified' => true,
                     'evidence' => $evidence,
                 ];
             }
@@ -102,8 +112,20 @@ try {
         $journeys[] = ['id' => $journeyId, 'runs' => $runs];
     }
     $report = [
-        'schema' => 'sand-iam.casdoor-comparison/v2',
+        'schema' => 'sand-iam.casdoor-comparison/v3',
         'candidate' => ['version' => '0.7.0', 'archive_sha256' => $archiveHash, 'artifact_manifest_sha256' => $manifestHash],
+        'comparison_policy' => [
+            'sandiam_acceptance_basis' => 'absolute_target',
+            'comparator_role' => 'relative_observation',
+            'require_comparator_security_target' => false,
+            'require_quantitative_superiority' => false,
+            'quantitative_superiority_claimed' => false,
+        ],
+        'participants' => [
+            'sandiam' => ['id' => 'sandiam-participant-01', 'independent' => true, 'webman_experience' => true, 'conflict_statement' => 'I did not implement SandIAM.'],
+            'casdoor' => ['id' => 'casdoor-participant-02', 'independent' => true, 'webman_experience' => true, 'conflict_statement' => 'I did not implement Casdoor.'],
+            'same_participant' => false,
+        ],
         'reviewer' => ['id' => 'independent-reviewer-01', 'independent' => true, 'webman_experience' => true, 'conflict_statement' => 'I did not develop either tested integration.'],
         'environment' => ['fingerprint' => $environmentHash, 'host' => 'fixture-host', 'browser' => 'fixture-browser', 'php' => '8.4', 'postgresql' => '18', 'network_profile' => 'same-local-profile'],
         'journeys' => $journeys,
@@ -146,10 +168,17 @@ try {
     [$missingSystemArtifactStatus, $missingSystemArtifactOutput] = $run($reportPath);
     file_put_contents($structuredPath, $structuredBytes);
 
-    $report['journeys'][0]['runs'][0]['security_equivalent'] = false;
+    $report['journeys'][0]['runs'][0]['security_target_met'] = false;
+    $structuredDocument = json_decode($structuredBytes, true, 512, JSON_THROW_ON_ERROR);
+    $structuredDocument['assertions']['security_target_met'] = false;
+    $changedStructuredBytes = json_encode($structuredDocument, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+    file_put_contents($structuredPath, $changedStructuredBytes);
+    $report['journeys'][0]['runs'][0]['evidence'][0]['sha256'] = hash('sha256', $changedStructuredBytes);
     file_put_contents($reportPath, json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
     [$unsafeStatus, $unsafeOutput] = $run($reportPath);
-    $report['journeys'][0]['runs'][0]['security_equivalent'] = true;
+    file_put_contents($structuredPath, $structuredBytes);
+    $report['journeys'][0]['runs'][0]['security_target_met'] = true;
+    $report['journeys'][0]['runs'][0]['evidence'][0]['sha256'] = hash('sha256', $structuredBytes);
     array_pop($report['journeys'][1]['runs']);
     file_put_contents($reportPath, json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
     [$missingStatus, $missingOutput] = $run($reportPath);
@@ -165,16 +194,79 @@ try {
     file_put_contents($reportPath, json_encode($invalidTimestampReport, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
     [$invalidTimestampStatus, $invalidTimestampOutput] = $run($reportPath);
 
+    $inconsistentParticipants = $validReport;
+    $inconsistentParticipants['participants']['same_participant'] = true;
+    file_put_contents($reportPath, json_encode($inconsistentParticipants, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+    [$inconsistentParticipantsStatus, $inconsistentParticipantsOutput] = $run($reportPath);
+
+    $unprovedQuantitativeClaim = $validReport;
+    $unprovedQuantitativeClaim['comparison_policy']['quantitative_superiority_claimed'] = true;
+    file_put_contents($reportPath, json_encode($unprovedQuantitativeClaim, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+    [$unprovedQuantitativeClaimStatus, $unprovedQuantitativeClaimOutput] = $run($reportPath);
+
+    $quantitativeReport = $validReport;
+    $quantitativeReport['comparison_policy']['quantitative_superiority_claimed'] = true;
+    $quantitativeReport['participants']['casdoor'] = $quantitativeReport['participants']['sandiam'];
+    $quantitativeReport['participants']['same_participant'] = true;
+    foreach ($quantitativeReport['journeys'] as &$journey) {
+        $journeyId = $journey['id'];
+        foreach ($journey['runs'] as &$candidateRun) {
+            if ($candidateRun['system'] !== 'casdoor') continue;
+            $duration = strtotime($candidateRun['ended_at']) - strtotime($candidateRun['started_at']);
+            $metrics = [
+                'duration_seconds' => $duration,
+                'manual_operations' => $journeyTargets[$journeyId][1] + 1,
+                'commands' => 2,
+                'recovery_attempts' => 0,
+                'unresolved_failures' => 0,
+                'business_code_change_points' => 1,
+            ];
+            foreach ($metrics as $field => $value) $candidateRun[$field] = $value;
+            $structuredRelative = $candidateRun['evidence'][0]['path'];
+            $structuredDocument = json_decode((string) file_get_contents($seed . '/' . $structuredRelative), true, 512, JSON_THROW_ON_ERROR);
+            $structuredDocument['metrics'] = $metrics;
+            $structuredBytes = json_encode($structuredDocument, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+            file_put_contents($seed . '/' . $structuredRelative, $structuredBytes);
+            $candidateRun['evidence'][0]['sha256'] = hash('sha256', $structuredBytes);
+        }
+        unset($candidateRun);
+    }
+    unset($journey);
+    file_put_contents($reportPath, json_encode($quantitativeReport, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+    [$incompleteQuantitativeStatus, $incompleteQuantitativeOutput] = $run($reportPath);
+
+    foreach ($quantitativeReport['journeys'] as &$journey) {
+        foreach ($journey['runs'] as &$candidateRun) {
+            if ($candidateRun['system'] !== 'casdoor') continue;
+            $candidateRun['measurement_complete'] = true;
+            $structuredRelative = $candidateRun['evidence'][0]['path'];
+            $structuredDocument = json_decode((string) file_get_contents($seed . '/' . $structuredRelative), true, 512, JSON_THROW_ON_ERROR);
+            $structuredDocument['assertions']['measurement_complete'] = true;
+            $structuredBytes = json_encode($structuredDocument, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n";
+            file_put_contents($seed . '/' . $structuredRelative, $structuredBytes);
+            $candidateRun['evidence'][0]['sha256'] = hash('sha256', $structuredBytes);
+        }
+        unset($candidateRun);
+    }
+    unset($journey);
+    file_put_contents($reportPath, json_encode($quantitativeReport, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
+    [$quantitativeStatus, $quantitativeOutput] = $run($reportPath);
+
     $passed = $validStatus === 0 && str_contains($validOutput, '"runs_verified": 12') && str_contains($validOutput, '"evidence_files_verified": 48')
+        && str_contains($validOutput, '"casdoor_mean_duration_seconds": null')
         && $tamperedEvidenceHashStatus !== 0 && str_contains($tamperedEvidenceHashOutput, 'evidence SHA-256 mismatch')
         && $uncleanStatus !== 0 && str_contains($uncleanOutput, 'did not prove cleanup_verified')
         && $structuredBindingStatus !== 0 && str_contains($structuredBindingOutput, 'structured evidence binding mismatch')
         && $missingSystemArtifactStatus !== 0 && str_contains($missingSystemArtifactOutput, 'structured artifact binding is invalid: system')
-        && $unsafeStatus !== 0 && str_contains($unsafeOutput, 'did not prove security_equivalent')
+        && $unsafeStatus !== 0 && str_contains($unsafeOutput, 'SandIAM did not meet its security target')
         && $missingStatus !== 0 && str_contains($missingOutput, 'must contain exactly four runs')
         && $linkedStatus !== 0 && str_contains($linkedOutput, 'path contains a symbolic link')
-        && $invalidTimestampStatus !== 0 && str_contains($invalidTimestampOutput, 'must be a valid UTC timestamp');
-    if (!$passed) throw new RuntimeException('comparison validator did not enforce complete and security-equivalent evidence');
+        && $invalidTimestampStatus !== 0 && str_contains($invalidTimestampOutput, 'must be a valid UTC timestamp')
+        && $inconsistentParticipantsStatus !== 0 && str_contains($inconsistentParticipantsOutput, 'same_participant must match')
+        && $unprovedQuantitativeClaimStatus !== 0 && str_contains($unprovedQuantitativeClaimOutput, 'quantitative superiority requires the same')
+        && $incompleteQuantitativeStatus !== 0 && str_contains($incompleteQuantitativeOutput, 'quantitative superiority requires complete measurement')
+        && $quantitativeStatus === 0 && str_contains($quantitativeOutput, '"quantitative_superiority_claimed": true');
+    if (!$passed) throw new RuntimeException('comparison validator did not separate SandIAM acceptance from comparator gaps');
 } finally {
     $removeTree($seed);
 }

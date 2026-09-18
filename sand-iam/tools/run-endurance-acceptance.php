@@ -49,7 +49,7 @@ foreach (['environment' => ['id'], 'collector' => ['id', 'version']] as $label =
     $expectKeys($plan[$label], $required, $required, $label);
     foreach ($required as $field) if (!is_string($plan[$label][$field]) || preg_match('/^[A-Za-z0-9._:-]{3,128}$/', $plan[$label][$field]) !== 1) throw new RuntimeException($label . '.' . $field . ' is invalid');
 }
-if (!is_int($plan['duration_seconds']) || $plan['duration_seconds'] < 86400) throw new RuntimeException('endurance duration must be at least 86400 seconds');
+if (!is_int($plan['duration_seconds']) || $plan['duration_seconds'] < 28800) throw new RuntimeException('endurance duration must be at least 28800 seconds');
 if ($plan['duration_seconds'] > intdiv(PHP_INT_MAX, 1000000)) throw new RuntimeException('endurance duration exceeds exact microsecond range');
 if (!is_int($plan['interval_seconds']) || $plan['interval_seconds'] < 10 || $plan['interval_seconds'] > 300) throw new RuntimeException('interval_seconds must be between 10 and 300');
 if (!is_int($plan['max_jitter_seconds']) || $plan['max_jitter_seconds'] < 0 || $plan['max_jitter_seconds'] > 60) throw new RuntimeException('max_jitter_seconds must be an integer between 0 and 60');

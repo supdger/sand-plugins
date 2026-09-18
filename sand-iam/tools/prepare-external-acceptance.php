@@ -80,7 +80,7 @@ if ($kind === 'endurance') {
     foreach ($metricNames as $metricName) $metrics[$metricName] = '/metrics/' . $metricName;
     $document = [
         'schema' => 'sand-iam.endurance-plan/v2', 'candidate' => $candidate,
-        'acceptance_run_id' => $runId, 'environment' => ['id' => '__REQUIRED_ENVIRONMENT_ID__'], 'collector' => ['id' => '__REQUIRED_COLLECTOR_ID__', 'version' => '__REQUIRED_COLLECTOR_VERSION__'], 'duration_seconds' => 86400, 'interval_seconds' => 60, 'max_jitter_seconds' => 30, 'max_clock_skew_seconds' => 2,
+        'acceptance_run_id' => $runId, 'environment' => ['id' => '__REQUIRED_ENVIRONMENT_ID__'], 'collector' => ['id' => '__REQUIRED_COLLECTOR_ID__', 'version' => '__REQUIRED_COLLECTOR_VERSION__'], 'duration_seconds' => 28800, 'interval_seconds' => 60, 'max_jitter_seconds' => 30, 'max_clock_skew_seconds' => 2,
         'runtime_identity' => ['boot_id' => '/runtime/boot_id', 'process_group_id' => '/runtime/process_group_id', 'supervisor_restart_total' => '/runtime/supervisor_restart_total'],
         'request_timeout_ms' => 5000, 'allow_loopback_http' => false,
         'approved_hosts' => ['__REQUIRED_APPROVED_HOST__'], 'targets' => $targets, 'metrics' => $metrics,
@@ -106,8 +106,9 @@ if ($kind === 'endurance') {
                     'started_at' => '__REQUIRED_UTC_START__', 'ended_at' => '__REQUIRED_UTC_END__',
                     'duration_seconds' => -1, 'manual_operations' => -1, 'commands' => -1,
                     'recovery_attempts' => -1, 'unresolved_failures' => -1,
-                    'business_code_change_points' => -1, 'completed' => false,
-                    'result_equivalent' => false, 'security_equivalent' => false, 'cleanup_verified' => false,
+                    'business_code_change_points' => -1, 'measurement_complete' => false,
+                    'completed' => false, 'business_outcome_achieved' => false,
+                    'security_target_met' => false, 'cleanup_verified' => false,
                     'evidence' => [
                         ['kind' => 'structured', 'path' => 'evidence/' . $journeyId . '/' . $system . '-' . $round . '/structured.json', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
                         ['kind' => 'browser', 'path' => 'evidence/' . $journeyId . '/' . $system . '-' . $round . '/browser.json', 'sha256' => '__REQUIRED_EVIDENCE_SHA256__'],
@@ -120,7 +121,19 @@ if ($kind === 'endurance') {
         $journeys[] = ['id' => $journeyId, 'runs' => $runs];
     }
     $document = [
-        'schema' => 'sand-iam.casdoor-comparison/v2', 'candidate' => $candidate,
+        'schema' => 'sand-iam.casdoor-comparison/v3', 'candidate' => $candidate,
+        'comparison_policy' => [
+            'sandiam_acceptance_basis' => 'absolute_target',
+            'comparator_role' => 'relative_observation',
+            'require_comparator_security_target' => false,
+            'require_quantitative_superiority' => false,
+            'quantitative_superiority_claimed' => false,
+        ],
+        'participants' => [
+            'sandiam' => ['id' => '__REQUIRED_SANDIAM_PARTICIPANT_ID__', 'independent' => false, 'webman_experience' => false, 'conflict_statement' => '__REQUIRED_CONFLICT_STATEMENT__'],
+            'casdoor' => ['id' => '__REQUIRED_CASDOOR_PARTICIPANT_ID__', 'independent' => false, 'webman_experience' => false, 'conflict_statement' => '__REQUIRED_CONFLICT_STATEMENT__'],
+            'same_participant' => false,
+        ],
         'reviewer' => ['id' => '__REQUIRED_REVIEWER_ID__', 'independent' => false, 'webman_experience' => false, 'conflict_statement' => '__REQUIRED_CONFLICT_STATEMENT__'],
         'environment' => ['fingerprint' => '__REQUIRED_ENVIRONMENT_SHA256__', 'host' => '__REQUIRED_HOST__', 'browser' => '__REQUIRED_BROWSER__', 'php' => '__REQUIRED_PHP__', 'postgresql' => '__REQUIRED_POSTGRESQL__', 'network_profile' => '__REQUIRED_NETWORK_PROFILE__'],
         'journeys' => $journeys,

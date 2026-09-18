@@ -6,7 +6,7 @@
 
 当前权威源码为未提交的 0.7.3 工作树；非数据库 PHP **171/171**、PHP lint **672/672**、TypeScript/PHP/Dart SDK 回归通过、release hygiene **16/16**、SBOM current、package integrity **25/26**，唯一失败是 clean/tracked 来源。生命周期重新生成前后六个 SQL 载荷摘要一致；dirty review candidate v14 已两次构建字节一致，ZIP SHA-256 为 `e7c932508fba63cec3a0e3776bed9de102f37780ed72ed7d830f1b7315adb801`，并经 Astra/high 源码与测试设计复核 **ACCEPT（P0/P1/P2=0）**。它已完成当前宿主生命周期并通过 D03，但仍不是 clean 正式发布候选。
 
-Endurance v2 的历史离线 contract/tool 结构已由 Astra 验收，但所有 fixture 均短于 86400 秒，真实同一最终候选 24 小时仍未开始；该证据不使稳定性门槛通过。
+Endurance v2 的历史离线 contract/tool 结构已由 Astra 验收；当前门槛已按用户决定改为同一最终候选连续 `28800` 秒。短时 fixture 不使稳定性门槛通过。
 
 当前 demo 最终安装的是 0.7.3 review candidate v14，registry 为 `0.7.3/state=1`，SandIAM 表 86、迁移账本 42/max41，运行载荷与 v14 snapshot 一致。0.7.2→0.7.3 升级、同版本拒绝、卸载、fresh install、已知失败包的官方 `inspect-fresh → manual-cleanup-fresh` 恢复和恢复后再次 fresh install 均通过；48 张非 SandIAM 表指纹不变，Webman captcha HTTP/业务码为 200/200。041 事务回滚演练和最终安装态授权范围 PostgreSQL 集成通过且夹具全部回滚。因此 D03 与安装/升级发布门槛通过；clean 来源 D01 仍等待提交后重建。
 

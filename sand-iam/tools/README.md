@@ -108,7 +108,11 @@ The final-candidate gates remain separate from package construction:
   generated plan digest. Required operator fields are deliberately invalid until
   completed, so a freshly generated report/plan pair cannot pass by accident.
 - `validate-casdoor-comparison.php` validates the external 3-journey ×
-  2-product × 2-round record. Every v2 run has one structured document plus
+  2-product × 2-round v3 record. SandIAM is accepted against its absolute
+  result, security, duration, operation-count, failure and cleanup targets;
+  Casdoor is a relative comparator whose gaps do not make SandIAM fail.
+  Quantitative superiority may be claimed only when the same independent
+  participant completely measured both systems. Every run has one structured document plus
   separately hashed browser, product-system and cleanup artifacts. The
   structured document binds the candidate, environment, journey, product,
   round, timestamps and all measured counters; it also requires globally unique
@@ -140,7 +144,7 @@ The final-candidate gates remain separate from package construction:
   recover from an error, and uninstall cleanly without developer assistance.
 - `run-endurance-acceptance.php` validates and, after explicit runtime
   authorization, runs candidate/health/allow/deny/revoked/audit/metrics probes
-  for at least 24 hours.
+  for at least 8 hours.
 - `verify-endurance-evidence.php` independently recomputes the JSONL hash chain,
   duration, continuity, latency, resource and security thresholds.
 

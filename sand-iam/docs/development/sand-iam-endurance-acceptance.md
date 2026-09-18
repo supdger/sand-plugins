@@ -1,6 +1,6 @@
-# SandIAM 24 小时连续稳定性验收
+# SandIAM 8 小时连续稳定性验收
 
-本门槛只接受同一个最终候选在同一环境连续运行至少 `86400` 秒的原始采样，不接受把多次短跑、
+本门槛只接受同一个最终候选在同一环境连续运行至少 `28800` 秒的原始采样，不接受把多次短跑、
 不同候选或服务重启前后的片段相加。执行前必须取得候选同步、服务启停和验收数据写入授权；
 runner 本身不启动、停止、同步或修改服务。
 
@@ -8,9 +8,9 @@ runner 本身不启动、停止、同步或修改服务。
 
 ### Contract checkpoint（2026-09-12）
 
-按 `write-gate begin --replace` 归档既有 contract：endurance v1 审计为 **4P1 + 3P2**；v2 分三批修复，最终经 Astra 工具复核 **ACCEPT（P0/P1/P2=0）**。该结果只覆盖离线 contract/tool 结构，不代表 ready、真实 HTTP 或真实长跑。协议是协作式可信环境边界：JSONL 哈希链仅提供完整性和篡改可见性，不是签名、身份认证或防伪；Git 未独立重建，collector/probe 真实性依赖受控环境、独立保管和可信对端。所有 fixture 均不是 86400 秒，真实同一最终候选 24 小时运行尚未开始（**0**）。external validators 的 fixture 修复即使离线结构 ACCEPT，也不代表 ready。
+按 `write-gate begin --replace` 归档既有 contract：endurance v1 审计为 **4P1 + 3P2**；v2 分三批修复，最终经 Astra 工具复核 **ACCEPT（P0/P1/P2=0）**。该结果只覆盖离线 contract/tool 结构，不代表 ready、真实 HTTP 或真实长跑。协议是协作式可信环境边界：JSONL 哈希链仅提供完整性和篡改可见性，不是签名、身份认证或防伪；Git 未独立重建，collector/probe 真实性依赖受控环境、独立保管和可信对端。所有 fixture 均不是 28800 秒，真实同一最终候选 8 小时运行尚未开始（**0**）。external validators 的 fixture 修复即使离线结构 ACCEPT，也不代表 ready。
 
-按 Webman/Workerman production baseline 记录 SLO、依赖/I-O、连接预算和 Worker 模型。24 小时
+按 Webman/Workerman production baseline 记录 SLO、依赖/I-O、连接预算和 Worker 模型。8 小时
 runner 直接观察规则 1、3、5、10、11、12；阻塞 I/O、连接池、背压、慢任务、SQL/cache 和
 Worker 数量仍须用各自静态、负载和故障证据补齐，不能被长跑替代。
 
@@ -89,10 +89,10 @@ fsync 失败时同样先恢复可写并 fsync，恢复失败才删除已验证�
 `max_gap_seconds` 必须精确等于两者之和，不能另行放宽。`max_clock_skew_seconds` 为 1–5 秒的冻结
 UTC/单调时间差容差。每条样本携带同一个严格 UTC RFC3339 `run_started_at`、严格 UTC RFC3339
 `wall_time` 和单调整数 `elapsed_microseconds`：首样本必须在 max gap 内，所有间隔都不得超过 max gap，末样本
-必须覆盖 86400 秒且不得越过尾部一个 max gap。墙钟每个 delta 与单调 elapsed delta 的差不得超过冻结
+必须覆盖 28800 秒且不得越过尾部一个 max gap。墙钟每个 delta 与单调 elapsed delta 的差不得超过冻结
 容差；秒级 UTC 相邻样本可相等，但不得倒退，并以累计 wall/monotonic 差校验。慢钟达到冻结容差即失败，
 不以继续采样掩盖；倒退、前跳、非法日期、PHP 日期归一化、NaN、Inf、负数和零/重复 elapsed 均失败。实际运行从共同
-start 基线计满 86400 秒，不因首个 probe 已消耗的时间而把真实满时长拒绝。
+start 基线计满 28800 秒，不因首个 probe 已消耗的时间而把真实满时长拒绝。
 
 metrics 响应还必须按计划 JSON pointer 给出 `boot_id`、`process_group_id` 和
 `supervisor_restart_total`。三者在首样本建立基线，后续每条完全相同；缺失、格式非法或变化即失败，
@@ -217,8 +217,8 @@ candidate/source provenance、ZIP 每个文件 hash/size 与 entry count；再�
 逐样本安全计数器、probe 集合与状态、所有资源阈值、p99 和计数器增量独立复算。它不以 summary 的 `passed` 或摘要数值替代这些检查；summary 只作为必须与复算
 结果一致的冗余绑定。
 
-JSONL 哈希链仅提供完整性和篡改可见性，不是签名、身份认证或防伪机制。metrics、时间口径和真实 24 小时运行
-仍须实际验收；本地 fixture 对 I/O 与 audit 只验证 fail-closed 契约，不构成真实 24 小时或真实 HTTP 通过。
+JSONL 哈希链仅提供完整性和篡改可见性，不是签名、身份认证或防伪机制。metrics、时间口径和真实 8 小时运行
+仍须实际验收；本地 fixture 对 I/O 与 audit 只验证 fail-closed 契约，不构成真实 8 小时或真实 HTTP 通过。
 
 发布条件固定要求：错误率、未授权放行、数据损坏、不可恢复积压、按上述两个维护间隔口径计算的
 retention backlog 以及 Worker exit/restart 增量均为零；其余 RSS、FD、斜率、队列、延迟和采样间隔

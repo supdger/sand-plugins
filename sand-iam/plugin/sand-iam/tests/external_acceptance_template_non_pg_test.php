@@ -164,13 +164,13 @@ try {
         && count($endurance['targets'] ?? []) === 7 && count($casdoor['journeys'] ?? []) === 3
         && array_diff($requiredRetentionMetrics, array_keys($endurance['metrics'] ?? [])) === []
         && array_reduce($requiredRetentionThresholds, static fn (bool $ok, string $key): bool => $ok && ($endurance['thresholds'][$key] ?? null) === 0, true)
-        && $readyEnduranceStatus === 0 && str_contains($readyEnduranceOutput, 'duration_seconds=86400')
+        && $readyEnduranceStatus === 0 && str_contains($readyEnduranceOutput, 'duration_seconds=28800')
         && count($interop['cases'] ?? []) === 7
         && ($recovery['schema'] ?? null) === 'sand-iam.backup-recovery/v3' && ($recoveryPlan['schema'] ?? null) === 'sand-iam.backup-recovery-plan/v2' && count($recovery['evidence'] ?? []) === 8 && ($recovery['run_id'] ?? null) !== null
         && count($independent['steps'] ?? []) === 8 && ($independent['participant']['independent'] ?? null) === false
         && count($casdoor['journeys'][0]['runs'] ?? []) === 4
         && $enduranceStatus !== 0 && (str_contains($enduranceOutput, 'approved host is invalid') || str_contains($enduranceOutput, 'URL is invalid'))
-        && $casdoorStatus !== 0 && str_contains($casdoorOutput, 'reviewer must be identified')
+        && $casdoorStatus !== 0 && str_contains($casdoorOutput, 'sandiam participant must be identified')
         && $interopStatus !== 0 && str_contains($interopOutput, 'reviewer must be independent')
         && $recoveryStatus !== 0 && str_contains($recoveryOutput, 'reviewer must be independent')
         && $readyRecoveryStatus === 0 && str_contains($readyRecoveryOutput, '"real_g": false')
@@ -178,7 +178,7 @@ try {
         && $existingStatus !== 0 && file_get_contents($existingPath) === $existingBytes
         && $symlinkStatus !== 0 && is_link($symlinkPath) && file_get_contents($symlinkTarget) === $symlinkBytes
         && count(array_filter($raceStatuses, static fn (int $status): bool => $status === 0)) === 1
-        && is_array($raceDocument) && ($raceDocument['schema'] ?? null) === 'sand-iam.casdoor-comparison/v2';
+        && is_array($raceDocument) && ($raceDocument['schema'] ?? null) === 'sand-iam.casdoor-comparison/v3';
     if (!$passed) throw new RuntimeException('candidate-bound templates were not complete and fail-closed');
 } finally {
     $removeTree($seed);

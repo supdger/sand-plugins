@@ -14,7 +14,7 @@ $reportPath = realpath($reportPath);
 if (!is_string($reportPath) || !is_file($reportPath) || is_link($reportPath)) throw new RuntimeException('comparison report must be an existing regular file');
 $reportRoot = dirname($reportPath);
 $report = json_decode((string) file_get_contents($reportPath), true, 512, JSON_THROW_ON_ERROR);
-if (!is_array($report) || ($report['schema'] ?? null) !== 'sand-iam.casdoor-comparison/v2') throw new RuntimeException('invalid comparison report schema');
+if (!is_array($report) || ($report['schema'] ?? null) !== 'sand-iam.casdoor-comparison/v3') throw new RuntimeException('invalid comparison report schema');
 
 /** @param list<string> $required @param list<string> $allowed */
 $expectKeys = static function (array $value, array $required, array $allowed, string $label): void {
@@ -24,15 +24,44 @@ $expectKeys = static function (array $value, array $required, array $allowed, st
     if ($unknown !== []) throw new RuntimeException($label . ' has unknown keys: ' . implode(', ', $unknown));
 };
 
-$expectKeys($report, ['schema', 'candidate', 'reviewer', 'environment', 'journeys'], ['schema', 'candidate', 'reviewer', 'environment', 'journeys'], 'report');
+$expectKeys($report, ['schema', 'candidate', 'comparison_policy', 'participants', 'reviewer', 'environment', 'journeys'], ['schema', 'candidate', 'comparison_policy', 'participants', 'reviewer', 'environment', 'journeys'], 'report');
 $candidate = $report['candidate'];
+$comparisonPolicy = $report['comparison_policy'];
+$participants = $report['participants'];
 $reviewer = $report['reviewer'];
 $environment = $report['environment'];
-if (!is_array($candidate) || !is_array($reviewer) || !is_array($environment) || !is_array($report['journeys'])) throw new RuntimeException('comparison report sections must be objects or arrays');
+if (!is_array($candidate) || !is_array($comparisonPolicy) || !is_array($participants) || !is_array($reviewer) || !is_array($environment) || !is_array($report['journeys'])) throw new RuntimeException('comparison report sections must be objects or arrays');
 $expectKeys($candidate, ['version', 'archive_sha256', 'artifact_manifest_sha256'], ['version', 'archive_sha256', 'artifact_manifest_sha256'], 'candidate');
 if (preg_match('/^\d+\.\d+\.\d+$/', (string) $candidate['version']) !== 1) throw new RuntimeException('candidate version must be semantic');
 foreach (['archive_sha256', 'artifact_manifest_sha256'] as $field) {
     if (preg_match('/^[0-9a-f]{64}$/', (string) $candidate[$field]) !== 1) throw new RuntimeException('candidate.' . $field . ' must be SHA-256');
+}
+$comparisonPolicyKeys = ['sandiam_acceptance_basis', 'comparator_role', 'require_comparator_security_target', 'require_quantitative_superiority', 'quantitative_superiority_claimed'];
+$expectKeys($comparisonPolicy, $comparisonPolicyKeys, $comparisonPolicyKeys, 'comparison_policy');
+if (($comparisonPolicy['sandiam_acceptance_basis'] ?? null) !== 'absolute_target'
+    || ($comparisonPolicy['comparator_role'] ?? null) !== 'relative_observation'
+    || ($comparisonPolicy['require_comparator_security_target'] ?? null) !== false
+    || ($comparisonPolicy['require_quantitative_superiority'] ?? null) !== false
+    || !is_bool($comparisonPolicy['quantitative_superiority_claimed'] ?? null)) {
+    throw new RuntimeException('comparison_policy must keep SandIAM absolute acceptance separate from comparator observations');
+}
+$expectKeys($participants, ['sandiam', 'casdoor', 'same_participant'], ['sandiam', 'casdoor', 'same_participant'], 'participants');
+foreach (['sandiam', 'casdoor'] as $system) {
+    $participant = $participants[$system] ?? null;
+    if (!is_array($participant)) throw new RuntimeException($system . ' participant must be an object');
+    $expectKeys($participant, ['id', 'independent', 'webman_experience', 'conflict_statement'], ['id', 'independent', 'webman_experience', 'conflict_statement'], $system . ' participant');
+    if (!is_string($participant['id']) || trim($participant['id']) === '' || $participant['independent'] !== true
+        || $participant['webman_experience'] !== true || !is_string($participant['conflict_statement']) || trim($participant['conflict_statement']) === '') {
+        throw new RuntimeException($system . ' participant must be identified, independent, experienced, and provide a conflict statement');
+    }
+}
+if (!is_bool($participants['same_participant'])) throw new RuntimeException('participants.same_participant must be boolean');
+if (($participants['same_participant'] === true) !== ($participants['sandiam']['id'] === $participants['casdoor']['id'])) {
+    throw new RuntimeException('participants.same_participant must match the participant ids');
+}
+if ($comparisonPolicy['quantitative_superiority_claimed'] === true
+    && $participants['same_participant'] !== true) {
+    throw new RuntimeException('quantitative superiority requires the same independent participant');
 }
 $expectKeys($reviewer, ['id', 'independent', 'webman_experience', 'conflict_statement'], ['id', 'independent', 'webman_experience', 'conflict_statement'], 'reviewer');
 if (!is_string($reviewer['id']) || trim($reviewer['id']) === '' || ($reviewer['independent'] ?? null) !== true
@@ -78,7 +107,7 @@ foreach ($report['journeys'] as $journeyIndex => $journey) {
     $measurements = ['sandiam' => ['duration' => [], 'operations' => []], 'casdoor' => ['duration' => [], 'operations' => []]];
     foreach ($journey['runs'] as $runIndex => $run) {
         if (!is_array($run)) throw new RuntimeException($journeyId . ' run must be an object');
-        $allowedRunKeys = ['system', 'round', 'started_at', 'ended_at', 'duration_seconds', 'manual_operations', 'commands', 'recovery_attempts', 'unresolved_failures', 'business_code_change_points', 'completed', 'result_equivalent', 'security_equivalent', 'cleanup_verified', 'evidence'];
+        $allowedRunKeys = ['system', 'round', 'started_at', 'ended_at', 'duration_seconds', 'manual_operations', 'commands', 'recovery_attempts', 'unresolved_failures', 'business_code_change_points', 'measurement_complete', 'completed', 'business_outcome_achieved', 'security_target_met', 'cleanup_verified', 'evidence'];
         $expectKeys($run, $allowedRunKeys, $allowedRunKeys, $journeyId . ' run');
         $system = $run['system'] ?? null;
         $round = $run['round'] ?? null;
@@ -86,16 +115,26 @@ foreach ($report['journeys'] as $journeyIndex => $journey) {
         $matrixKey = $system . ':' . $round;
         if (isset($matrix[$matrixKey])) throw new RuntimeException($journeyId . ' has duplicate run ' . $matrixKey);
         $matrix[$matrixKey] = true;
-        foreach (['duration_seconds', 'manual_operations', 'commands', 'recovery_attempts', 'unresolved_failures', 'business_code_change_points'] as $field) {
-            if (!is_int($run[$field] ?? null) || $run[$field] < 0) throw new RuntimeException($journeyId . ' ' . $matrixKey . ' has invalid ' . $field);
+        $metricFields = ['duration_seconds', 'manual_operations', 'commands', 'recovery_attempts', 'unresolved_failures', 'business_code_change_points'];
+        foreach ($metricFields as $field) {
+            $value = $run[$field] ?? null;
+            if ($value !== null && (!is_int($value) || $value < 0)) throw new RuntimeException($journeyId . ' ' . $matrixKey . ' has invalid ' . $field);
         }
-        foreach (['completed', 'result_equivalent', 'security_equivalent', 'cleanup_verified'] as $field) {
+        if (!is_bool($run['measurement_complete'] ?? null) || !is_bool($run['security_target_met'] ?? null)) {
+            throw new RuntimeException($journeyId . ' ' . $matrixKey . ' has invalid measurement or security status');
+        }
+        foreach (['completed', 'business_outcome_achieved', 'cleanup_verified'] as $field) {
             if (($run[$field] ?? null) !== true) throw new RuntimeException($journeyId . ' ' . $matrixKey . ' did not prove ' . $field);
         }
-        if ($run['unresolved_failures'] !== 0) throw new RuntimeException($journeyId . ' ' . $matrixKey . ' has unresolved failures');
+        if ($run['measurement_complete'] === true) {
+            foreach ($metricFields as $field) if (!is_int($run[$field])) throw new RuntimeException($journeyId . ' ' . $matrixKey . ' complete measurement is missing ' . $field);
+        }
+        if ($system === 'sandiam' && $run['measurement_complete'] !== true) throw new RuntimeException($journeyId . ' SandIAM measurement is incomplete');
+        if ($system === 'sandiam' && $run['security_target_met'] !== true) throw new RuntimeException($journeyId . ' SandIAM did not meet its security target');
+        if ($system === 'sandiam' && $run['unresolved_failures'] !== 0) throw new RuntimeException($journeyId . ' SandIAM has unresolved failures');
         $startedAt = $parseUtcTimestamp($run['started_at'] ?? null, $journeyId . ' ' . $matrixKey . ' started_at');
         $endedAt = $parseUtcTimestamp($run['ended_at'] ?? null, $journeyId . ' ' . $matrixKey . ' ended_at');
-        if ($endedAt->getTimestamp() - $startedAt->getTimestamp() !== $run['duration_seconds']) {
+        if ($run['duration_seconds'] !== null && $endedAt->getTimestamp() - $startedAt->getTimestamp() !== $run['duration_seconds']) {
             throw new RuntimeException($journeyId . ' ' . $matrixKey . ' timestamps do not match duration');
         }
         if ($system === 'sandiam' && ($run['duration_seconds'] > $journeyTargets[$journeyId]['max_duration_seconds'] || $run['manual_operations'] > $journeyTargets[$journeyId]['max_manual_operations'])) {
@@ -145,7 +184,7 @@ foreach ($report['journeys'] as $journeyIndex => $journey) {
         if (!is_array($structured)) throw new RuntimeException($journeyId . ' ' . $matrixKey . ' structured evidence must be an object');
         $structuredKeys = ['schema', 'journey', 'system', 'round', 'candidate_archive_sha256', 'environment_fingerprint', 'started_at', 'ended_at', 'metrics', 'assertions', 'request_ids', 'business_effect_refs', 'audit_refs', 'artifacts', 'cleanup'];
         $expectKeys($structured, $structuredKeys, $structuredKeys, $journeyId . ' ' . $matrixKey . ' structured evidence');
-        if (($structured['schema'] ?? null) !== 'sand-iam.casdoor-comparison-evidence/v1'
+        if (($structured['schema'] ?? null) !== 'sand-iam.casdoor-comparison-evidence/v2'
             || ($structured['journey'] ?? null) !== $journeyId
             || ($structured['system'] ?? null) !== $system
             || ($structured['round'] ?? null) !== $round
@@ -161,11 +200,11 @@ foreach ($report['journeys'] as $journeyIndex => $journey) {
         foreach ($metricKeys as $field) {
             if (($structured['metrics'][$field] ?? null) !== $run[$field]) throw new RuntimeException($journeyId . ' ' . $matrixKey . ' structured metric mismatch: ' . $field);
         }
-        $assertionKeys = ['completed', 'result_equivalent', 'security_equivalent', 'cleanup_verified'];
+        $assertionKeys = ['measurement_complete', 'completed', 'business_outcome_achieved', 'security_target_met', 'cleanup_verified'];
         if (!is_array($structured['assertions'] ?? null)) throw new RuntimeException($journeyId . ' ' . $matrixKey . ' structured assertions must be an object');
         $expectKeys($structured['assertions'], $assertionKeys, $assertionKeys, $journeyId . ' ' . $matrixKey . ' structured assertions');
         foreach ($assertionKeys as $field) {
-            if (($structured['assertions'][$field] ?? null) !== true) throw new RuntimeException($journeyId . ' ' . $matrixKey . ' structured assertion failed: ' . $field);
+            if (($structured['assertions'][$field] ?? null) !== $run[$field]) throw new RuntimeException($journeyId . ' ' . $matrixKey . ' structured assertion mismatch: ' . $field);
         }
         $requestIds = $structured['request_ids'] ?? null;
         if (!is_array($requestIds) || $requestIds === [] || count($requestIds) !== count(array_unique($requestIds))) {
@@ -200,26 +239,38 @@ foreach ($report['journeys'] as $journeyIndex => $journey) {
         if (($cleanup['verified'] ?? null) !== true || ($cleanup['residual_count'] ?? null) !== 0) {
             throw new RuntimeException($journeyId . ' ' . $matrixKey . ' structured cleanup is incomplete');
         }
-        $measurements[$system]['duration'][] = $run['duration_seconds'];
-        $measurements[$system]['operations'][] = $run['manual_operations'];
+        if (is_int($run['duration_seconds'])) $measurements[$system]['duration'][] = $run['duration_seconds'];
+        if (is_int($run['manual_operations'])) $measurements[$system]['operations'][] = $run['manual_operations'];
     }
     foreach (['sandiam:1', 'sandiam:2', 'casdoor:1', 'casdoor:2'] as $requiredRun) {
         if (!isset($matrix[$requiredRun])) throw new RuntimeException($journeyId . ' is missing ' . $requiredRun);
     }
-    $mean = static fn (array $values): float => array_sum($values) / count($values);
+    $mean = static fn (array $values): ?float => count($values) === 2 ? array_sum($values) / count($values) : null;
     $sandiamDuration = $mean($measurements['sandiam']['duration']);
     $casdoorDuration = $mean($measurements['casdoor']['duration']);
     $sandiamOperations = $mean($measurements['sandiam']['operations']);
     $casdoorOperations = $mean($measurements['casdoor']['operations']);
-    if (!(($sandiamDuration < $casdoorDuration && $sandiamOperations <= $casdoorOperations)
-        || ($sandiamOperations < $casdoorOperations && $sandiamDuration <= $casdoorDuration))) {
-        throw new RuntimeException($journeyId . ' did not prove one better dimension while the other did not regress');
+    if ($comparisonPolicy['quantitative_superiority_claimed'] === true) {
+        foreach ($journey['runs'] as $candidateRun) {
+            if ($candidateRun['measurement_complete'] !== true) {
+                throw new RuntimeException($journeyId . ' quantitative superiority requires complete measurement for every run');
+            }
+        }
+        if ($sandiamDuration === null || $casdoorDuration === null || $sandiamOperations === null || $casdoorOperations === null
+            || !(($sandiamDuration < $casdoorDuration && $sandiamOperations <= $casdoorOperations)
+                || ($sandiamOperations < $casdoorOperations && $sandiamDuration <= $casdoorDuration))) {
+            throw new RuntimeException($journeyId . ' did not prove the claimed quantitative superiority');
+        }
     }
     $summaries[$journeyId] = [
         'sandiam_mean_duration_seconds' => $sandiamDuration,
         'casdoor_mean_duration_seconds' => $casdoorDuration,
         'sandiam_mean_manual_operations' => $sandiamOperations,
         'casdoor_mean_manual_operations' => $casdoorOperations,
+        'casdoor_security_target_runs' => count(array_filter(
+            $journey['runs'],
+            static fn (array $candidateRun): bool => $candidateRun['system'] === 'casdoor' && $candidateRun['security_target_met'] === true,
+        )),
     ];
 }
 
@@ -229,8 +280,11 @@ if (count($seenJourneys) !== count($journeyTargets)) {
 }
 
 echo json_encode([
-    'schema' => 'sand-iam.casdoor-comparison-validation/v2',
+    'schema' => 'sand-iam.casdoor-comparison-validation/v3',
     'passed' => true,
+    'acceptance_basis' => 'sandiam_absolute_target',
+    'comparator_role' => 'relative_observation',
+    'quantitative_superiority_claimed' => $comparisonPolicy['quantitative_superiority_claimed'],
     'journeys_passed' => 3,
     'runs_verified' => 12,
     'evidence_files_verified' => count($seenEvidence),

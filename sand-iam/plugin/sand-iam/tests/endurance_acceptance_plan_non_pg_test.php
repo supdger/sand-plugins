@@ -71,7 +71,7 @@ $plan = [
     'candidate' => ['version' => '0.7.0', 'archive_sha256' => str_repeat('a', 64), 'archive_bytes' => 1, 'artifact_manifest_sha256' => str_repeat('b', 64), 'source_revision' => ['commit' => str_repeat('c', 40), 'tree' => str_repeat('e', 40)]],
     'acceptance_run_id' => 'sand_iam_endurance_0123456789abcdef',
     'environment' => ['id' => 'test-environment'], 'collector' => ['id' => 'test-collector', 'version' => '1.0.0'],
-    'duration_seconds' => 86400, 'interval_seconds' => 60, 'max_jitter_seconds' => 30, 'max_clock_skew_seconds' => 2, 'runtime_identity' => ['boot_id' => '/runtime/boot_id', 'process_group_id' => '/runtime/process_group_id', 'supervisor_restart_total' => '/runtime/supervisor_restart_total'], 'request_timeout_ms' => 5000,
+    'duration_seconds' => 28800, 'interval_seconds' => 60, 'max_jitter_seconds' => 30, 'max_clock_skew_seconds' => 2, 'runtime_identity' => ['boot_id' => '/runtime/boot_id', 'process_group_id' => '/runtime/process_group_id', 'supervisor_restart_total' => '/runtime/supervisor_restart_total'], 'request_timeout_ms' => 5000,
     'allow_loopback_http' => false, 'approved_hosts' => ['endurance.example.invalid'],
     'targets' => $targets, 'metrics' => $metrics, 'thresholds' => $thresholds,
 ];
@@ -106,7 +106,7 @@ try {
     $v1 = $plan; $v1['schema'] = 'sand-iam.endurance-plan/v1';
     file_put_contents($seed, json_encode($v1, JSON_THROW_ON_ERROR));
     [$v1Status, $v1Output] = $run($seed);
-    $short = $plan; $short['duration_seconds'] = 86399;
+    $short = $plan; $short['duration_seconds'] = 28799;
     file_put_contents($seed, json_encode($short, JSON_THROW_ON_ERROR));
     [$shortStatus, $shortOutput] = $run($seed);
     $missing = $plan; array_pop($missing['targets']);
@@ -141,9 +141,9 @@ try {
     $overRange = $maximumRange; ++$overRange['duration_seconds'];
     if (!chmod($seed, 0600)) throw new RuntimeException('cannot reopen plan fixture'); file_put_contents($seed, json_encode($overRange, JSON_THROW_ON_ERROR));
     [$overRangeStatus, $overRangeOutput] = $run($seed);
-    if (!($validStatus === 0 && str_contains($validOutput, 'duration_seconds=86400')
+    if (!($validStatus === 0 && str_contains($validOutput, 'duration_seconds=28800')
         && $v1Status !== 0 && str_contains($v1Output, 'v1 evidence cannot pass release verification')
-        && $shortStatus !== 0 && str_contains($shortOutput, 'at least 86400 seconds')
+        && $shortStatus !== 0 && str_contains($shortOutput, 'at least 28800 seconds')
         && $missingStatus !== 0 && str_contains($missingOutput, 'required category exactly once')
         && $unsafeStatus !== 0 && str_contains($unsafeOutput, 'must use HTTPS')
         && $secretStatus !== 0 && str_contains($secretOutput, 'must not contain credentials')
@@ -176,8 +176,8 @@ try {
     $previousHash = str_repeat('0', 64);
     $lines = ''; $records = [];
     $requestSequence = 0;
-    for ($iteration = 0; $iteration <= 962; ++$iteration) {
-        $elapsed = $iteration === 0 ? 1000000 : ($iteration === 962 ? 86401500001 : (1500000 + (($iteration - 1) * 90000000)));
+    for ($iteration = 0; $iteration <= 322; ++$iteration) {
+        $elapsed = $iteration === 0 ? 1000000 : ($iteration === 322 ? 28801500001 : (1500000 + (($iteration - 1) * 90000000)));
         $probes = [];
         foreach ($targets as $target) {
             $assertions = [];
@@ -217,8 +217,8 @@ try {
     file_put_contents($evidencePath, $lines);
     $summary = [
         'schema' => 'sand-iam.endurance-report/v2', 'passed' => true, 'identity' => $identity, 'candidate' => $plan['candidate'],
-        'acceptance_run_id' => $plan['acceptance_run_id'], 'started_at' => '2026-09-12T00:00:00Z', 'runtime_identity' => ['boot_id' => 'boot-test-001', 'process_group_id' => 'group-test-001', 'supervisor_restart_total' => '9007199254740992'], 'duration_seconds' => 86401.5, 'duration_microseconds' => 86401500001, 'samples' => 963,
-        'checks' => ['passed' => 6741, 'total' => 6741, 'failed' => 0, 'error_rate' => 0],
+        'acceptance_run_id' => $plan['acceptance_run_id'], 'started_at' => '2026-09-12T00:00:00Z', 'runtime_identity' => ['boot_id' => 'boot-test-001', 'process_group_id' => 'group-test-001', 'supervisor_restart_total' => '9007199254740992'], 'duration_seconds' => 28801.500001, 'duration_microseconds' => 28801500001, 'samples' => 323,
+        'checks' => ['passed' => 2261, 'total' => 2261, 'failed' => 0, 'error_rate' => 0],
         'evidence' => ['jsonl' => basename($evidencePath), 'sha256' => hash('sha256', $lines), 'final_record_sha256' => $previousHash],
     ];
     file_put_contents($summaryPath, json_encode($summary, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
@@ -276,7 +276,7 @@ try {
     $negativeResults['zero_elapsed'] = $reject(static function (array &$samples): void { $samples[1]['elapsed_microseconds'] = 0; });
     $negativeResults['oversize_gap'] = $reject(static function (array &$samples): void { $samples[1]['elapsed_microseconds'] = 91000001; });
     $negativeResults['first_gap'] = $reject(static function (array &$samples): void { $samples[0]['elapsed_microseconds'] = 90000001; });
-    $negativeResults['tail_gap'] = $reject(static function (array &$samples): void { $samples[count($samples) - 1]['elapsed_microseconds'] = 86491000000; });
+    $negativeResults['tail_gap'] = $reject(static function (array &$samples): void { $samples[count($samples) - 1]['elapsed_microseconds'] = 28891000000; });
     $negativeResults['wall_back'] = $reject(static function (array &$samples): void { $samples[2]['wall_time'] = $samples[1]['wall_time']; });
     $negativeResults['wall_forward'] = $reject(static function (array &$samples): void { $samples[2]['wall_time'] = '2026-09-12T00:10:00Z'; });
     $negativeResults['wall_slow_9s'] = $reject(static function (array &$samples): void { $samples[2]['wall_time'] = '2026-09-12T00:01:23Z'; });
@@ -337,7 +337,7 @@ try {
     $negativeResults['plan_threshold'] = $verify($seed, $evidencePath, $summaryPath, $archivePath, $manifestPath);
     if (!chmod($seed, 0600)) throw new RuntimeException('cannot restore final plan fixture'); file_put_contents($seed, json_encode($plan, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
     $negativePassed = array_reduce($negativeResults, static fn (bool $carry, array $result): bool => $carry && $result[0] !== 0, true);
-    if (!($verifiedStatus === 0 && str_contains($verifiedOutput, 'samples=963') && $maximumRangeVerifierStatus !== 0 && !str_contains($maximumRangeVerifierOutput, 'endurance plan validation failed') && $overRangeVerifierStatus !== 0 && str_contains($overRangeVerifierOutput, 'endurance plan validation failed') && $keyOrderResult[0] === 0 && $negativePassed)) {
+    if (!($verifiedStatus === 0 && str_contains($verifiedOutput, 'samples=323') && $maximumRangeVerifierStatus !== 0 && !str_contains($maximumRangeVerifierOutput, 'endurance plan validation failed') && $overRangeVerifierStatus !== 0 && str_contains($overRangeVerifierOutput, 'endurance plan validation failed') && $keyOrderResult[0] === 0 && $negativePassed)) {
         throw new RuntimeException('endurance verifier did not independently accept and reject evidence: ' . json_encode([
             'verified' => [$verifiedStatus, $verifiedOutput], 'maximum_range_verifier' => [$maximumRangeVerifierStatus, $maximumRangeVerifierOutput], 'over_range_verifier' => [$overRangeVerifierStatus, $overRangeVerifierOutput], 'key_order' => $keyOrderResult, 'negative' => $negativeResults,
         ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
