@@ -7,7 +7,17 @@
 签名链初审为 **3P2**；修复后 Astra **ACCEPT（P0/P1/P2=0）**，helper SHA-256 `78f9…`。临时测试签名仅供非正式测试；受控目录、同 UID TOCTOU、真实密钥信任和 Git 独立重建仍未形成正式证据。正式 signing 未执行，发布 **0/10**、FLOW **28/48**、F/L/D 不变。
 
 > 当前 Goal 直接推进本队列；遗留 Codex/Cursor Autopilot 与 DETECT 均保持关闭。
+> 当前主责（2026-09-13）：前后端全部由 Codex 接管，Astra 负责前端设计与实现，不同上下文 Astra 独立验收；不向 Cursor 派发或等待交付。下方历史队列中的 Cursor 独占、禁止 Codex 修改、交付 Cursor 和恢复 Autopilot 指令均已失效。
 > 下方旧队列只作历史证据索引，旧勾选和旧“进行中”不自动计入当前 FLOW。
+> 执行策略以 [完整开源成品交付计划](../../sand-iam/docs/development/sand-iam-terminal-release-runbook.md) 为准；当前动作和证据以 [任务看板](../../sand-iam/docs/development/sand-iam-task-board.md) 为准。OSS 编号保持不变，下面已完成批次和来源快照不构成当前业务实现的串行前置条件。
+>
+> **2026-09-18 当前状态**：连续稳定性固定从
+> `2026-09-18 00:44:34 +08:00` 起算，至 `09:29:40` 已连续
+> `31506.007` 秒，**3682/3682** 检查通过，且不重启计时。用户已确认
+> 编号业务步骤计数口径；J2 分类与 J3 缺少 `sand_iam:grant:save` 的两轮
+> 403/零残留补证均已闭合，Astra/high 最终复核
+> **ACCEPT（P0/P1/P2=0）**。当前 **FLOW 48/48、七链 7/7、发布门槛
+> 10/10**。Casdoor 的安全差距只作相对观察，不阻塞 SandIAM。
 
 - [x] OSS-00 · 只读重建基线并归位现有 README、看板与验收账本
   - 验收：锁定当前 SandIAM tree、SandAdmin H1 lock、review-only 包摘要、23/23 包内检查、旧循环关闭状态；历史 28/48 不自动继承，当前复核 0/48，发布门槛 0/10。
@@ -19,25 +29,27 @@
 - [x] OSS-03 · 完成不需宿主写入的发布预门禁
   - 验收：历史 `0.7.0-v70/v71` 仅作追溯，不能作为 0.7.1 证据。v12 内容自洽，但其旧 verifier 对 `release/unsigned`、clean committed source/hygiene PASS 的自报已被独立 Astra 推翻：它只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件；v12 仅为历史快照，正式来源 REJECT，不能作升级包。当前工作树有 22 项 tracked changes 与 6 个 untracked path roots，final commit/tree/ZIP pending。源码已有 LICENSE、NOTICE、私密漏洞报告入口和 DCO；可信签名、clean provenance、宿主与 F/L/D 证据仍缺。默认关闭的 retention worker、目录 Sync outbox、OIDC back-channel dead 恢复、85/85 环境键预检及 24 小时零容忍口径仅有静态/行为证据；PostgreSQL 用例未获授权执行，不计运行验收。
   - 执行记录：`.codex/autopilot/executions/OSS-03.md`
-- [ ] OSS-04 · 提交首条真实业务链的一次性精确授权清单并执行
-  - 验收：一次只推进一条链，按复现 → 权威源码 → 自动回归 → demo 实测 → 独立验收闭合；需要数据库写入、迁移、服务启停或宿主同步时先取得明确授权。
-  - 当前：A′ 已按授权提交为 `61a7f13821980deca8479f9c9e5e872be92cf72a`，独立范围复核 **ACCEPT**，未 push；A′ 只包含白名单 43 files（A=4、M=39、D=0），无 migration/Vue/TS/越界路径。当前工作树 non-clean，有 22 项 tracked changes 与 6 个 untracked path roots。v12 内容自洽，但旧 verifier 对 `release/unsigned`、clean committed source/hygiene PASS 的自报已被独立 Astra 推翻：它只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件；v12 仅为历史快照，正式来源 REJECT，不能作升级包。final commit/tree/ZIP pending；主树 integrity **25/26**，唯一失败为 clean/tracked。Composer **58** 与 TypeScript `dist` **4** 已完成双隔离重建及锁校验。两次测试选择器偏差和只读 DB 复核仅能证明时间窗口内未见可见写入，不能证明此前/窗口外未写入：86 tables、ledger 38 rows、max revision 37、revision 038 rows 0、runtime 仍 0.7.0。B′/C′/D′ 尚未执行，G 未授权；不得抬高发布 **0/10**、FLOW **28/48** 或任何业务链计数。
-- [ ] OSS-05 · 完成剩余真实链、外部互操作、独立体验、24 小时稳定性和发布包终验
-  - 验收：FLOW 48/48、发布门槛 10/10、无发布阻塞缺陷；不包含 push、正式 Release、部署或线上验证。
+- [x] OSS-04 · 推进首条真实业务链的必要实现与适用验收
+  - 执行：每个实现切片围绕一条业务链；已完成切片交真实验收或独立复核后，继续无直接依赖的下一需求，不等待整链或发布门槛全部通过。已有实现转真实验收，未核查不当作全局阻塞；按现有授权推进，不重复索取同一有效授权。
+  - 当前动作：以任务看板当前业务段为准，按登录与授权、非 AI 业务应用、机器服务及其必要依赖选择原需求。下列包与来源信息是既有时点记录，只限制实际依赖它的安装或发布动作。
+  - 历史来源 checkpoint：A′ 已按授权提交为 `61a7f13821980deca8479f9c9e5e872be92cf72a`，独立范围复核 **ACCEPT**，未 push；A′ 只包含白名单 43 files（A=4、M=39、D=0），无 migration/Vue/TS/越界路径。当前工作树 non-clean，有 22 项 tracked changes 与 6 个 untracked path roots。v12 内容自洽，但旧 verifier 对 `release/unsigned`、clean committed source/hygiene PASS 的自报已被独立 Astra 推翻：它只看 tracked dirty 状态，漏掉 62 个 ignored vendor/dist 来源文件；v12 仅为历史快照，正式来源 REJECT，不能作升级包。final commit/tree/ZIP pending；主树 integrity **25/26**，唯一失败为 clean/tracked。Composer **58** 与 TypeScript `dist` **4** 已完成双隔离重建及锁校验。两次测试选择器偏差和只读 DB 复核仅能证明时间窗口内未见可见写入，不能证明此前/窗口外未写入：86 tables、ledger 38 rows、max revision 37、revision 038 rows 0、runtime 仍 0.7.0。B′/C′/D′ 尚未执行，G 未授权；不得抬高发布 **0/10**、FLOW **28/48** 或任何业务链计数。
+- [x] OSS-05 · 完成剩余真实链、外部互操作、独立体验、8 小时稳定性和发布包终验
+  - 执行：剩余链的独立实现和具备条件的真实验收与 OSS-04 并行，避免共享文件/数据库/服务争用；最终仍须 FLOW 48/48、发布门槛 10/10、无发布阻塞缺陷。不包含 push、正式 Release、部署或线上验证。
+  - 辅助工作只在证明解除当前业务动作的必要依赖时执行；已有 runner 不因存在就必须继续扩建，最终签名、完整生命周期、外部对端与独立体验全部保留；8 小时稳定性已通过。
   - 当前预备：已增加候选绑定模板、24 小时 runner/独立 verifier、Casdoor 3 旅程 × 双方 2 轮证据门禁、七类标准客户端/真实对端互操作验证器、隔离备份恢复验证器及未参与开发者公开文档交付验证器，回归 114/114；未实际运行，不计通过。记录：`.codex/autopilot/executions/OSS-05-preflight.md`。
 
 ---
 
 ## 历史队列（停止，不作为自动执行入口）
 
-## 当前唯一产品主线／目标纠偏（2026-09-08）
+### 历史产品主线／目标纠偏（2026-09-08）
 
 - SandIAM 权威源码的完成标准是七条真实业务闭环 **F01–F07 全部 7/7**，并继续完成适用的 **L/D** 关口；当前模块 **20/20** 只代表实现，不代表插件完成。
 - SandPackage 6.1.4 下“既有 replacement `8ecc5cec…f9e9f` 的正式只读 Gate A”已由实施者执行并经独立复核 **ACCEPT**；它不等于当前候选替换、registry/数据库恢复、retry/runtime 或宿主完成。至此冻结恢复支线，不再占用 SandIAM 产品主线。新的宿主/SandPackage 问题仅一次性交接至 `/Users/code/project/sandadmin`，SandIAM 当前任务不得继续修改宿主。
 - SandAI 明确排除，由 `/Users/code/project/sand_ai` 自行核验；SandIAM 可用行业中立或非 SandAI 的受控调用端完成本插件相应闭环。
 - 以一条真实链端到端为批次：页面进入 → 保存 → 刷新 → 实际生效 → 允许/拒绝 → 撤销/恢复 → 审计 → 清理。每条只在完整闭环后做一次独立验收；禁止以静态、模拟、候选或文档计数作为业务完成。CLI 优先，浏览器仅用于最终真实页面验收。
 
-## SandIAM 终极产品闭环（当前）
+### 历史 SandIAM 终极产品闭环
 
 范围：SandIAM 是依托 SandAdmin 交付、但应用用户与运行时鉴权不依赖宿主后台账号的完整 IAM。能力对标 Casdoor 的 IAM 核心，并增加 Sand 原生的语义服务授权、数据范围、接口治理和开发者接入体验。正常插件演示与验收使用 `/Users/code/project/sand_plugins/sandadmin-demo-host`（服务端为其 `server/` 子目录）；`/Users/code/project/sandadmin` 保持纯净通用宿主，不作为 SandIAM 演示目标。本队列只处理 IAM；Cursor 独占 `sand-iam/sandadmin-artd/src/views/plugin/sand-iam/**`，Codex 不修改该目录。
 
