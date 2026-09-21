@@ -1,24 +1,22 @@
 # SandAdmin demo
 
 统一演示环境位于 `/Users/code/project/sand_demo`，不属于本迁移仓库。SandAdmin 的唯一权威来源是
-`supdger/sandadmin`，插件源码分别属于各自独立仓库。演示环境只通过 Composer 和插件 Release
-消费已发布版本，不能反向成为 SandAdmin 或插件的源码。
+`supdger/sandadmin`，插件源码分别属于各自独立仓库。演示环境只从 SandAdmin 的 clean revision
+单向同步完整前后端源码，并通过插件 Release 消费业务插件，不能反向成为 SandAdmin 或插件的源码。
 
 ## 准备 SandAdmin
 
 1. 选择已经完成零业务插件检查的 SandAdmin tag、候选版本或明确 commit。
-2. 在 `/Users/code/project/sand_demo/server` 从 Packagist 安装明确版本，例如：
-
-   ```bash
-   composer require supdger/sandadmin:6.1.5-rc.1 --with-all-dependencies
-   ```
-
-3. 检查 `server/composer.lock` 中的版本和 source revision；正式验收只接受已发布版本。
+2. 将该 revision 的 `server/` 与 `sandadmin-artd/` 单向同步到
+   `/Users/code/project/sand_demo`，保护 demo 的环境、数据库/缓存配置、依赖、运行数据、
+   JWT 配置、候选目录和业务插件副本。
+3. 检查 `sandadmin-host.lock` 中的 source revision 和 clean 状态；正式验收只接受经过
+   源码与构建验证的 clean revision。
 4. 从插件独立仓库取得 Release ZIP，在 demo 或可丢弃副本中完成安装、权限、
    业务链、升级和卸载验收。
 
-`sand_demo/sandadmin-artd` 是独立前端消费工程，不从 SandAdmin 源码仓库复制。更新 Composer
-依赖不授权数据库创建或迁移、服务启停或插件生命周期操作。
+在 demo 中分别对 `server/composer.lock` 和 `sandadmin-artd/pnpm-lock.yaml` 安装依赖并做
+命令发现、类型检查或生产构建。源码同步和依赖安装不授权数据库创建或迁移、服务启停或插件生命周期操作。
 
 ## 插件候选
 
