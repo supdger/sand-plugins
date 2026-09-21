@@ -5,18 +5,20 @@ DELETE FROM "sand_system_role_menu" WHERE "menu_id" IN (
   SELECT "id" FROM "sand_system_menu"
   WHERE "slug" LIKE 'sandworkflow:%'
      OR "component" LIKE '/plugin/sandworkflow/%'
-     OR "code" IN ('SandWorkflow','SandWorkflowCenter','SandWorkflowManage')
-     OR "name" LIKE 'sandworkflow/%'
-     OR "name" = 'SandWorkflow 工作流'
+     OR "code" = 'SandWorkflow'
+     OR "code" = 'SandWorkflowCenter'
+     OR "code" = 'SandWorkflowManage'
+     OR "code" LIKE 'sandworkflow/%'
      OR "path" LIKE '/sandworkflow%'
 );
 
 DELETE FROM "sand_system_menu"
 WHERE "slug" LIKE 'sandworkflow:%'
    OR "component" LIKE '/plugin/sandworkflow/%'
-   OR "code" IN ('SandWorkflow','SandWorkflowCenter','SandWorkflowManage')
-   OR "name" LIKE 'sandworkflow/%'
-   OR "name" = 'SandWorkflow 工作流'
+   OR "code" = 'SandWorkflow'
+   OR "code" = 'SandWorkflowCenter'
+   OR "code" = 'SandWorkflowManage'
+   OR "code" LIKE 'sandworkflow/%'
    OR "path" LIKE '/sandworkflow%';
 
 DROP TABLE IF EXISTS "sand_workflow_log";
