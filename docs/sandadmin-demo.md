@@ -7,20 +7,14 @@
 ## 准备 SandAdmin
 
 1. 选择已经完成零业务插件检查的 SandAdmin tag、候选版本或明确 commit。
-2. 在 `/Users/code/project/sand_demo/server` 配置 SandAdmin VCS 仓库：
-
-   ```bash
-   composer config repositories.sandadmin vcs https://github.com/supdger/sandadmin
-   ```
-
-3. 安装明确版本，例如：
+2. 在 `/Users/code/project/sand_demo/server` 从 Packagist 安装明确版本，例如：
 
    ```bash
    composer require supdger/sandadmin:6.1.5-rc.1 --with-all-dependencies
    ```
 
-4. 检查 `server/composer.lock` 中的版本和 source revision；正式验收只接受已发布版本。
-5. 从插件独立仓库取得 Release ZIP，在 demo 或可丢弃副本中完成安装、权限、
+3. 检查 `server/composer.lock` 中的版本和 source revision；正式验收只接受已发布版本。
+4. 从插件独立仓库取得 Release ZIP，在 demo 或可丢弃副本中完成安装、权限、
    业务链、升级和卸载验收。
 
 `sand_demo/sandadmin-artd` 是独立前端消费工程，不从 SandAdmin 源码仓库复制。更新 Composer
