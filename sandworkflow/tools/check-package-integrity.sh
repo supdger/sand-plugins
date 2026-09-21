@@ -12,6 +12,9 @@ fail() {
 for path in \
   "${package_root}/info.ini" \
   "${package_root}/config.json" \
+  "${package_root}/README.md" \
+  "${package_root}/LICENSE" \
+  "${package_root}/NOTICE" \
   "${package_root}/install.sql" \
   "${package_root}/update.sql" \
   "${package_root}/uninstall.sql" \
@@ -42,6 +45,15 @@ state="$(metadata_value state)"
 [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "version must be semantic"
 [[ "${support}" == "6.x" ]] || fail "support must be 6.x"
 [[ "${state}" == "2" ]] || fail "source package state must be 2"
+
+grep -Fq "GNU AFFERO GENERAL PUBLIC LICENSE" "${package_root}/LICENSE" \
+  || fail "LICENSE must contain the GNU Affero General Public License"
+grep -Fq "Version 3, 19 November 2007" "${package_root}/LICENSE" \
+  || fail "LICENSE must be AGPL version 3"
+grep -Fq "https://github.com/zhangjinlibra/workflow-web" "${package_root}/NOTICE" \
+  || fail "NOTICE must retain the workflow-web upstream source"
+grep -Fq "GNU Affero General Public License version 3" "${package_root}/NOTICE" \
+  || fail "NOTICE must retain the upstream AGPL-3.0 declaration"
 
 grep -Eq "['\"]version['\"][[:space:]]*=>[[:space:]]*['\"]${version//./\\.}['\"]" \
   "${plugin_root}/config/app.php" \

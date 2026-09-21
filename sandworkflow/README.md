@@ -6,6 +6,14 @@ SandWorkflow 是 SandAdmin 的 PostgreSQL 工作流插件，提供流程分组�
 
 > **权威源码**：本目录是 `sand-plugins` 工作区中 SandWorkflow 的唯一权威源码单元。`/Users/code/project/sand_plugins/sandadmin-demo-host` 的安装副本只用于受控同步与真实验收，不能作为并行开发源。`/Users/code/project/sandadmin` 是纯净通用宿主，只用于零插件基线。同步规则和迁移记录见 [SOURCE_OF_TRUTH.md](SOURCE_OF_TRUTH.md)。
 
+## 许可证与上游
+
+SandWorkflow 包含基于
+[`zhangjinlibra/workflow-web`](https://github.com/zhangjinlibra/workflow-web)
+修改的流程设计器代码。上游及本衍生发行包均适用 GNU Affero General
+Public License version 3；完整条款见 [LICENSE](LICENSE)，来源和修改范围见
+[NOTICE](NOTICE)。保留这些材料不代表本插件是上游项目的官方发行版，也不授予其商标权。
+
 ## 兼容性
 
 | 项目 | 要求 |
@@ -40,6 +48,7 @@ SandWorkflow 是 SandAdmin 的 PostgreSQL 工作流插件，提供流程分组�
 
 - [ ] `info.ini`、README、发布说明和包版本一致。
 - [ ] 后端载荷、前端载荷、生命周期 SQL 和文档都包含在发布包中。
+- [ ] `LICENSE` 与 `NOTICE` 已包含在发布包中，且上游来源和 AGPL-3.0 声明未被删除。
 - [ ] 在干净 PostgreSQL 宿主完成安装、权限授予和核心流程验证。
 - [ ] 升级或卸载涉及数据时，已记录实际验证范围和备份策略。
 - [ ] 随包附带适用的许可证、NOTICE 和第三方声明；不得删除继承文件中的归属信息。

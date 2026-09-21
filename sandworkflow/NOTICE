@@ -1,0 +1,16 @@
+SandWorkflow distribution notice
+
+SandWorkflow contains modified frontend workflow-designer code derived from:
+
+  workflow-web
+  https://github.com/zhangjinlibra/workflow-web
+  Upstream license: GNU Affero General Public License version 3
+
+The upstream project describes this component as the open-source BeeFlow
+workflow designer. SandWorkflow adapts the designer to the SandAdmin plugin
+layout, APIs, PostgreSQL lifecycle, permissions, and runtime contracts.
+
+SandWorkflow is distributed under the GNU Affero General Public License
+version 3. The complete license text is included in LICENSE. This notice does
+not grant trademark rights and does not describe SandWorkflow as an official
+release of the upstream project.
