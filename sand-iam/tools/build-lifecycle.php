@@ -59,6 +59,7 @@ $migrations = [
     '039_service_grant_nullable_data_class.pgsql',
     '040_passkey_auth_challenge_identity.pgsql',
     '041_authorization_scope_integrity.pgsql',
+    '042_permission_menu_hierarchy.pgsql',
 ];
 
 /** @return non-empty-string */
@@ -251,14 +252,24 @@ $installSource = $base . migrationPayload($sourceDirectory, $installNames);
 // than a new migration revision, so it cannot alter the published ledger.
 $updateNames = [
     '041_authorization_scope_integrity.pgsql',
+    '042_permission_menu_hierarchy.pgsql',
 ];
 $updatePreflight = readRequired($root . '/lifecycle/update-072-to-073-preflight.pgsql');
-$updateMigration = readRequired($sourceDirectory . '/041_authorization_scope_integrity.pgsql');
+$updateMigrations = array_map(
+    static fn (string $name): string => withoutOuterTransaction(
+        readRequired($sourceDirectory . '/' . $name),
+        $name
+    ),
+    $updateNames
+);
 $updateSource = "BEGIN;\n"
     . "-- lifecycle source: lifecycle/update-072-to-073-preflight.pgsql\n"
     . rtrim($updatePreflight) . "\n"
-    . "-- lifecycle source: migrations/041_authorization_scope_integrity.pgsql\n"
-    . withoutOuterTransaction($updateMigration, $updateNames[0])
+    . implode('', array_map(
+        static fn (string $name, string $source): string => "-- lifecycle source: migrations/{$name}\n{$source}",
+        $updateNames,
+        $updateMigrations
+    ))
     . "COMMIT;\n";
 $permissions = controllerPermissions($package);
 $catalog = generatedPermissionCatalog(readRequired($sourceDirectory . '/021_admin_permission_catalog.pgsql'));

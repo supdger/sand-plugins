@@ -367,8 +367,9 @@ $assert('generated lifecycle separates full install from guarded 0.7.2 to 0.7.3 
     }
     if ($updateMigrationNames !== [
         '041_authorization_scope_integrity.pgsql',
+        '042_permission_menu_hierarchy.pgsql',
     ]) {
-        throw new RuntimeException('0.7.3 update manifest must contain only 041');
+        throw new RuntimeException('0.7.3 update manifest must contain only 041 and 042');
     }
     $preflight = file_get_contents($root . '/lifecycle/update-072-to-073-preflight.pgsql');
     if (!is_string($preflight) || !str_contains($update, '-- lifecycle source: lifecycle/update-072-to-073-preflight.pgsql')
@@ -509,7 +510,7 @@ $assert('published 0.6.0 migration 021 remains byte-immutable in root and packag
     return true;
 });
 
-$assert('migration ledger catalogs the published baseline and 037-041 self-register with exact checksums', static function () use ($root, $manifestMigrationNames): bool {
+$assert('migration ledger catalogs the published baseline and 037-042 self-register with exact checksums', static function () use ($root, $manifestMigrationNames): bool {
     $ledger = (string) file_get_contents($root . '/migrations/035_schema_migration_ledger.pgsql');
     if ($ledger === '' || !str_contains($ledger, 'CREATE TABLE IF NOT EXISTS sand_iam_schema_migration')
         || !str_contains($ledger, 'migration_file varchar(160) PRIMARY KEY')
@@ -526,7 +527,7 @@ $assert('migration ledger catalogs the published baseline and 037-041 self-regis
         return false;
     }
     foreach ($manifestMigrationNames as $name) {
-        if (in_array($name, ['039_service_grant_nullable_data_class.pgsql', '040_passkey_auth_challenge_identity.pgsql', '041_authorization_scope_integrity.pgsql'], true)) {
+        if (in_array($name, ['039_service_grant_nullable_data_class.pgsql', '040_passkey_auth_challenge_identity.pgsql', '041_authorization_scope_integrity.pgsql', '042_permission_menu_hierarchy.pgsql'], true)) {
             continue;
         }
         if (!str_contains($ledger, "'{$name}'")) {
@@ -585,6 +586,17 @@ $assert('migration ledger catalogs the published baseline and 037-041 self-regis
         || !str_contains($authorizationScopeIntegrity, 'ALTER TABLE sand_iam_policy ALTER COLUMN action TYPE varchar(96)')
         || !str_contains($authorizationScopeIntegrity, 'fk_sand_iam_policy_published_version_owner')
         || !str_contains($authorizationScopeIntegrity, "package_version <> '0.7.3'")) {
+        return false;
+    }
+    $permissionMenuHierarchy = (string) file_get_contents($root . '/migrations/042_permission_menu_hierarchy.pgsql');
+    if ($permissionMenuHierarchy === ''
+        || preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $permissionMenuHierarchy, $permissionMenuChecksum) !== 1
+        || hash('sha256', str_replace($permissionMenuChecksum[1], '__SELF_SHA256__', $permissionMenuHierarchy)) !== $permissionMenuChecksum[1]
+        || !str_contains($permissionMenuHierarchy, "SELECT '042_permission_menu_hierarchy.pgsql', 42")
+        || !str_contains($permissionMenuHierarchy, '(SELECT count(*) FROM sand_iam_schema_migration) <> 43')
+        || !str_contains($permissionMenuHierarchy, 'matched_permissions <> 100')
+        || !str_contains($permissionMenuHierarchy, 'role_set_after IS DISTINCT FROM role_set_before')
+        || !str_contains($permissionMenuHierarchy, "package_version <> '0.7.3'")) {
         return false;
     }
     return str_contains($ledger, 'migration ledger checksum or package-version conflict; refusing to continue')
