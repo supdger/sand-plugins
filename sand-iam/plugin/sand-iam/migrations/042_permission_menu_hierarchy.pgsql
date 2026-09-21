@@ -11,8 +11,11 @@ DECLARE
     target_permission_id bigint;
     old_permission_id bigint;
     old_permission_rows integer;
+    old_permission_status smallint;
     new_permission_id bigint;
     new_permission_rows integer;
+    new_permission_status smallint;
+    active_slug_rows integer;
     target_parent_id bigint;
     parent_rows integer;
     conflicting_code_rows integer;
@@ -141,23 +144,36 @@ BEGIN
             RAISE EXCEPTION 'SandIAM permission hierarchy has no explicit name for %', desired.slug;
         END IF;
 
-        SELECT count(*), min(id) INTO old_permission_rows, old_permission_id
+        SELECT count(*), min(id), min(status) INTO old_permission_rows, old_permission_id, old_permission_status
         FROM sand_system_menu
         WHERE slug = desired.slug
           AND type = 3
           AND code = ''
           AND delete_time IS NULL;
 
-        SELECT count(*), min(id) INTO new_permission_rows, new_permission_id
+        SELECT count(*), min(id), min(status) INTO new_permission_rows, new_permission_id, new_permission_status
         FROM sand_system_menu
         WHERE slug = desired.slug
           AND type = 3
           AND code = desired.slug
           AND delete_time IS NULL;
 
+        SELECT count(*) INTO active_slug_rows
+        FROM sand_system_menu
+        WHERE slug = desired.slug
+          AND delete_time IS NULL;
+        IF active_slug_rows <> old_permission_rows + new_permission_rows THEN
+            RAISE EXCEPTION
+                'SandIAM permission hierarchy found an unrecognized active row shape for %; active %, legacy %, repaired %',
+                desired.slug, active_slug_rows, old_permission_rows, new_permission_rows;
+        END IF;
+
         IF old_permission_rows = 1 AND new_permission_rows = 0 THEN
             target_permission_id := old_permission_id;
         ELSIF old_permission_rows = 1 AND new_permission_rows = 1 THEN
+            IF old_permission_status IS DISTINCT FROM new_permission_status THEN
+                RAISE EXCEPTION 'SandIAM permission hierarchy refuses conflicting active status for %', desired.slug;
+            END IF;
             target_permission_id := old_permission_id;
             INSERT INTO sand_system_role_menu (role_id, menu_id)
             SELECT duplicate_role.role_id, target_permission_id
@@ -178,11 +194,16 @@ BEGIN
                 desired.slug, old_permission_rows, new_permission_rows;
         END IF;
 
-        SELECT count(*), min(id) INTO parent_rows, target_parent_id
-        FROM sand_system_menu
-        WHERE code = desired.parent_code
-          AND type = 2
-          AND delete_time IS NULL;
+        SELECT count(*), min(parent.id) INTO parent_rows, target_parent_id
+        FROM sand_system_menu parent
+        JOIN sand_system_menu root
+          ON root.id = parent.parent_id
+         AND root.code = 'SandIAM'
+         AND root.delete_time IS NULL
+        WHERE parent.code = desired.parent_code
+          AND parent.type IN (1, 2)
+          AND parent.status = 1
+          AND parent.delete_time IS NULL;
         IF parent_rows <> 1 THEN
             RAISE EXCEPTION 'SandIAM permission hierarchy requires exactly one active parent %, found %', desired.parent_code, parent_rows;
         END IF;
@@ -205,7 +226,6 @@ BEGIN
             component = '',
             icon = '',
             is_hidden = 1,
-            status = 1,
             update_time = CURRENT_TIMESTAMP
         WHERE id = target_permission_id
           AND (
@@ -217,7 +237,6 @@ BEGIN
               OR sand_system_menu.component IS DISTINCT FROM ''
               OR sand_system_menu.icon IS DISTINCT FROM ''
               OR sand_system_menu.is_hidden IS DISTINCT FROM 1
-              OR sand_system_menu.status IS DISTINCT FROM 1
           );
         matched_permissions := matched_permissions + 1;
     END LOOP;
@@ -281,14 +300,14 @@ BEGIN
     WHERE migration_file = '042_permission_menu_hierarchy.pgsql';
     IF recorded.revision IS NOT NULL AND (
         recorded.revision <> 42
-        OR recorded.checksum <> '0f581f6093d4ec559aaf4d7a854eef413d5362fbb47542eda793228b7d5e2124'
+        OR recorded.checksum <> '62d79e86170788d40d39b528b604269e439e0d3588c011154c8e12080564fbeb'
         OR recorded.package_version <> '0.7.3'
     ) THEN
         RAISE EXCEPTION 'SandIAM migration 042 ledger identity conflicts with permission menu hierarchy repair';
     END IF;
 END $$;
 
-WITH self_checksum(checksum) AS (VALUES ('0f581f6093d4ec559aaf4d7a854eef413d5362fbb47542eda793228b7d5e2124'))
+WITH self_checksum(checksum) AS (VALUES ('62d79e86170788d40d39b528b604269e439e0d3588c011154c8e12080564fbeb'))
 INSERT INTO sand_iam_schema_migration (migration_file, revision, checksum, package_version, executed_time)
 SELECT '042_permission_menu_hierarchy.pgsql', 42, self_checksum.checksum, '0.7.3', CURRENT_TIMESTAMP
 FROM self_checksum
@@ -301,7 +320,7 @@ BEGIN
     FROM sand_iam_schema_migration
     WHERE migration_file = '042_permission_menu_hierarchy.pgsql'
       AND revision = 42
-      AND checksum = '0f581f6093d4ec559aaf4d7a854eef413d5362fbb47542eda793228b7d5e2124'
+      AND checksum = '62d79e86170788d40d39b528b604269e439e0d3588c011154c8e12080564fbeb'
       AND package_version = '0.7.3';
     IF recorded_rows <> 1 OR (SELECT count(*) FROM sand_iam_schema_migration) <> 43 THEN
         RAISE EXCEPTION 'SandIAM migration 042 did not close the exact 001-042 ledger';
