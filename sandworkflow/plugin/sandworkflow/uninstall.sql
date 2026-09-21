@@ -1,4 +1,6 @@
 -- SandWorkflow PostgreSQL uninstall script.
+BEGIN;
+
 DELETE FROM "sand_system_role_menu" WHERE "menu_id" IN (
   SELECT "id" FROM "sand_system_menu"
   WHERE "slug" LIKE 'sandworkflow:%'
@@ -24,3 +26,5 @@ DROP TABLE IF EXISTS "sand_workflow_instance";
 DROP TABLE IF EXISTS "sand_workflow_definition_version";
 DROP TABLE IF EXISTS "sand_workflow_definition";
 DROP TABLE IF EXISTS "sand_workflow_group";
+
+COMMIT;
