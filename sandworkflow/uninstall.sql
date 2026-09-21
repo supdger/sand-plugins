@@ -9,7 +9,8 @@ DELETE FROM "sand_system_role_menu" WHERE "menu_id" IN (
      OR "code" = 'SandWorkflowCenter'
      OR "code" = 'SandWorkflowManage'
      OR "code" LIKE 'sandworkflow/%'
-     OR "path" LIKE '/sandworkflow%'
+     OR "path" = '/sandworkflow'
+     OR "path" LIKE '/sandworkflow/%'
 );
 
 DELETE FROM "sand_system_menu"
@@ -19,7 +20,8 @@ WHERE "slug" LIKE 'sandworkflow:%'
    OR "code" = 'SandWorkflowCenter'
    OR "code" = 'SandWorkflowManage'
    OR "code" LIKE 'sandworkflow/%'
-   OR "path" LIKE '/sandworkflow%';
+   OR "path" = '/sandworkflow'
+   OR "path" LIKE '/sandworkflow/%';
 
 DROP TABLE IF EXISTS "sand_workflow_log";
 DROP TABLE IF EXISTS "sand_workflow_task_assignee";
