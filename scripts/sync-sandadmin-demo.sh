@@ -2,8 +2,8 @@
 set -euo pipefail
 
 workspace_root="${0:A:h:h}"
-source_root="${SANDADMIN_HOST_SOURCE:-${workspace_root:h}/sandadmin}"
-target_root="${SANDADMIN_HOST_TARGET:-${workspace_root}/sandadmin-demo-host}"
+source_root="${SANDADMIN_SOURCE:-${workspace_root:h}/sandadmin}"
+target_root="${SANDADMIN_DEMO_ROOT:-${workspace_root}/sandadmin-demo}"
 apply=false
 allow_dirty=false
 
@@ -21,7 +21,7 @@ done
   print -u2 "SandAdmin source is incomplete: $source_root"; exit 2;
 }
 [[ -d "$target_root/server" && -d "$target_root/sandadmin-artd" ]] || {
-  print -u2 "Demo host is incomplete: $target_root"; exit 2;
+  print -u2 "SandAdmin demo is incomplete: $target_root"; exit 2;
 }
 
 source_state=clean
@@ -46,7 +46,7 @@ frontend_excludes=(
   '--exclude=.artifacts/' '--exclude=.playwright-cli/'
 )
 
-print "Synchronizing SandAdmin host from $source_root to $target_root ($source_state)"
+print "Preparing SandAdmin demo from $source_root to $target_root ($source_state)"
 rsync "${rsync_arguments[@]}" "${server_excludes[@]}" "$source_root/server/" "$target_root/server/"
 rsync "${rsync_arguments[@]}" "${frontend_excludes[@]}" "$source_root/sandadmin-artd/" "$target_root/sandadmin-artd/"
 
@@ -55,15 +55,15 @@ if ! $apply; then
   exit 0
 fi
 
-host_revision="$(git -C "$source_root" rev-parse HEAD)"
-host_ref="$(git -C "$source_root" describe --tags --exact-match 2>/dev/null || print "commit:$host_revision")"
-cat > "$workspace_root/sandadmin-host.lock" <<EOF
+sandadmin_revision="$(git -C "$source_root" rev-parse HEAD)"
+sandadmin_ref="$(git -C "$source_root" describe --tags --exact-match 2>/dev/null || print "commit:$sandadmin_revision")"
+cat > "$workspace_root/sandadmin-demo.lock" <<EOF
 format=1
 consumer=sand_plugins
-source_revision=$host_revision
-source_ref=$host_ref
+source_revision=$sandadmin_revision
+source_ref=$sandadmin_ref
 source_state=$source_state
 synced_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-target=sandadmin-demo-host
+target=sandadmin-demo
 EOF
-print "SandAdmin host synchronized at $host_revision ($source_state)."
+print "SandAdmin demo prepared at $sandadmin_revision ($source_state)."

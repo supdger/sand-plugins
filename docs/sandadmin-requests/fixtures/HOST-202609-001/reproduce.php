@@ -27,12 +27,12 @@ namespace {
 
     $root = sys_get_temp_dir() . '/host-202609-001-' . bin2hex(random_bytes(8));
     if (!function_exists('runtime_path')) { function runtime_path(): string { global $root; return $root . '/runtime'; } }
-    require_once __DIR__ . '/../../../../sandadmin-demo-host/server/plugin/sandpackage/app/logic/FailedUpgradeIdentityBinding.php';
-    require_once __DIR__ . '/../../../../sandadmin-demo-host/server/plugin/sandpackage/app/logic/FailedUpgradeRecoveryVerifier.php';
-    require_once __DIR__ . '/../../../../sandadmin-demo-host/server/plugin/sandpackage/app/logic/FailedUpgradePackageIdentity.php';
-    require_once __DIR__ . '/../../../../sandadmin-demo-host/server/plugin/sandpackage/app/logic/FailedUpgradeRecoveryInspector.php';
-    require_once __DIR__ . '/../../../../sandadmin-demo-host/server/plugin/sandpackage/app/logic/FailedUpgradeRecoveryFileTransaction.php';
-    require_once __DIR__ . '/../../../../sandadmin-demo-host/server/plugin/sandpackage/app/logic/InstallLogic.php';
+    require_once __DIR__ . '/../../../../sandadmin-demo/server/plugin/sandpackage/app/logic/FailedUpgradeIdentityBinding.php';
+    require_once __DIR__ . '/../../../../sandadmin-demo/server/plugin/sandpackage/app/logic/FailedUpgradeRecoveryVerifier.php';
+    require_once __DIR__ . '/../../../../sandadmin-demo/server/plugin/sandpackage/app/logic/FailedUpgradePackageIdentity.php';
+    require_once __DIR__ . '/../../../../sandadmin-demo/server/plugin/sandpackage/app/logic/FailedUpgradeRecoveryInspector.php';
+    require_once __DIR__ . '/../../../../sandadmin-demo/server/plugin/sandpackage/app/logic/FailedUpgradeRecoveryFileTransaction.php';
+    require_once __DIR__ . '/../../../../sandadmin-demo/server/plugin/sandpackage/app/logic/InstallLogic.php';
 
     $passed = 0;
     $check = static function (bool $ok, string $message) use (&$passed): void { if (!$ok) throw new \RuntimeException($message); $passed++; };

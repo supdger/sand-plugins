@@ -4,4 +4,4 @@ source_revision=07d83d591b85deb83875473687a0d033a418c778
 source_ref=commit:07d83d591b85deb83875473687a0d033a418c778
 source_state=clean
 synced_at_utc=2026-09-15T12:19:37Z
-target=sandadmin-demo-host
+target=sandadmin-demo

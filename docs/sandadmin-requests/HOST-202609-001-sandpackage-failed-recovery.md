@@ -3,7 +3,7 @@
 - Type: `HOST`
 - Status: `local draft / not sent`
 - Scope: neutral SandPackage lifecycle contract. SandIAM is only the frozen demo consumer; this request does not assert a second plugin reproduction.
-- Frozen consumer host: `sandadmin-demo-host`, lock revision `558d92959947230ee562f29e015c62566be58c8e`.
+- Frozen consumer host: `sandadmin-demo`, lock revision `558d92959947230ee562f29e015c62566be58c8e`.
 - Authorization: this evidence did not write a host, database, registry, service, lock file, or deployment. It does not authorize any of those actions, sync, commit, push, or external issue submission.
 
 ## Pre-reproduction fact versus historical artifacts
@@ -23,7 +23,7 @@ This is a SandAdmin/SandPackage defect, not a SandIAM package workaround target.
 Run from this repository:
 
 ```sh
-php docs/host-requests/fixtures/HOST-202609-001/reproduce.php
+php docs/sandadmin-requests/fixtures/HOST-202609-001/reproduce.php
 ```
 
 The fixture loads the frozen demo's real `InstallLogic`, `FailedUpgradeRecoveryInspector`, `FailedUpgradePackageIdentity`, and `FailedUpgradeRecoveryFileTransaction`. It supplies only a local `Server::getIni()` substitute and a unique `sys_get_temp_dir()` tree. It never calls an SQL executor, `Db::connect`, controller, upload extraction, deployment, service registration, or restart. The fixture removes its temporary tree in `finally`.
