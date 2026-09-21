@@ -1,25 +1,30 @@
 # SandAdmin demo
 
-`sandadmin-demo` 是这个迁移仓库保留的本地演示环境。SandAdmin 的唯一权威来源是
-`supdger/sandadmin`，插件源码分别属于各自独立仓库。演示环境只消费已提交版本，
-不能反向成为 SandAdmin 或插件的源码。
+统一演示环境位于 `/Users/code/project/sand_demo`，不属于本迁移仓库。SandAdmin 的唯一权威来源是
+`supdger/sandadmin`，插件源码分别属于各自独立仓库。演示环境只通过 Composer 和插件 Release
+消费已发布版本，不能反向成为 SandAdmin 或插件的源码。
 
 ## 准备 SandAdmin
 
 1. 选择已经完成零业务插件检查的 SandAdmin tag、候选版本或明确 commit。
-2. 运行 `scripts/sync-sandadmin-demo.sh --dry-run`，审查差异和保留路径。
-3. 取得本次写演示环境授权后运行 `scripts/sync-sandadmin-demo.sh --apply`。
-4. 检查生成的 `sandadmin-demo.lock`；正式验收要求 `source_state=clean`。
+2. 在 `/Users/code/project/sand_demo/server` 配置 SandAdmin VCS 仓库：
+
+   ```bash
+   composer config repositories.sandadmin vcs https://github.com/supdger/sandadmin
+   ```
+
+3. 安装明确版本，例如：
+
+   ```bash
+   composer require supdger/sandadmin:6.1.5-rc.1 --with-all-dependencies
+   ```
+
+4. 检查 `server/composer.lock` 中的版本和 source revision；正式验收只接受已发布版本。
 5. 从插件独立仓库取得 Release ZIP，在 demo 或可丢弃副本中完成安装、权限、
    业务链、升级和卸载验收。
 
-脚本保护 `.env`、依赖、runtime、已安装插件和 demo 自有覆盖层。它只准备
-SandAdmin 的 `server/` 与 `sandadmin-artd/`；插件通过插件市场或明确的迁移期
-同步进入 demo。
-
-`--allow-dirty` 只用于本地探索并记录 `dirty-local`，不能进入兼容矩阵、发布或
-正式验收。准备 demo 文件不授权数据库创建或迁移、服务启停、插件安装、提交、
-推送或部署。
+`sand_demo/sandadmin-artd` 是独立前端消费工程，不从 SandAdmin 源码仓库复制。更新 Composer
+依赖不授权数据库创建或迁移、服务启停或插件生命周期操作。
 
 ## 插件候选
 
