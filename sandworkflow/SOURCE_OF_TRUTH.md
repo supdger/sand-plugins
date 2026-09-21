@@ -18,17 +18,26 @@ not copy changes from it into a release without review.
 
 ## Host delivery boundary
 
-SandAdmin is a zero-business-plugin host.  A SandAdmin validation host may
-temporarily receive the exact version of this package as a deployment copy,
-but `server/plugin/sandworkflow`, the matching frontend payload, and any
-Composer autoload entry in that host are deployment/acceptance material only.
-They must not be edited as a second source of truth.
+Normal SandWorkflow demonstrations and acceptance use this configured host:
 
-Before host acceptance, synchronize this complete package to an independent
-SandAdmin validation host, record the package revision and destination, and
-verify that the backend and frontend payloads match the release source.  Then
-run the real PostgreSQL install, core workflow, upgrade, uninstall, and
-post-uninstall host checks.
+```text
+/Users/code/project/sand_plugins/sandadmin-demo-host
+```
+
+It may temporarily receive the exact version of this package as a deployment
+copy, but `plugins/sandworkflow`, `server/plugin/sandworkflow`, the matching
+frontend payload, and any Composer autoload entry there are deployment and
+acceptance material only. They must not be edited as a second source of truth.
+`/Users/code/project/sandadmin` remains a pure, zero-business-plugin SandAdmin
+host for baseline checks; it is not the default synchronization, demonstration
+or acceptance target.
+
+Before host acceptance, synchronize this complete package to the configured
+demo host, record the package revision and destination, and verify that the
+backend and frontend payloads match the release source. Then run the real
+PostgreSQL install, core workflow, upgrade, uninstall, and post-uninstall host
+checks. An explicitly selected separate isolated host may be supplied through
+`SANDADMIN_ROOT`; this does not change the default contract.
 
 ## Migration record
 
