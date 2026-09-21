@@ -1,2 +1,0 @@
-node_modules/
-# dist is the reviewed, locked-toolchain ESM runtime shipped by the SDK.

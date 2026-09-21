@@ -1,4 +1,0 @@
-# The runtime vendor tree is a reviewed, versioned release input. Composer
-# caches remain local build inputs and must never be committed.
-/.composer/
-/.composer-cache/

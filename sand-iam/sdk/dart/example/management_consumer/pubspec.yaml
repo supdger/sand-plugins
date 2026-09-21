@@ -1,7 +1,0 @@
-name: sand_iam_management_consumer_smoke
-publish_to: none
-environment:
-  sdk: '>=3.4.0 <4.0.0'
-dependencies:
-  sand_iam:
-    path: ../..
