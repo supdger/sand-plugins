@@ -155,8 +155,8 @@ export const clientFields: SandIamFormField[] = [
   }),
   field('audience', 'text', {
     required: true,
-    placeholder: '例如：sand-ai',
-    help: '由服务提供方给出，用于确认调用发往正确服务；不要填写网址、模型名或临时备注。'
+    placeholder: '例如：provider-b（以服务提供方为准）',
+    help: '请向服务提供方取得准确值，用于确认调用的目标服务。配套文档服务示例为 provider-b；真实接入请使用提供方配置单中的受众。'
   }),
   statusField
 ]
@@ -179,8 +179,8 @@ export const grantFields: SandIamFormField[] = [
   }),
   field('audience', 'text', {
     required: true,
-    placeholder: '例如：sand-ai',
-    help: '必须与服务调用身份和目标服务约定的 audience 一致；不一致会被拒绝。'
+    placeholder: '例如：provider-b（以服务提供方为准）',
+    help: '从所选调用身份复制“服务受众”，并与服务提供方核对；必须逐字一致。创建后不能更改调用身份、服务动作或受众。'
   }),
   field('quota_policy', 'json', {
     advanced: true,
@@ -244,7 +244,7 @@ export const authPolicyFields: SandIamFormField[] = [
     'registration_enabled',
     '开放注册',
     '关闭注册',
-    '默认关闭。开放后，应用用户可在接入应用中自行注册；关闭后只能由管理员创建用户。',
+    '默认关闭。开放后，员工可在应用门户自行注册；关闭后请使用已启用的邀请流程或已配置的企业登录。后台新建用户记录不会设置登录密码。',
     '2'
   ),
   field('password_min_length', 'number', {
@@ -389,11 +389,12 @@ export const resourceFields: SandIamFormField[] = [
   field('code', 'text', {
     required: true,
     createOnly: true,
-    ...codeGuidance('case')
+    ...codeGuidance('standalone_work_item'),
+    help: '向接入开发者取得资源代码。仅配套工作项示例使用 standalone_work_item；已有业务必须使用其实际鉴权代码，创建后不可修改。'
   }),
   field('name', 'text', { required: true }),
-  field('owner_field', 'text'),
-  field('organization_field', 'text'),
+  field('owner_field', 'text', { placeholder: '例如 owner_identity_id', help: '可选，由开发者提供业务记录中保存所有者身份的字段名。不是员工姓名。' }),
+  field('organization_field', 'text', { placeholder: '例如 organization_id', help: '可选，由开发者提供业务记录的组织字段名。客户主体不是部门；不要把部门名称填在这里。' }),
   statusField
 ]
 
@@ -416,7 +417,7 @@ export const policyFields: SandIamFormField[] = [
   }),
   field('action', 'text', {
     required: true,
-    help: '稳定的业务语义动作，例如 work_item.read；不是页面按钮或 HTTP 方法。'
+    help: '从接入开发者的业务动作清单复制准确值。配套工作项示例读取使用 work_item.read；自行起名不会让业务接口自动支持该动作。'
   }),
   field('effect', 'select', {
     required: true,
@@ -426,10 +427,10 @@ export const policyFields: SandIamFormField[] = [
     ]
   }),
   field('condition', 'condition', {
-    help: '可选。用 equals 或 in 描述何时生效。'
+    help: '可选。由开发者提供业务字段、值和类型，设置这条策略何时生效；没有条件时留空。'
   }),
   field('scope', 'condition', {
-    help: '可选。用 equals 或 in 描述可访问的数据范围。'
+    help: '由开发者提供范围字段、值和类型。留空可能允许全部匹配记录；应用必须据此过滤列表、搜索和单条访问。当前不自动计算员工所属部门。'
   }),
   field('priority', 'number'),
   field('state', 'select', {

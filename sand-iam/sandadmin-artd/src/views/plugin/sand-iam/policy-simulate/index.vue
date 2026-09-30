@@ -1,5 +1,7 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
+  import TaskContinuation from '../components/TaskContinuation.vue'
+  import { useTaskApplication } from '../api/useTaskApplication'
   import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { useAuth } from '@/hooks/core/useAuth'
   import { describeSandIamError } from '../api/errors'
@@ -17,6 +19,7 @@
   const applications = ref<SandIamResourceRow[]>([])
   const identities = ref<SandIamResourceRow[]>([])
   const applicationId = ref('')
+  const taskContextError = useTaskApplication(applicationId, applications)
   const identityId = ref('')
   const resourceCode = ref('')
   const action = ref('')
@@ -246,6 +249,8 @@
 
 <template>
   <div class="sand-iam-page">
+    <TaskContinuation :context="applicationId ? { application_id: Number(applicationId) } : {}" />
+    <ElAlert v-if="taskContextError" class="mb-4" type="warning" :closable="false" :title="taskContextError" />
     <ElCard class="sand-iam-page-card mb-4" shadow="never" v-loading="acting">
       <h2 class="m-0 text-lg font-semibold">策略模拟</h2>
       <p class="mb-4 mt-2 text-sm text-gray-500">

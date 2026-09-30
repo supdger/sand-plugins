@@ -1,9 +1,12 @@
 {
   "schema": "sand-iam.release-build-contract/v1",
-  "kind": "reviewed-runtime-payload-inputs",
+  "kind": "committed-runtime-payload-inputs",
   "source": {
     "formal_builder": "git-blob-only",
-    "repeat_build": "independent-git-stage"
+    "repeat_build": "independent-git-stage",
+    "dependency_strategy": "frozen-git-blobs",
+    "vendor_baseline_commit": "0239981af57155c67af321c4255a33609eb7fed0",
+    "vendor_normalization": "Only vendor/composer/installed.php root package version normalized to 0.7.6; dependency bytes retained from official Git."
   },
   "toolchain": {
     "php": "8.2.29",
@@ -18,7 +21,7 @@
     "lock_sha256": "cb6457572b7e68697ae82b2a282dbf5e67cb4c0626b92696163123579eed9b88",
     "environment": {
       "COMPOSER_DISABLE_NETWORK": "1",
-      "COMPOSER_ROOT_VERSION": "0.7.3"
+      "COMPOSER_ROOT_VERSION": "0.7.6"
     },
     "arguments": [
       "install",
@@ -50,7 +53,7 @@
   "generated_payloads": {
     "plugin/sand-iam/vendor": {
       "file_count": 58,
-      "tree_sha256": "e35c67c2bff009a454b03d96bd182ec7fdec01948740b2d5208c44af5ffa934a"
+      "tree_sha256": "2386f641478cf2cced6be2030a5511376292051bfbbc50d5acf77ccfb6c3e8cd"
     },
     "sdk/typescript/dist": {
       "file_count": 6,

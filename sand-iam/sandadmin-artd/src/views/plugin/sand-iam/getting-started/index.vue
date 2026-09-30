@@ -67,7 +67,7 @@
     {
       id: 'organization',
       title: '客户主体',
-      problem: '把不同客户主体的数据和管理范围分开。',
+      problem: '登记使用系统的公司或客户。只有一家公司自用时填自己公司，不填部门。',
       preparation: '准备客户主体名称和稳定的系统代码。',
       how: '填写名称和系统代码后保存；也可以先点「选择已有记录」，再明确选用一条。保存后本页会重新读取刚保存的记录，确认无误才进入下一步。',
       success: '保存后重新读取刚创建的客户主体，确认无误再继续。',
@@ -118,7 +118,7 @@
     {
       value: 'people',
       title: '让员工登录并分配权限',
-      description: '继续配置身份来源、应用用户、角色、资源和策略。',
+      description: '设置登录方式，邀请员工或开放注册，再分配权限并验证。',
       path: '/sand-iam/people-access',
       permission: 'sand_iam:identity:index'
     },
@@ -539,7 +539,12 @@
   }
 
   function openNext(path: string): void {
-    void router.push(path)
+    void router.push({ path, query: {
+      ...(ids.organization === null ? {} : { organization_id: String(ids.organization) }),
+      ...(ids.application === null ? {} : { application_id: String(ids.application) }),
+      ...(ids.environment === null ? {} : { environment_id: String(ids.environment) }),
+      ...(path === '/sand-iam/people-access' ? { task: 'people-access' } : path === '/sand-iam/connection' ? { task: 'connection' } : {})
+    } })
   }
 
   async function restoreContext(): Promise<void> {
@@ -618,50 +623,51 @@
         :description="pageMessage"
         @close="pageMessage = ''"
       />
-      <section v-if="currentStep !== null" class="sand-iam-getting-started__panel">
+      <!-- 局部步骤快照供子组件插槽使用，完成时卸载旧插槽仍可安全读取。 -->
+      <section v-for="activeStep in (currentStep === null ? [] : [currentStep])" :key="activeStep.id" class="sand-iam-getting-started__panel">
         <div class="sand-iam-getting-started__panel-heading">
           <div>
-            <p class="mb-1 text-sm text-gray-500"> 第 {{ stepIndex(currentStep.id) + 1 }} 步 </p>
-            <h3 class="m-0 text-base font-semibold">{{ currentStep.title }}</h3>
+            <p class="mb-1 text-sm text-gray-500"> 第 {{ stepIndex(activeStep.id) + 1 }} 步 </p>
+            <h3 class="m-0 text-base font-semibold">{{ activeStep.title }}</h3>
           </div>
-          <ElTag :type="records[currentStep.id] === null ? 'info' : 'success'" effect="plain">{{
-            statusText(currentStep.id)
+          <ElTag :type="records[activeStep.id] === null ? 'info' : 'success'" effect="plain">{{
+            statusText(activeStep.id)
           }}</ElTag>
         </div>
-        <p><strong>这一步解决什么问题：</strong>{{ currentStep.problem }}</p>
-        <p><strong>开始前准备：</strong>{{ currentStep.preparation }}</p>
-        <p><strong>在页面上怎么做：</strong>{{ currentStep.how }}</p>
-        <p><strong>成功标志：</strong>{{ currentStep.success }}</p>
-        <p><strong>常见错误如何处理：</strong>{{ currentStep.errors }}</p>
-        <p><strong>下一步去哪里：</strong>{{ currentStep.next }}</p>
-        <div v-if="records[currentStep.id] !== null" class="sand-iam-getting-started__selected">
-          <strong>本次向导已选择：</strong>{{ records[currentStep.id]?.name }}（{{
-            records[currentStep.id]?.code
+        <p><strong>这一步解决什么问题：</strong>{{ activeStep.problem }}</p>
+        <p><strong>开始前准备：</strong>{{ activeStep.preparation }}</p>
+        <p><strong>在页面上怎么做：</strong>{{ activeStep.how }}</p>
+        <p><strong>成功标志：</strong>{{ activeStep.success }}</p>
+        <p><strong>常见错误如何处理：</strong>{{ activeStep.errors }}</p>
+        <p><strong>下一步去哪里：</strong>{{ activeStep.next }}</p>
+        <div v-if="records[activeStep.id] !== null" class="sand-iam-getting-started__selected">
+          <strong>本次向导已选择：</strong>{{ records[activeStep.id]?.name }}（{{
+            records[activeStep.id]?.code
           }}）<span>已通过重新读取确认。</span>
         </div>
         <div class="sand-iam-getting-started__actions">
           <ElButton
-            v-if="currentStep.id !== 'organization'"
+            v-if="activeStep.id !== 'organization'"
             :disabled="saving || verifying !== null"
-            @click="goTo(currentStep.id === 'application' ? 'organization' : 'application')"
+            @click="goTo(activeStep.id === 'application' ? 'organization' : 'application')"
             >上一步</ElButton
           >
           <ElButton
             :loading="candidateLoading"
             :disabled="saving || verifying !== null"
-            @click="loadCandidates(currentStep.id)"
+            @click="loadCandidates(activeStep.id)"
             >选择已有记录</ElButton
           >
           <ElButton
-            v-if="ids[currentStep.id] !== null && records[currentStep.id] === null"
-            :loading="verifying === currentStep.id"
+            v-if="ids[activeStep.id] !== null && records[activeStep.id] === null"
+            :loading="verifying === activeStep.id"
             :disabled="saving"
             @click="retryVerification"
             >重试确认</ElButton
           >
         </div>
         <ElAlert
-          v-if="phases[currentStep.id] === 'created_pending_confirmation'"
+          v-if="phases[activeStep.id] === 'created_pending_confirmation'"
           class="mt-4"
           type="info"
           :closable="false"
@@ -670,8 +676,8 @@
         />
         <ElAlert
           v-if="
-            phases[currentStep.id] === 'save_outcome_unknown' ||
-            phases[currentStep.id] === 'lookup_required'
+            phases[activeStep.id] === 'save_outcome_unknown' ||
+            phases[activeStep.id] === 'lookup_required'
           "
           class="mt-4"
           type="warning"
@@ -680,7 +686,7 @@
           description="请重新登录或获取权限后重试读取；也可按本次系统代码查询，再由你明确选择已有记录。为避免重复创建，不能再次提交。"
         />
         <div
-          v-if="candidates[currentStep.id].length > 0"
+          v-if="candidates[activeStep.id].length > 0"
           class="sand-iam-getting-started__candidate"
         >
           <p class="mt-0 text-sm text-gray-500"> 只有你在这里明确选择的记录，才会用于本次向导。 </p>
@@ -690,7 +696,7 @@
             :disabled="saving || verifying !== null"
             style="width: 100%"
             ><ElOption
-              v-for="row in candidates[currentStep.id]"
+              v-for="row in candidates[activeStep.id]"
               :key="String(row.id)"
               :label="candidateLabel(row)"
               :value="positiveId(row.id) ?? 0"
@@ -703,40 +709,40 @@
           >
         </div>
         <ElEmpty
-          v-else-if="candidatesQueried[currentStep.id]"
+          v-else-if="candidatesQueried[activeStep.id]"
           class="sand-iam-getting-started__candidate-empty"
           description="当前没有可选择的已有记录。你可以创建新的，或联系管理员确认是否有可见记录。"
           :image-size="72"
         />
-        <template v-if="candidatesQueried[currentStep.id]">
-          <p v-if="pendingCodes[currentStep.id] !== null">仅显示与本次系统代码完全一致的记录。当前页未找到时，请继续下一页核对。</p>
+        <template v-if="candidatesQueried[activeStep.id]">
+          <p v-if="pendingCodes[activeStep.id] !== null">仅显示与本次系统代码完全一致的记录。当前页未找到时，请继续下一页核对。</p>
           <ElPagination :current-page="candidatePage" :page-size="100" :total="candidateTotal"
             layout="total, prev, pager, next" :disabled="saving || verifying !== null || candidateLoading"
             @current-change="changeCandidatePage" />
         </template>
         <WizardStepForm
           v-if="
-            canWrite(currentStep.id, records[currentStep.id] !== null) &&
-            (records[currentStep.id] !== null || canPostForPhase(phases[currentStep.id]))
+            canWrite(activeStep.id, records[activeStep.id] !== null) &&
+            (records[activeStep.id] !== null || canPostForPhase(phases[activeStep.id]))
           "
           class="sand-iam-getting-started__form"
-          :step="currentStep.id"
-          :record="records[currentStep.id]"
+          :step="activeStep.id"
+          :record="records[activeStep.id]"
           :parent-label="currentParentLabel"
           :saving="saving || verifying !== null"
           @submit="saveStep"
         />
         <ElEmpty
-          v-else-if="!canWrite(currentStep.id, records[currentStep.id] !== null)"
+          v-else-if="!canWrite(activeStep.id, records[activeStep.id] !== null)"
           description="当前账号没有保存这一步的权限，请联系管理员开通管理范围。"
           :image-size="80"
         />
       </section>
-      <section v-else class="sand-iam-getting-started__panel">
+      <section v-if="currentStep === null" class="sand-iam-getting-started__panel">
         <ElResult
           icon="success"
-          title="基础设置已完成"
-          sub-title="客户主体、接入应用和应用环境均已通过重新读取确认。勾选下一步目标后，只会出现对应入口。"
+          title="公司、应用和环境已登记"
+          sub-title="接下来选择要完成的任务。员工登录和系统调用还需要配置与验证；下一步会保留本次应用和环境。"
         >
           <template #extra>
             <ElCheckboxGroup v-model="selectedGoals" class="sand-iam-getting-started__goals"

@@ -19,6 +19,45 @@ SandIAM 判定身份与权限，应用负责加载真实业务对象并只在允
 所有写请求都应带可追溯的 `X-Request-Id`。对同一次业务意图，超时重试复用相同 request ID 和相同请求内容；
 需要新的业务意图时才生成新的 request ID。凭证、token、短期 context 和一次性秘密不得进入 URL、请求日志或客户端持久化。
 
+## 人员接入：从账号开通到取得令牌
+
+本节给接入开发者，不要求后台管理员或员工拼接请求。先取得部署方的 SandIAM HTTPS 地址、已登记组织/应用代码及两个获准测试账号。可沿用“示例公司 `example-company` / 工作项系统 `work-items`”，但代码必须与实际管理台一致。
+
+账号来源二选一：
+
+| 方式 | 接口及必填值 | 结果 |
+| --- | --- | --- |
+| 接受邀请 | `POST /api/sand-iam/v1/invitations/accept`；`token`、`username`、`password`，可选 `display_name` | 邀请确定所属应用；返回 `data.id/display_name`，随后仍须登录 |
+| 公开注册 | `POST /api/sand-iam/v1/auth/register`；`organization_code`、`application_code`、`username`、`password`，至少实际 `email` 或 `phone`；其他字段按应用要求 | 公开注册及密码方式须开启；可能直接返回会话，或返回 `verification_required` 要求先验证 |
+
+邀请链接由已配置的邀请流程送到本人，不从后台新建身份推导密码。注册若要求验证码或邮箱/手机验证，应完成应用配置的验证步骤；不要关闭安全开关来绕过拒绝。公开注册关闭时使用邀请或已配置企业登录。
+
+### 登录与读取返回值
+
+```http
+POST /api/sand-iam/v1/auth/login
+X-Request-Id: work-items-login-001
+Content-Type: application/json
+
+{"organization_code":"example-company","application_code":"work-items","identifier":"xiaolin","password":"<本人通过邀请或注册设置的密码>","user_agent":"work-items-test"}
+```
+
+`identifier` 是该应用内的用户名、邮箱或手机。账号、密码来自被允许的测试用户，密码只在受控请求体中传输，不把上面占位文字当密码。启用验证码时还需 `captcha_token`；应用应先读取 `/auth/captcha/config` 并完成真实挑战。
+
+普通成功响应的 `data` 包含 `access_token`、`refresh_token`、`token_type=Bearer`、`expires_in`、`session_id` 和 `identity.id/code/display_name`。后端从 `data.access_token` 取用户令牌，业务请求使用 `Authorization: Bearer <access_token>`；PHP SDK 已去掉响应外层，读取 `$login['access_token']`。邀请接受结果、验证码请求受理和 `mfa_required=true` 都不是这个成功结果：MFA 分支先完成挑战，验证完再取得会话。
+
+可运行的[PHP 登录与鉴权最小程序](../../sdk/php/README.md#人员登录与首次鉴权)连接已开通账号，不预置 token。它验证接口级允许/拒绝；读取或修改实际对象须再按下面的数据范围契约或[工作项示例](../../examples/webman-business-app/standalone/README.md)执行实体检查。
+
+### 两个账号的验证顺序
+
+1. 按[管理员工作项例子](sand-iam-operator-guide.md#给两名员工开通账号并分配工作项权限)给小林授予 `operator`，小周不授予。登记 API `standalone_work_item.read`、资源 `standalone_work_item`、动作 `work_item.read`；代码不能互相混用。
+2. 用小林登录取得当前令牌，调用已登记授权接口或实际工作项接口。允许只说明策略通过；范围不匹配仍须拒绝。
+3. 用小周独立登录并调用相同工作项，应拒绝。不要复用小林令牌测试小周。
+4. 撤销小林角色或策略后，使用新的请求编号再访问，应拒绝并没有业务副作用。撤销会话时用撤销前的同一令牌重试并确认拒绝；不要重新登录后拿新令牌测试旧会话。账号仍可用时新登录可以创建新会话，需要恢复权限则重新授权，不恢复旧令牌。
+5. 关联两侧审计。只记录请求编号、结果与非秘密错误码；不记录密码、邀请链接、令牌或完整登录响应。
+
+此说明没有执行目标宿主注册、邀请发送或 HTTP 登录。上述账号、目录登记、业务数据和消息/认证部署条件必须由目标环境实际提供。
+
 ## 最小运行请求契约
 
 `authorization/decide` 必须在服务器拥有用户 Bearer token 后调用；必填 body 是
@@ -89,11 +128,21 @@ allow/deny/revoke/audit 路径。
 
 ## 人员访问的接入步骤
 
-1. 创建客户主体、应用和环境。
-2. 配置身份源、注册/登录方式和应用用户入口。
+1. 创建客户主体、应用和环境，确认公司与部门不是同一概念。
+2. 配置邀请或注册、密码登录和应用入口；接入已有企业账号系统时另配置对应身份源。
 3. 登记用户组、角色、资源和动作，发布最小允许策略。
 4. 使用允许用户和无权用户各完成一次真实访问。
 5. 撤销角色、策略或会话后再次访问，确认被拒绝并核对审计。
+
+## 单对象与列表的数据范围
+
+`condition` 检查服务器提供的请求属性，`scope` 检查服务器加载的业务对象属性；同名字符串不代表同一来源。数字与文本严格区分，`101` 不等于 `"101"`，管理表单选择相应值类型。
+
+现有独立工作项示例从真实业务表读取整数 `organization_id` 和 `owner_identity_id`，由管理员按技术负责人确认的实际编号设置静态范围，例如 `{"equals":{"organization_id":42,"owner_identity_id":101}}`。只有实际公司与人员编号确认为这两个值时才能使用；一条共用角色策略中的固定编号会限制该角色所有成员，不是当前登录用户的动态编号。
+
+部门字段、部门成员关系和业务状态归应用维护。本示例没有部门模型，也不提供“当前部门”变量替换。不要把客户主体当部门，或假定在策略中加入未知字段会自动生效。
+
+SandIAM 的决定不会自动改写业务 SQL。列表读取、搜索、分页、计数和导出必须由应用将返回范围转换为已知字段的可信查询约束，未识别范围应拒绝；直接按 ID 访问还须检查该对象。不能先返回全量数据再仅在页面隐藏，单对象示例也不能替代列表过滤实现。
 
 ## API 与数据范围
 

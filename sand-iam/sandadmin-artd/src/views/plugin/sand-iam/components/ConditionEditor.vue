@@ -1,135 +1,117 @@
 <script setup lang="ts">
-  import { reactive, watch } from 'vue'
+  import { reactive, ref, watch } from 'vue'
   import { isRecord, parseConditionOrScope } from '../api/policyJson'
+  import { conditionScalar, conditionValueDraft, isConditionScalar } from '../api/conditionValues'
+  import type { ConditionValueDraft } from '../api/conditionValues'
 
-  interface ConditionEntry {
-    key: string
-    value: string
-  }
-
-  interface Props {
-    readonly modelValue: string
-    readonly label: string
-  }
-
-  const props = defineProps<Props>()
-  const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
-
-  const equalsEntries = reactive<ConditionEntry[]>([])
-  const inEntries = reactive<ConditionEntry[]>([])
-
-  function scalarText(value: unknown): string {
-    if (value === null) return ''
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      return String(value)
-    }
-    return ''
-  }
+  interface ConditionEntry { key: string; values: ConditionValueDraft[] }
+  const props = defineProps<{ readonly modelValue: string; readonly label: string }>()
+  const emit = defineEmits<{
+    'update:modelValue': [value: string]
+    validation: [message: string]
+  }>()
+  const groups = reactive<{ equals: ConditionEntry[]; in: ConditionEntry[] }>({ equals: [], in: [] })
+  const error = ref('')
+  let lastEmitted: string | null = null
+  const operators = [
+    { key: 'equals', label: '等于', action: '添加相等条件' },
+    { key: 'in', label: '等于以下任一值', action: '添加多值条件' }
+  ] as const
 
   function reset(raw: string): void {
-    equalsEntries.splice(0)
-    inEntries.splice(0)
+    if (raw === lastEmitted) return
+    groups.equals.splice(0)
+    groups.in.splice(0)
+    error.value = ''
     try {
-      const value = parseConditionOrScope(raw, props.label)
-      const equals = value.equals
-      if (isRecord(equals)) {
-        for (const [key, item] of Object.entries(equals)) {
-          equalsEntries.push({ key, value: scalarText(item) })
+      const parsed = parseConditionOrScope(raw, props.label)
+      if (isRecord(parsed.equals)) {
+        for (const [key, value] of Object.entries(parsed.equals)) {
+          if (isConditionScalar(value)) groups.equals.push({ key, values: [conditionValueDraft(value)] })
         }
       }
-      const inValues = value.in
-      if (isRecord(inValues)) {
-        for (const [key, item] of Object.entries(inValues)) {
-          const text = Array.isArray(item) ? item.map(scalarText).filter(Boolean).join(', ') : ''
-          inEntries.push({ key, value: text })
+      if (isRecord(parsed.in)) {
+        for (const [key, value] of Object.entries(parsed.in)) {
+          if (Array.isArray(value)) groups.in.push({
+            key, values: value.filter(isConditionScalar).map(conditionValueDraft)
+          })
         }
       }
     } catch {
-      return
+      error.value = '已有规则无法读取，请联系接入开发者核对规则格式；修正前不能保存。'
     }
+    emit('validation', error.value)
   }
 
-  function emitValue(): void {
-    const equals: Record<string, string> = {}
-    const inValues: Record<string, string[]> = {}
-    for (const entry of equalsEntries) {
-      if (entry.key.trim() !== '' && entry.value.trim() !== '') {
-        equals[entry.key.trim()] = entry.value.trim()
+  function change(): void {
+    try {
+      const result: Record<string, unknown> = {}
+      for (const operator of operators) {
+        const fields: Record<string, unknown> = {}
+        for (const entry of groups[operator.key]) {
+          const key = entry.key.trim()
+          if (key === '') throw new Error('请填写开发者提供的业务字段名，或删除这条条件。')
+          if (Object.hasOwn(fields, key)) throw new Error('同一种条件不能重复填写同一个字段。')
+          if (entry.values.length === 0) throw new Error('请至少填写一个值，或删除这条条件。')
+          const values = entry.values.map(conditionScalar)
+          fields[key] = operator.key === 'equals' ? values[0] : values
+        }
+        if (Object.keys(fields).length > 0) result[operator.key] = fields
       }
+      error.value = ''
+      lastEmitted = JSON.stringify(result)
+      emit('update:modelValue', lastEmitted)
+    } catch (cause: unknown) {
+      error.value = cause instanceof Error ? cause.message : '请检查条件和值。'
     }
-    for (const entry of inEntries) {
-      const values = entry.value
-        .split(',')
-        .map((value) => value.trim())
-        .filter((value) => value !== '')
-      if (entry.key.trim() !== '' && values.length > 0) inValues[entry.key.trim()] = values
-    }
-    const value: Record<string, unknown> = {}
-    if (Object.keys(equals).length > 0) value.equals = equals
-    if (Object.keys(inValues).length > 0) value.in = inValues
-    emit('update:modelValue', JSON.stringify(value))
+    emit('validation', error.value)
   }
 
-  function addEquals(): void {
-    equalsEntries.push({ key: '', value: '' })
+  function add(operator: 'equals' | 'in'): void {
+    groups[operator].push({ key: '', values: [conditionValueDraft('')] })
+    change()
   }
-
-  function addIn(): void {
-    inEntries.push({ key: '', value: '' })
-  }
-
-  function remove(entries: ConditionEntry[], index: number): void {
-    entries.splice(index, 1)
-    emitValue()
-  }
-
-  watch(
-    () => props.modelValue,
-    (value) => reset(value),
-    { immediate: true }
-  )
+  watch(() => props.modelValue, reset, { immediate: true })
 </script>
 
 <template>
   <div class="w-full space-y-3">
-    <div>
-      <div class="mb-2 flex items-center justify-between text-sm">
-        <span>等于（equals）</span>
-        <ElButton text type="primary" @click="addEquals">添加条件</ElButton>
-      </div>
-      <div v-for="(entry, index) in equalsEntries" :key="`equals-${index}`" class="mb-2 flex gap-2">
-        <ElInput
-          v-model="entry.key"
-          placeholder="字段，例如 order_status（业务状态）"
-          @change="emitValue"
-        />
-        <ElInput v-model="entry.value" placeholder="值，例如 active" @change="emitValue" />
-        <ElButton text type="danger" @click="remove(equalsEntries, index)">删除</ElButton>
-      </div>
-    </div>
-    <div>
-      <div class="mb-2 flex items-center justify-between text-sm">
-        <span>包含任一值（in）</span>
-        <ElButton text type="primary" @click="addIn">添加条件</ElButton>
-      </div>
-      <div v-for="(entry, index) in inEntries" :key="`in-${index}`" class="mb-2 flex gap-2">
-        <ElInput
-          v-model="entry.key"
-          placeholder="字段，例如 region（业务区域）"
-          @change="emitValue"
-        />
-        <ElInput
-          v-model="entry.value"
-          placeholder="值，例如 beijing, shanghai"
-          @change="emitValue"
-        />
-        <ElButton text type="danger" @click="remove(inEntries, index)">删除</ElButton>
-      </div>
-    </div>
     <p class="m-0 text-xs text-gray-500">
-      例如 case_status equals active，或 region in beijing,
-      shanghai。字段和值来自接入应用的业务属性；留空即不添加条件，只支持 equals 和
-      in，无需编写格式化内容。
+      向应用开发者取得字段名、值和类型。例如组织编号 12 应选“数字”，业务状态 active
+      应选“文字”。留空表示不限制这一项；这里不支持自动把“本部门”替换成员工部门。
+      数据范围仍需接入应用用于列表查询和单条访问检查。
     </p>
+    <section v-for="operator in operators" :key="operator.key">
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+        <span>{{ operator.label }}</span>
+        <ElButton text type="primary" @click="add(operator.key)">{{ operator.action }}</ElButton>
+      </div>
+      <div v-for="(entry, index) in groups[operator.key]" :key="index" class="mb-3 space-y-2">
+        <div class="flex gap-2">
+          <ElInput v-model="entry.key" aria-label="业务字段名" placeholder="开发者提供的字段，例如 organization_id" @input="change" />
+          <ElButton text type="danger" @click="groups[operator.key].splice(index, 1); change()">删除条件</ElButton>
+        </div>
+        <div v-for="(value, valueIndex) in entry.values" :key="valueIndex" class="flex flex-wrap gap-2">
+          <ElSelect v-model="value.type" aria-label="值类型" style="width: 112px" @change="change">
+            <ElOption label="文字" value="text" />
+            <ElOption label="数字" value="number" />
+            <ElOption label="是／否" value="boolean" />
+            <ElOption label="空值" value="null" />
+          </ElSelect>
+          <ElSelect v-if="value.type === 'boolean'" v-model="value.text" aria-label="条件值" style="width: 160px" @change="change">
+            <ElOption label="是（true）" value="true" />
+            <ElOption label="否（false）" value="false" />
+          </ElSelect>
+          <ElInput v-else-if="value.type !== 'null'" v-model="value.text" aria-label="条件值"
+            :placeholder="value.type === 'number' ? '例如 12' : '例如 active'"
+            style="flex: 1; min-width: 140px" @input="change" />
+          <span v-else>空值（null），与空文字不同</span>
+          <ElButton v-if="operator.key === 'in'" text @click="entry.values.splice(valueIndex, 1); change()">移除此值</ElButton>
+        </div>
+        <ElButton v-if="operator.key === 'in'" text type="primary"
+          @click="entry.values.push(conditionValueDraft('')); change()">添加一个值</ElButton>
+      </div>
+    </section>
+    <p v-if="error" role="alert" class="m-0 text-sm text-red-500">{{ error }}</p>
   </div>
 </template>

@@ -3,6 +3,7 @@ import type { SandIamRequestError } from './types'
 
 const STABLE_CODES = [
   'SAND_IAM_VALIDATION_ERROR',
+  'SAND_IAM_SERVICE_GRANT_IMMUTABLE',
   'SAND_IAM_RESOURCE_NOT_FOUND',
   'SAND_IAM_ORGANIZATION_ACCESS_DENIED',
   'SAND_IAM_POLICY_DENIED',
@@ -212,6 +213,7 @@ type StableCode = (typeof STABLE_CODES)[number]
 
 const LABELS: Record<StableCode, string> = {
   SAND_IAM_VALIDATION_ERROR: '表单或筛选参数未通过校验',
+  SAND_IAM_SERVICE_GRANT_IMMUTABLE: '授权归属创建后不可修改',
   SAND_IAM_RESOURCE_NOT_FOUND: '关联对象不存在',
   SAND_IAM_ORGANIZATION_ACCESS_DENIED: '跨组织访问被拒绝',
   SAND_IAM_POLICY_DENIED: '策略拒绝本次操作',
@@ -419,6 +421,7 @@ const LABELS: Record<StableCode, string> = {
 
 const RECOVERY: Record<StableCode, string> = {
   SAND_IAM_VALIDATION_ERROR: '请按字段提示检查必填项、格式和关联对象后重新提交。',
+  SAND_IAM_SERVICE_GRANT_IMMUTABLE: '服务调用身份、服务动作和受众创建后不可修改。请核对目标后撤销原授权，再新建正确授权；撤销会立即停止原权限。',
   SAND_IAM_RESOURCE_NOT_FOUND:
     '目标对象可能已停用、删除或不在当前管理范围内，请刷新页面后重新选择。',
   SAND_IAM_ORGANIZATION_ACCESS_DENIED:
@@ -711,7 +714,19 @@ function extractStableCode(text: string): StableCode | null {
   return null
 }
 
-function stableErrorDetail(code: StableCode): string {
+const VALIDATION_RECOVERY: Readonly<Record<string, string>> = {
+  '服务授权受众必须与服务调用身份完全一致': '请打开所选服务调用身份，复制它的“服务受众”到本授权；同时与服务提供方确认目标受众。不要自行改写或增加空格。',
+  '服务受众必填且不能超过 128 字符': '请填写服务提供方给出的服务受众，最多 128 个字符；授权中的值应与调用身份完全一致。',
+  '请选择服务调用身份并填写凭证名称': '请选择需要调用服务的身份，再为凭证填写易辨认的名称，例如“测试后端调用凭证”。',
+  '密码最小长度不能大于最大长度': '请调整密码最小长度或最大长度，使最小长度不大于最大长度。',
+  '通行密钥 RP ID 和允许来源必须同时配置或同时留空': '使用通行密钥时，请同时填写 RP ID 和允许来源；不使用时将两项都留空。'
+}
+function stableErrorDetail(code: StableCode, text: string): string {
+  if (code === 'SAND_IAM_VALIDATION_ERROR') {
+    for (const [message, recovery] of Object.entries(VALIDATION_RECOVERY)) {
+      if (text.includes(`SAND_IAM_VALIDATION_ERROR: ${message}`)) return recovery
+    }
+  }
   return RECOVERY[code]
 }
 
@@ -739,7 +754,7 @@ export function describeSandIamError(error: unknown): SandIamRequestError {
       code,
       http,
       title: LABELS[code],
-      detail: stableErrorDetail(code)
+      detail: stableErrorDetail(code, combined)
     }
   }
 
@@ -775,7 +790,7 @@ export function describeSandIamError(error: unknown): SandIamRequestError {
       code: null,
       http,
       title: '与现有配置冲突',
-      detail: '该接入应用已有同类配置，请编辑现有记录，不要重复新建。'
+      detail: '当前操作与已有记录或状态冲突。请刷新并核对目标；只有允许修改的字段才能编辑。仍无法处理时，请将操作步骤交给管理员核查。'
     }
   }
 

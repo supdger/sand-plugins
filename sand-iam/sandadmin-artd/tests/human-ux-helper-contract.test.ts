@@ -4,6 +4,8 @@
  * and does not mount a Vue component or use a browser.
  */
 import assert from "node:assert/strict";
+import { conditionScalar, conditionValueDraft } from "../src/views/plugin/sand-iam/api/conditionValues";
+import { parseTaskContext, taskContextQuery, taskStepParams, verifyTaskContext } from "../src/views/plugin/sand-iam/api/taskContext";
 import {
   applicationFields,
   adminApplicationGrantFields,
@@ -802,11 +804,11 @@ assert.equal(sandIamTaskPaths["api-governance"].steps[0]?.path, "/sand-iam/oauth
 assert.equal(sandIamTaskPaths["api-governance"].steps[0]?.contractStatus, "frozen");
 assert.equal(
   sandIamTaskPaths.connection.description,
-  "登记谁在使用 SandIAM，以及哪些系统需要接入。",
+  "为应用后端开通一次服务调用：确认应用与环境，创建调用身份、授权并交付凭证。",
 );
 assert.equal(
   sandIamTaskPaths["people-access"].description,
-  "管理用户从哪里来、能进入哪些应用、可以做什么。",
+  "先给一位员工开通登录，再分配权限并验证允许与拒绝。",
 );
 assert.equal(
   sandIamTaskPaths["auth-session"].description,
@@ -902,7 +904,7 @@ assert.equal(
 assert.equal(apiResourceFields.find((field) => field.key === "action")?.createOnly, true);
 assert.equal(policyFields.find((field) => field.key === "action")?.label, "业务动作");
 assert.equal(apiResourceFields.find((field) => field.key === "action")?.label, "业务动作");
-assert.match(policyFields.find((field) => field.key === "action")?.help ?? "", /不是页面按钮或 HTTP 方法/);
+assert.match(policyFields.find((field) => field.key === "action")?.help ?? "", /从接入开发者的业务动作清单复制/);
 assert.match(apiResourceFields.find((field) => field.key === "action")?.help ?? "", /不是页面按钮或 HTTP 方法/);
 assert.match(describeApiGovernanceCodeError("Matter.Read") ?? "", /小写字母开头/);
 assert.equal(
@@ -1905,3 +1907,45 @@ assert.equal(
 
 
 console.log("SandIAM helper contracts passed (not browser behavior)");
+
+// A rule opened and saved must retain strict-match scalar types, including mixed lists.
+for (const value of [12, 0, -1.5, true, false, null, "12", "", "a, b", " spaced "]) {
+  assert.deepEqual(conditionScalar(conditionValueDraft(value)), value);
+}
+for (const text of ["", " ", "NaN", "Infinity", "12人", "0x10", "1e999"]) {
+  assert.throws(() => conditionScalar({ type: "number", text }));
+}
+assert.throws(() => conditionScalar({ type: "boolean", text: "yes" }));
+assert.equal(conditionScalar({ type: "number", text: "12" }), 12);
+assert.deepEqual(parseTaskContext({ application_id: "10", task: "people-access", secret: "ignored" }), { application_id: 10 });
+for (const value of ["0", "-1", "1.5", "1e2", " 1", "9007199254740993", ["10"], 10]) {
+  assert.throws(() => parseTaskContext({ application_id: value }));
+}
+assert.deepEqual(taskContextQuery({ application_id: 10 }, "people-access"), { application_id: "10", task: "people-access" });
+assert.equal(taskStepParams("identity", {}), null);
+assert.equal(taskStepParams("application", { application_id: 10 }), null);
+assert.deepEqual(taskStepParams("identity", { application_id: 10 }), { page: 1, limit: 1, application_id: 10 });
+assert.deepEqual(taskStepParams("identity", { application_id: 20 }), { page: 1, limit: 1, application_id: 20 });
+async function testTaskContext(): Promise<void> {
+  const calls: string[] = [];
+  const read = async (endpoint: string, id: number): Promise<unknown> => {
+    calls.push(`${endpoint}/${id}`);
+    if (endpoint === "client" && id === 30) return { id: 30, environment_id: 20, status: 1 };
+    if (endpoint === "environment" && id === 20) return { id: 20, application_id: 10, status: 1 };
+    if (endpoint === "application" && id === 10) return { id: 10, organization_id: 1, name: "空应用", status: 1 };
+    throw new Error("forbidden");
+  };
+  assert.deepEqual((await verifyTaskContext({}, read)).context, {});
+  assert.equal(calls.length, 0);
+  assert.deepEqual((await verifyTaskContext({ workload_client_id: 30 }, read)).context,
+    { workload_client_id: 30, environment_id: 20, application_id: 10, organization_id: 1 });
+  await assert.rejects(verifyTaskContext({ application_id: 11, environment_id: 20 }, read), /不属于同一归属/);
+  await assert.rejects(verifyTaskContext({ application_id: 10, organization_id: 2 }, read), /不属于同一归属/);
+  await assert.rejects(verifyTaskContext({ application_id: 99 }, read), /forbidden/);
+  await assert.rejects(verifyTaskContext({ application_id: 10 }, async () => ({ id: 10, status: 2 })), /停用/);
+  await assert.rejects(verifyTaskContext({ application_id: 10 }, async () => ({ id: 20, organization_id: 1 })), /失效/);
+  const failedRead = async (): Promise<unknown> => { throw new Error("network failure"); };
+  await assert.rejects(verifyTaskContext({ application_id: 10 }, failedRead), /network failure/);
+  console.log("SandIAM task context and typed condition regressions passed");
+}
+void testTaskContext().catch(error => { console.error(error); process.exitCode = 1; });

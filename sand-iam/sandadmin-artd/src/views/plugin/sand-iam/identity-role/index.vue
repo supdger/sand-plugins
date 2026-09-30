@@ -7,13 +7,13 @@
     { key: 'role_id', label: 'role_id' },
     { key: 'status', label: '状态' }
   ]
-  const filters: SandIamFilterKey[] = ['identity_id']
+  const filters: SandIamFilterKey[] = ['application_id', 'identity_id']
 </script>
 
 <template>
   <ResourceListPage
     title="身份角色关系"
-    description="为指定应用身份授予或撤销角色。先选择应用身份，系统会只列出其所属应用中的角色。"
+    description="先选择员工所在应用，再选择员工和该应用的角色。授予后请在业务系统验证权限；角色名称本身不会赋予具体业务操作。"
     endpoint="identity-role"
     index-permission="sand_iam:identity_role:index"
     permission-prefix="sand_iam:identity_role"

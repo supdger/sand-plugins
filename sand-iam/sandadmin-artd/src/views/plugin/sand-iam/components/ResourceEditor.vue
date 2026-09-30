@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { computed, reactive, ref, watch } from 'vue'
+  import { computed, nextTick, reactive, ref, watch } from 'vue'
   import { ElMessage } from 'element-plus'
   import { parseConditionOrScope, parseJsonObject } from '../api/policyJson'
   import { listSandIamResource, listSandIamGrantCandidates } from '../api/resource'
@@ -33,6 +33,7 @@
     SandIamFormField,
     SandIamListParams,
     SandIamResourceRow,
+    SandIamRequestError,
     SandIamWriteMode
   } from '../api/types'
 
@@ -42,6 +43,8 @@
     readonly fields: readonly SandIamFormField[]
     readonly creating: boolean
     readonly row: SandIamResourceRow | null
+    readonly initialValues?: Readonly<Record<string, number>>
+    readonly submitError?: SandIamRequestError | null
     readonly writeMode: SandIamWriteMode
   }
 
@@ -52,6 +55,15 @@
   }>()
 
   const form = reactive<Record<string, string | number | string[]>>({})
+  const conditionErrors = reactive<Record<string, string>>({})
+  const submitErrorElement = ref<HTMLDivElement | null>(null)
+  watch(() => props.submitError, async (error) => {
+    if (error === null || error === undefined || !props.modelValue) return
+    await nextTick()
+    if (props.submitError !== error || !props.modelValue) return
+    submitErrorElement.value?.focus({ preventScroll: true })
+    submitErrorElement.value?.scrollIntoView({ block: 'nearest' })
+  })
   const referenceOptions = reactive<Record<string, ReferenceOption[]>>({})
   const referenceLoading = reactive<Record<string, boolean>>({})
   const referenceError = reactive<Record<string, string>>({})
@@ -155,11 +167,13 @@
 
   function resetForm(): void {
     for (const key of Object.keys(form)) delete form[key]
+    for (const key of Object.keys(conditionErrors)) delete conditionErrors[key]
     for (const key of Object.keys(referenceOptions)) delete referenceOptions[key]
     for (const key of Object.keys(referenceLoading)) delete referenceLoading[key]
     for (const key of Object.keys(referenceError)) delete referenceError[key]
     for (const field of props.fields) {
-      form[field.key] = fieldString(props.creating ? null : props.row, field)
+      const initial = props.initialValues?.[field.key] === undefined ? null : props.initialValues
+      form[field.key] = fieldString(props.creating ? initial ?? null : props.row, field)
     }
     lastDependencyValues = dependencyValues()
     showAdvancedConfig.value = false
@@ -801,6 +815,8 @@
 
   function submit(): void {
     try {
+      const conditionError = Object.values(conditionErrors).find((message) => message !== '')
+      if (conditionError) throw new Error(conditionError)
       emit('submit', buildPayload())
     } catch (error: unknown) {
       ElMessage.error(error instanceof Error ? error.message : '表单填写有误，请检查后重试')
@@ -886,9 +902,11 @@
         </ElSelect>
         <ConditionEditor
           v-else-if="field.kind === 'condition'"
+          :key="`${editorSession}-${field.key}`"
           :model-value="textFieldValue(field.key)"
           @update:model-value="(value: unknown) => setTextFieldValue(field.key, value)"
           :label="field.label"
+          @validation="conditionErrors[field.key] = $event"
         />
         <ElDatePicker
           v-else-if="field.kind === 'datetime'"
@@ -945,6 +963,9 @@
       </ElFormItem>
     </ElForm>
     <template #footer>
+      <div v-if="submitError" ref="submitErrorElement" tabindex="-1" role="alert" class="mb-3 text-left">
+        <ElAlert type="error" :closable="false" :title="submitError.title" :description="submitError.detail" />
+      </div>
       <ElButton @click="emit('update:modelValue', false)">取消</ElButton>
       <ElButton type="primary" @click="submit">提交</ElButton>
     </template>

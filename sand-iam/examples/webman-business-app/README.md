@@ -12,7 +12,7 @@
 
 1. SandIAM 管理台中已有的客户主体代码与应用代码；
 2. 具有 `sand_iam:onboarding:preview` 和 `sand_iam:onboarding:apply` 权限的 SandAdmin 管理员登录态；
-3. 应用用户 access token，用于业务路由的 allow/deny 验证；
+3. 两个已接受邀请或注册的测试账号，用[PHP 登录与鉴权程序](../../sdk/php/README.md#人员登录与首次鉴权)分别取得自己的 access token；不是后台账号或机器凭证。用于业务路由的有权/无权验证；
 4. 如需机器调用，由 onboarding 首次成功响应一次性显示的 workload credential。立即存入密钥管理系统，后续只由运行环境注入。
 
 `SAND_ADMIN_COOKIE` 只用于管理 onboarding；`SAND_IAM_ACCESS_TOKEN` 只用于业务用户授权；`SAND_IAM_WORKLOAD_CREDENTIAL`
@@ -21,7 +21,7 @@
 ## 先填什么
 
 1. 在 `onboarding.manifest.json` 填已经存在的 `organization.code`。来源是 SandIAM 管理台的客户主体代码；它决定应用隔离边界。
-2. 填 `application.code`、业务资源/动作和 API/路由。动作必须同时出现在 `initialization.business_actions`、策略和 `api_resources.action`；不要把业务动作填入 `sand_iam_service_action`。
+2. 本目录 manifest 自带演示应用 `work-item-demo`、资源 `work_item`、角色 `operator`，与独立 consumer 的 `work-items/standalone_work_item` 是两套例子，不能混用。示例 manifest 只允许 `work_item.read`；要测试关闭须另经应用负责人确认并发布 `work_item.close` 允许策略、授予测试用户角色及所需实体范围。填 `application.code`、业务资源/动作和 API/路由。动作必须同时出现在 `initialization.business_actions`、策略和 `api_resources.action`；不要把业务动作填入 `sand_iam_service_action`。
 3. 把 `.env.example` 的 `SAND_IAM_BASE_URL`、业务数据库连接信息配置到部署环境。`SAND_IAM_ACCESS_TOKEN` 和 `SAND_IAM_WORKLOAD_CREDENTIAL` 保持空白示例，只能由密钥管理系统或运行环境注入。
 
 ## 预览与应用

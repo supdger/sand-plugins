@@ -1,8 +1,82 @@
 # SandIAM PHP SDK
 
+本 SDK 用于应用后端；管理员、应用用户和后端调用凭证分别使用不同接口。第一次接入人员登录从下面的最小程序开始；后台开通方式见[管理员说明](../../docs/user-guide/sand-iam-operator-guide.md)，HTTP 参数见[业务接入](../../docs/user-guide/application-integration.md)。
+
+## 人员登录与首次鉴权
+
+准备实际 SandIAM 地址、组织/应用代码、已接受邀请或注册的测试账号，以及已登记的 API。两个测试账号应分别有权、无权；后台仅新增身份还没有密码登录账号。本例使用工作项代码 `standalone_work_item.read`，资源/动作/权限填写见[独立工作项例子](../../examples/webman-business-app/standalone/README.md)。
+
+先按下节安装 SDK。在 consumer 的受控运行环境注入 `SAND_IAM_BASE_URL`、`SAND_IAM_ORGANIZATION_CODE`、`SAND_IAM_APPLICATION_CODE`、`SAND_IAM_TEST_IDENTIFIER` 和 `SAND_IAM_TEST_PASSWORD`；地址和代码来自部署方，账号密码来自获准测试用户。不要把秘密作为命令行参数或写进代码。将下列程序保存为 consumer 内的 `login-authorize.php`，运行 `php login-authorize.php`：
+
+```php
+<?php
+require 'vendor/autoload.php';
+
+use Sand\Iam\Sdk\AuthorizationDenied;
+use Sand\Iam\Sdk\SandIamClient;
+use Sand\Iam\Sdk\SandIamException;
+
+$required = static function (string $key): string {
+    $value = getenv($key);
+    if (!is_string($value) || $value === '') {
+        throw new RuntimeException('缺少运行配置：' . $key);
+    }
+    return $value;
+};
+
+try {
+    $iam = new SandIamClient(
+        $required('SAND_IAM_BASE_URL'),
+        $required('SAND_IAM_ORGANIZATION_CODE'),
+        $required('SAND_IAM_APPLICATION_CODE'),
+    );
+    $requestId = 'work-items-' . bin2hex(random_bytes(8));
+    echo '登录请求编号：' . $requestId . '-login' . PHP_EOL;
+    $login = $iam->login(
+        $required('SAND_IAM_TEST_IDENTIFIER'),
+        $required('SAND_IAM_TEST_PASSWORD'),
+        'work-items-test',
+        $requestId . '-login',
+    );
+    if (($login['mfa_required'] ?? false) === true) {
+        throw new RuntimeException('需要先完成多因素验证，请从应用账户门户继续');
+    }
+    $accessToken = $login['access_token'] ?? null;
+    if (!is_string($accessToken) || $accessToken === '') {
+        throw new RuntimeException('未取得登录会话，请检查应用验证要求');
+    }
+    echo '授权请求编号：' . $requestId . '-authorize' . PHP_EOL;
+    $decision = $iam->authorize(
+        $accessToken,
+        'standalone_work_item.read',
+        ['request_channel' => 'api'],
+        'v1',
+        $requestId . '-authorize',
+    );
+    echo '接口级权限允许；业务对象仍须检查返回的数据范围。' . PHP_EOL;
+} catch (AuthorizationDenied $error) {
+    fwrite(STDERR, '权限拒绝：' . $error->errorCode . PHP_EOL);
+    exit(1);
+} catch (SandIamException $error) {
+    fwrite(STDERR, '登录或请求失败：' . $error->errorCode . PHP_EOL);
+    exit(1);
+} catch (RuntimeException | InvalidArgumentException $error) {
+    fwrite(STDERR, $error->getMessage() . PHP_EOL);
+    exit(1);
+}
+```
+
+有权账号应输出接口级允许，无权账号应以非零状态输出拒绝。撤销角色或策略后，再次运行仍应拒绝该接口；脚本每次都会新登录，因此不能用重新运行检查旧会话撤销。撤销会话应在接入应用中用撤销前的同一令牌再次访问并确认拒绝，账号仍启用且登录条件满足时，新登录可以创建新会话。验证码已启用时本简例不会绕过它，需要按下文取得并传递真实验证码令牌；MFA 则先完成挑战。按打印的登录/授权请求编号查审计；脚本只打印非秘密编号与结果，不打印令牌、密码或完整登录响应。
+
+`authorize()` 返回允许决定，包含数据范围；它不读取业务数据库、不自动过滤列表。单条工作项应从数据库加载后调用 `authorizeEntity($accessToken, $apiCode, $item, $attributeResolver, $routeAttributes, 'v1', $requestId)`，resolver 返回该对象真实的 `organization_id/owner_identity_id`，不得使用请求体中的所有者。完整可启动 consumer 见[独立工作项例子](../../examples/webman-business-app/standalone/README.md)。
+
+本程序仅在离线模拟传输中校验接口顺序、参数与允许/拒绝处理；实际 HTTP、账号、业务对象、审计和撤销须在目标隔离环境验证。SDK 不自动保存令牌或重试。
+
+## 邀请、注册与认证分支
+
 接受邀请使用 `$client->acceptInvitation($invitationToken, $username, $password, $displayName, $requestId)`，返回 `id/display_name`，之后仍须登录。请求匿名发送，邀请令牌仅放在 POST body，不拼进 API URL；服务端依据邀请确定所属应用，SDK 不另传组织/应用。失败保留服务端错误码，不自动重试。
 
-注册返回 `verification_required` 后，可调用 `requestVerification($identifier, 'email', $requestId)` 申请验证码，再调用 `confirmVerification($identifier, 'email', $code, $requestId)` 完成验证；手机渠道为 `phone`。SDK 自动选择匹配的验证用途，密码重置验证码须走专用恢复方法。申请成功不证明账号存在；验证成功后仍须登录，不自动签发会话。
+注册至少传 `username`、`password` 和实际 `email` 或 `phone`，可传 `display_name`；组织和应用代码由 SDK 客户端配置自动加入。公开注册、密码方式和应用要求的注册字段须先配置；未要求验证时注册可能直接返回会话。注册返回 `verification_required` 后，可调用 `requestVerification($identifier, 'email', $requestId)` 申请验证码，再调用 `confirmVerification($identifier, 'email', $code, $requestId)` 完成验证；手机渠道为 `phone`。SDK 自动选择匹配的验证用途，密码重置验证码须走专用恢复方法。申请成功不证明账号存在；验证成功后仍须登录，不自动签发会话。
 
 密码找回调用 `forgotPassword($identifier, 'email', $requestId)`，收到验证码后调用 `resetPassword($identifier, 'email', $code, $newPassword, $requestId)`。手机渠道使用 `phone`。两者无需登录；找回成功不代表账号存在，重置成功后须重新登录，SDK 不自动创建会话。验证码与新密码只进入请求体，不放入 URL。
 
@@ -23,11 +97,11 @@ MFA 登录挑战使用 `verifyMfaChallenge(['challenge_token' => $challenge, 'me
 从源码目录使用本地 path repository 的 consumer，可执行：
 
 ```sh
-composer config repositories.sand-iam path ../sand-plugins/sand-iam/sdk/php
+composer config repositories.sand-iam path ../sand_plugins/sand-iam/sdk/php
 composer require sand/iam-sdk:*
 ```
 
-这只安装已检出的 SDK，不能推断 Composer Registry 已有发布包。安装后，服务端 consumer 可导入并完成最小的“签发 → 验证”闭环（示例中的值必须替换为已登记的服务、受众、动作和由密钥管理系统注入的凭证）：
+上述相对路径要求 consumer 与 `sand_plugins` 处于同一父目录；其他布局先改成实际已检出的 `sand-iam/sdk/php` 路径。这只安装本地 SDK，不能推断 Composer Registry 已有发布包。安装后，服务端 consumer 可导入并完成最小的“签发 → 验证”闭环（示例中的值必须替换为已登记的服务、受众、动作和由密钥管理系统注入的凭证）：
 
 ```php
 <?php

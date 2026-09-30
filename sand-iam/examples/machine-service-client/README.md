@@ -9,6 +9,14 @@
 `service_grants` 中合入 `onboarding.service-grant.json` 的 `service_code + action_code`；
 二元组必须与目标服务已登记的服务目录完全一致。
 
+## 管理员与开发者使用同一份配置单
+
+完整非 AI 例子选择现有 Provider B：服务代码 `provider-b-document`、受众 `provider-b`、动作 `document.process`。服务提供方先部署并登记该服务与动作，给出实际 HTTPS 地址及所属公司的测试文档编号。管理员按[服务配置步骤](../../docs/user-guide/sand-iam-operator-guide.md#第四条调用身份服务授权凭证和调用)为 `example-company / work-items / test` 下的 `backend` 调用身份填写相同受众，授权该动作，再签发凭证。
+
+凭证交给对应应用测试环境的技术负责人；同时交接公司、应用、环境、身份名称、受众、服务动作、到期时间和目标地址。秘密进密钥管理系统，非秘密配置可单独核对。`service_code`、受众和 HTTP 地址是三个不同值，不能都填服务网址。
+
+没有服务目录、业务数据或已部署接收方时，可以完成已支持的后台配置，不能声称实际调用成功。下方根目录脚本只演示上下文签发/验证；要检验真实文档处理使用 [Provider B 调用路径](provider/README.md#真实调用与撤销复查)。
+
 ## 取得凭证并交接上下文
 
 1. 使用拥有 onboarding apply 权限的 SandAdmin 管理员登录态应用服务授权；保留不含秘密的 handoff 和 request ID。

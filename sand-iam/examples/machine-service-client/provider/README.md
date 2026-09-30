@@ -24,6 +24,31 @@
 
 以上是接入步骤，不表示本仓已经执行数据库初始化、服务启动或真实联调。
 
+## 真实调用与撤销复查
+
+先按[管理员配置单](../../../docs/user-guide/sand-iam-operator-guide.md#第四条调用身份服务授权凭证和调用)登记服务动作、调用身份、授权和凭证。这里的受众是 `provider-b`，不是 `PROVIDER_B_BASE_URL`。对照 `.env.example` 将实际地址、公司/应用代码、数据库连接、凭证及一次业务操作的稳定幂等键注入受控运行环境；数据库连接和凭证都不打印。
+
+服务提供方准备本公司实际测试文档，并把其 ID 交给调用工程师。下列命令在 `provider/` 目录执行，`PROVIDER_B_DOCUMENT_ID` 由该 ID 设置，不代表示例已有文档：
+
+```sh
+php caller/invoke.php "$PROVIDER_B_DOCUMENT_ID"
+```
+
+caller 在内存中取得短期上下文，再经 `X-Sand-Iam-Context` 交给 Provider；成功输出包含业务结果及请求/上下文编号，不输出凭证或上下文秘密。接收方应新增处理记录并保存文档摘要及字节数，工程师核对实际业务结果后再认定调用成功。
+
+使用同一获准测试环境执行负向检查，原身份不应拥有下列错误受众或动作授权：
+
+```sh
+PROVIDER_B_AUDIENCE=wrong-provider php caller/invoke.php "$PROVIDER_B_DOCUMENT_ID"
+PROVIDER_B_ACTION=document.ungranted php caller/invoke.php "$PROVIDER_B_DOCUMENT_ID"
+```
+
+两次应非零退出且不新增处理结果。另由管理员撤销原凭证或服务授权，再用原配置运行 caller，应拒绝；已有幂等结果不能代替撤销后的验权。要测试独立新业务操作，技术负责人注入新的稳定 `PROVIDER_B_IDEMPOTENCY_KEY`，不要复用另一业务对象的键。
+
+恢复调用时由管理员重新签发凭证或按需要新建服务授权，技术负责人更新运行配置，重新验证正确调用。旧凭证不能恢复；不要把新凭证更新到其他应用或生产环境。按运行输出的请求/上下文编号核对 SandIAM 与 Provider 审计，清理只处理获准的本轮测试数据。
+
+这些命令的参数来源与失败处理已按 caller 核对；本说明未执行目标部署、数据库初始化或实际 HTTP 调用。
+
 ## 需要在真实环境验证的行为
 
 - **允许处理：** 授予固定服务、受众和动作，处理调用方所属客户主体的文档，保留脱敏的请求与上下文编号用于关联审计。

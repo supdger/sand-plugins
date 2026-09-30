@@ -1,6 +1,6 @@
 # SandIAM
 
-SandIAM 是面向 SandAdmin 6.x 的 PostgreSQL 身份与访问管理插件。它可以独立安装，
+SandIAM 是面向 SandAdmin 0.1.x 的 PostgreSQL 身份与访问管理插件。它可以独立安装，
 不依赖 SandAI、SandWorkflow 或特定业务插件，为接入应用提供：
 
 - 客户主体、应用、环境和分级管理委派；
@@ -14,22 +14,17 @@ SandIAM 只提供通用身份、授权和审计能力。业务资源、业务状
 
 ## 版本与兼容性
 
-当前源码候选版本为 `0.7.3`，支持 SandAdmin `6.x`，数据库仅支持 PostgreSQL。
+当前版本为 `0.7.6` 预发布候选，提供管理端首次接入、上下文选择和错误恢复改进。`info.ini` 的宿主范围声明为 `0.1.x`；本次安装升级验收以 SandPackage `0.1.9` 为目标，具体结果见该版本 Release 说明，未验收版本不视为已支持。此候选未完成完整产品正式发行门槛，不作为生产可用声明。
 
-随包 runtime 的 `plugin/sand-iam/vendor/` 与 `sdk/typescript/dist/` 是已审查的发布输入；其锁文件、
-固定工具链、生成范围和摘要见 [`release-build-contract.json`](release-build-contract.json)。正式候选只从
-clean Git commit 的 blob 构建，不能以本机缓存或 ignored 文件替代来源证明。
-管理 OpenAPI 中的 `0.13.0-candidate` 是接口契约版本，不等于插件发行版本。
-当前可证实的迁移与发布材料变化见[变更日志](CHANGELOG.md)。
+公开下载入口为 [GitHub Releases](https://github.com/supdger/sand-iam/releases)。本次包名为 `sand-iam-0.7.6.zip`，对应 `v0.7.6-preview`；下载后按同一 Release 的 `SHA256SUMS` 和构建清单核对，不因版本号相同就视为同一包。按 Wiki 的[包校验](https://github.com/supdger/sand-iam/wiki/Release-package-verification)核对来源、摘要与所需签名；没有所需签名材料时，不作为正式发行包使用。
 
-`0.7.3` 尚未发布：最终 clean commit、可复现候选 ZIP、包外签名和正式宿主验收尚未同时形成。不要把当前源码、历史候选或静态检查当作可下载或可安装的正式发行版。
+本版本仅接受具有已发布 `0.7.3` 完整 43 条迁移账本的 `0.7.3` / `0.7.5` 安装升级；升级脚本在 PostgreSQL 只读事务中核对结构和账本，不执行业务结构或数据修改，异常时拒绝继续。插件管理器更新管理端源码后，宿主仍需按其构建与部署流程激活前端。
 
-本源码候选尚未正式发布。不要把源码构建、静态检查或候选包生成视为生产可用证明；
-部署前应在隔离环境完成安装、升级、协议互操作、权限安全、备份恢复和业务闭环验证。
+第一次使用从[登记公司与应用](https://github.com/supdger/sand-iam/wiki/First-use)开始，再按目标开通员工账号或系统调用。后台新增用户身份不等于已经设置登录账号与密码；员工须接受邀请或按应用开放的注册方式开通账号。管理员完成配置后，由接入应用验证真实登录、允许访问和拒绝访问；未接入业务系统时可以完成后台配置，不能据此认定业务权限已经生效。
 
 ## 安装与升级
 
-1. 准备一个符合 `info.ini` 要求的 SandAdmin 6.x PostgreSQL 宿主，并先完成备份。
+1. 准备一个符合 `info.ini` 要求的 SandAdmin 0.1.x PostgreSQL 宿主，并先完成备份。
 2. 使用 SandPackage 从完整 SandIAM ZIP 安装，不要只复制 `plugin/sand-iam/` 子目录。
 3. 注入运行配置后，在宿主加载插件前执行
    `php plugin/sand-iam/bin/check-runtime-configuration.php --profile=release`；空配置必须关闭失败，
@@ -39,14 +34,9 @@ clean Git commit 的 blob 构建，不能以本机缓存或 ignored 文件替代
 6. 按[管理员操作手册](docs/user-guide/sand-iam-operator-guide.md)完成允许、拒绝、撤销和审计检查。
 
 完整步骤见[安装与升级](docs/user-guide/installation-and-upgrade.md)，恢复演练见[备份与恢复](docs/user-guide/backup-and-restore.md)。
-下载候选包后，先按[发布包校验](docs/user-guide/release-package-verification.md)核对包外 Ed25519 签名、
-manifest 和 ZIP 内逐文件摘要，再执行安装。
+下载候选包后，先按[发布包校验](docs/user-guide/release-package-verification.md)核对本次 unsigned preview 的 `SHA256SUMS`、manifest 和 ZIP。没有正式签名的预发布包不作为完整正式发行使用。
 
-已发布迁移文件不可修改。`0.7.3` 只允许已完成 `001–040` 精确账本的 `0.7.2` 安装执行
-`041_authorization_scope_integrity.pgsql`，补齐身份授权与策略版本的应用归属约束，并把策略动作长度
-与 96 字符公开契约对齐。
-不要手工改写迁移账本、伪造失败状态或跳过前置核验。
-安装、升级和卸载都可能改变数据库，应先备份，并只在获得环境负责人授权后执行。
+已发布迁移文件不可修改。本次只支持具有已发布 0.7.3 完整 43 条账本的 0.7.3 / 0.7.5 升级到 0.7.6；生命周期仅在 PostgreSQL 只读事务内核对结构与账本。安装和卸载会改动数据库，管理器升级也会更新文件和自身登记，均应先完成数据库与文件备份。管理端源码更新后仍须由宿主构建、部署后激活。
 
 ## 接入应用
 
@@ -84,7 +74,7 @@ manifest 和 ZIP 内逐文件摘要，再执行安装。
 - `LICENSE`、`NOTICE`：SandIAM 的 Apache-2.0 许可证正文和版权告知；
 - `THIRD_PARTY_NOTICES.md`：第三方许可、分发形态和原许可证位置索引；
 - `migrations/`、`lifecycle/` 和根生命周期 SQL：PostgreSQL 安装、升级与卸载载荷；
-- `recovery/`：保留的 0.7.0 历史恢复证据，不随 0.7.3 正常包分发；当前正常升级不 opt-in 该描述器。
+- `recovery/`：保留的 0.7.0 历史恢复证据，不随当前正常包分发；当前正常升级不 opt-in 该描述器。
 
 ## 获取帮助
 

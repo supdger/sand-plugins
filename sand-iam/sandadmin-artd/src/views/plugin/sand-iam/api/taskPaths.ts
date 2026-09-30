@@ -73,7 +73,7 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
     entryPath: '/sand-iam/connection',
     entryPermission: 'sand_iam:organization:index',
     audience: '平台管理员、受委派的应用管理员',
-    description: '登记谁在使用 SandIAM，以及哪些系统需要接入。',
+    description: '为应用后端开通一次服务调用：确认应用与环境，创建调用身份、授权并交付凭证。',
     steps: [
       {
         key: 'organization',
@@ -122,6 +122,14 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
         permission: 'sand_iam:credential:index',
         path: '/sand-iam/credential',
         emptyHint: '签发凭证并在明文关闭前安全交付给应用。'
+      },
+      {
+        key: 'audit',
+        label: '核对真实调用结果',
+        permission: 'sand_iam:audit:index',
+        path: '/sand-iam/audit',
+        emptyHint: '完成真实调用、错误受众拒绝、无权动作拒绝及撤销验证后，按请求号核对审计。',
+        contractStatus: 'frozen'
       }
     ]
   },
@@ -130,7 +138,7 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
     entryPath: '/sand-iam/people-access',
     entryPermission: 'sand_iam:identity:index',
     audience: '应用管理员',
-    description: '管理用户从哪里来、能进入哪些应用、可以做什么。',
+    description: '先给一位员工开通登录，再分配权限并验证允许与拒绝。',
     steps: [
       {
         key: 'application',
@@ -141,12 +149,28 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
         emptyHint: '先选择或创建要管理用户权限的接入应用。'
       },
       {
-        key: 'identity-provider',
-        label: '身份源',
-        endpoint: 'identity-provider',
-        permission: 'sand_iam:identity_provider:index',
-        path: '/sand-iam/identity-provider',
-        emptyHint: '登记该应用使用的身份源实例。'
+        key: 'auth-settings',
+        label: '设置登录方式',
+        endpoint: 'auth-policy',
+        permission: 'sand_iam:auth_policy:index',
+        path: '/sand-iam/auth-policy',
+        emptyHint: '请按说明配置并核对结果。',
+        contractStatus: 'frozen'
+      },
+      {
+        key: 'identity-invitation',
+        label: '用户邀请',
+        permission: 'sand_iam:identity_invitation:index',
+        path: '/sand-iam/identity-invitation',
+        emptyHint: '按应用邀请邮箱或手机号；列表只显示脱敏目标和用户组名称。',
+        contractStatus: 'frozen'
+      },
+      {
+        key: 'employee-login',
+        label: '员工首次登录',
+        path: '/app/sand-iam/account/',
+        emptyHint: '请按说明配置并核对结果。',
+        contractStatus: 'runtime'
       },
       {
         key: 'identity',
@@ -157,19 +181,67 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
         emptyHint: '创建或绑定需要授权的应用身份。'
       },
       {
+        key: 'role',
+        label: '角色',
+        endpoint: 'role',
+        permission: 'sand_iam:role:index',
+        path: '/sand-iam/role',
+        emptyHint: '按应用内职责创建可复用角色。'
+      },
+      {
+        key: 'identity-role',
+        label: '给员工分配角色',
+        permission: 'sand_iam:identity_role:index',
+        path: '/sand-iam/identity-role',
+        emptyHint: '请按说明配置并核对结果。',
+        contractStatus: 'frozen'
+      },
+      {
+        key: 'resource',
+        label: '业务资源',
+        endpoint: 'resource',
+        permission: 'sand_iam:resource:index',
+        path: '/sand-iam/resource',
+        emptyHint: '登记应用需要授权的业务资源。'
+      },
+      {
+        key: 'policy',
+        label: '策略',
+        endpoint: 'policy',
+        permission: 'sand_iam:policy:index',
+        path: '/sand-iam/policy',
+        emptyHint: '用角色或应用身份二选一创建并发布策略。'
+      },
+      {
+        key: 'policy-simulate',
+        label: '验证允许与拒绝',
+        permission: 'sand_iam:policy:index',
+        path: '/sand-iam/policy-simulate',
+        emptyHint: '请按说明配置并核对结果。',
+        contractStatus: 'frozen'
+      },
+      {
+        key: 'audit',
+        label: '核对真实访问记录',
+        permission: 'sand_iam:audit:index',
+        path: '/sand-iam/audit',
+        emptyHint: '请按说明配置并核对结果。',
+        contractStatus: 'frozen'
+      },
+      {
+        key: 'identity-provider',
+        label: '身份源',
+        endpoint: 'identity-provider',
+        permission: 'sand_iam:identity_provider:index',
+        path: '/sand-iam/identity-provider',
+        emptyHint: '登记该应用使用的身份源实例。'
+      },
+      {
         key: 'identity-group',
         label: '用户组',
         permission: 'sand_iam:identity_group:index',
         path: '/sand-iam/identity-group',
         emptyHint: '按接入应用名称管理用户组；成员只能按本应用用户名称选择。',
-        contractStatus: 'frozen'
-      },
-      {
-        key: 'identity-invitation',
-        label: '用户邀请',
-        permission: 'sand_iam:identity_invitation:index',
-        path: '/sand-iam/identity-invitation',
-        emptyHint: '按应用邀请邮箱或手机号；列表只显示脱敏目标和用户组名称。',
         contractStatus: 'frozen'
       },
       {
@@ -187,30 +259,6 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
         path: '/sand-iam/sync-connector',
         emptyHint: '按应用配置用户同步来源；保存后请进入页面核对当前设置。',
         contractStatus: 'frozen'
-      },
-      {
-        key: 'role',
-        label: '角色',
-        endpoint: 'role',
-        permission: 'sand_iam:role:index',
-        path: '/sand-iam/role',
-        emptyHint: '按应用内职责创建可复用角色。'
-      },
-      {
-        key: 'resource',
-        label: '业务资源',
-        endpoint: 'resource',
-        permission: 'sand_iam:resource:index',
-        path: '/sand-iam/resource',
-        emptyHint: '登记应用需要授权的业务资源。'
-      },
-      {
-        key: 'policy',
-        label: '策略',
-        endpoint: 'policy',
-        permission: 'sand_iam:policy:index',
-        path: '/sand-iam/policy',
-        emptyHint: '用角色或应用身份二选一创建并发布策略。'
       }
     ]
   },

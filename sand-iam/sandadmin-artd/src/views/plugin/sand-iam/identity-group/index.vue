@@ -1,5 +1,7 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
+  import TaskContinuation from '../components/TaskContinuation.vue'
+  import { useTaskApplication } from '../api/useTaskApplication'
   import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
@@ -93,6 +95,7 @@
   const roles = ref<SandIamRoleOption[]>([])
   const groupRoles = ref<SandIamIdentityGroupRole[]>([])
   const applicationId = ref('')
+  const taskContextError = useTaskApplication(applicationId, applications)
   const name = ref('')
   const code = ref('')
   const parentId = ref('')
@@ -599,6 +602,8 @@
 
 <template>
   <div class="sand-iam-page">
+    <TaskContinuation :context="applicationId ? { application_id: Number(applicationId) } : {}" />
+    <ElAlert v-if="taskContextError" class="mb-4" type="warning" :closable="false" :title="taskContextError" />
     <ElCard class="sand-iam-page-card" shadow="never">
       <div class="mb-4">
         <h2 class="m-0 text-lg font-semibold">用户组</h2>

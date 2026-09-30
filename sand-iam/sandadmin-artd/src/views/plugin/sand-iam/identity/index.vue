@@ -1,5 +1,7 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
+  import TaskContinuation from '../components/TaskContinuation.vue'
+  import { useTaskApplication } from '../api/useTaskApplication'
   import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
@@ -51,6 +53,7 @@
   const groupNamesByIdentity = ref<ReadonlyMap<number, readonly string[]>>(new Map())
   const groupSummaryAvailable = ref(false)
   const applicationId = ref('')
+  const taskContextError = useTaskApplication(applicationId, applications)
   const displayName = ref('')
   const editingIdentity = ref<SandIamIdentityRow | null>(null)
   const code = ref('')
@@ -311,12 +314,14 @@
 
 <template>
   <div class="sand-iam-page">
+    <TaskContinuation :context="applicationId ? { application_id: Number(applicationId) } : {}" />
+    <ElAlert v-if="taskContextError" class="mb-4" type="warning" :closable="false" :title="taskContextError" />
     <ElCard class="sand-iam-page-card" shadow="never">
       <div class="mb-4">
         <h2 class="m-0 text-lg font-semibold">应用用户</h2>
         <p class="mb-0 mt-2 text-sm text-gray-500">
-          账号状态显示为等待邀请/正常/已停用/访客/已删除，不把 status=1/2
-          直接给人看。当前列表尚未提供主要登录标识的脱敏值，因此本列不显示猜测内容。用户组摘要仅在按名称选中接入应用后，用用户组成员信息组合。
+          查看员工在应用中的身份、状态和用户组。后台新建用户只建立身份记录，不设置登录密码。
+          开通登录请通过“用户邀请”让员工设置密码，或启用公开注册后让员工在应用门户注册；已有身份不会自动与新注册账号合并。
         </p>
       </div>
 
@@ -342,7 +347,7 @@
         type="info"
         :closable="false"
         title="当前没有数据"
-        description="所选接入应用还没有应用用户。这与没有权限不同。"
+        description="所选应用还没有用户。开通员工登录请返回任务步骤，先配置登录方式，再邀请员工或让员工注册。"
       />
       <ElAlert
         v-if="groupSummaryError"

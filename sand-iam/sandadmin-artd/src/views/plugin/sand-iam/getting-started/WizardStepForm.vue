@@ -15,6 +15,11 @@
     submit: [payload: Readonly<Record<string, string | number>>]
   }>()
 
+  const example = computed(() => props.step === 'organization'
+    ? { name: '示例公司', code: 'example-company', source: '填使用系统的公司或客户名称；单公司自用填自己公司，不填部门。代码由管理员与应用负责人约定，全局唯一。' }
+    : props.step === 'application'
+      ? { name: '工作项系统', code: 'work-items', source: '填员工要使用的产品或系统名称，由应用负责人提供。代码由管理员与开发者约定，在所属客户主体内唯一。' }
+      : { name: '测试环境', code: 'test', source: '请运维确认本次接入测试还是生产环境。环境代码可用 test 或 production，在所属应用内唯一。' })
   const form = reactive({ name: '', code: '', status: '1' })
   const validationMessage = computed(() => {
     if (form.name.trim() === '') return '请填写名称。'
@@ -59,12 +64,13 @@
       description="此归属由本次向导的上一步确定。需要更换时，请返回上一步重新选择或创建。"
     />
     <ElFormItem :label="`${title}名称`" required>
-      <ElInput v-model="form.name" :disabled="saving" autocomplete="off" />
+      <ElInput v-model="form.name" :disabled="saving" :placeholder="example.name" autocomplete="off" />
+      <p class="mb-0 mt-1 text-xs text-gray-500">{{ example.source }}</p>
     </ElFormItem>
     <ElFormItem label="系统代码（用于接口配置）" required>
-      <ElInput v-model="form.code" :disabled="saving || isEditing" autocomplete="off" />
+      <ElInput v-model="form.code" :disabled="saving || isEditing" :placeholder="example.code" autocomplete="off" />
       <p class="mb-0 mt-1 text-xs text-gray-500">
-        创建后不可修改；只能使用小写字母、数字、短横线和下划线。
+        为这个对象约定一个固定英文简称，例如 {{ example.code }}。创建后不可修改；2–64 位小写字母、数字、短横线和下划线，以字母或数字开头。应用代码会交给开发者配置接口。
       </p>
     </ElFormItem>
     <ElFormItem label="状态">

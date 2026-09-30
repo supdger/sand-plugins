@@ -1,5 +1,7 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
+  import TaskContinuation from '../components/TaskContinuation.vue'
+  import { useTaskApplication } from '../api/useTaskApplication'
   import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
@@ -48,6 +50,7 @@
   const guests = ref<SandIamIdentityRow[]>([])
   const invitations = ref<SandIamInvitationRow[]>([])
   const applicationId = ref('')
+  const taskContextError = useTaskApplication(applicationId, applications)
   const targetType = ref<'email' | 'phone'>('email')
   const target = ref('')
   const ttlHours = ref('72')
@@ -336,6 +339,8 @@
 
 <template>
   <div class="sand-iam-page">
+    <TaskContinuation :context="applicationId ? { application_id: Number(applicationId) } : {}" />
+    <ElAlert v-if="taskContextError" class="mb-4" type="warning" :closable="false" :title="taskContextError" />
     <ElCard class="sand-iam-page-card" shadow="never">
       <div class="mb-4">
         <h2 class="m-0 text-lg font-semibold">用户邀请</h2>
