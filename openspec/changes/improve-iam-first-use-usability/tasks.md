@@ -61,3 +61,14 @@
 - 错误确认、同版本重复升级、缺失 042 及 042 摘要冲突均拒绝；异常账本下数据库与旧运行文件不变，公开 019 留下 state 8 且直接重试拒绝，未证明普通升级自动恢复。服务重启禁用，未构建/激活宿主前端、未验真实 HTTP 业务或 SandAI 在线消费。
 - 独立 Astra 核验来源、包、限定文档修复及运行证据后允许公开 preview。UI V4 未改；README 版本/升级说明、安装升级和包核验两页为本次必要发布增量。
 - 证据：`/private/tmp/iam076-release-final`、`/private/tmp/iam076-upgrade-20260930/evidence`。目录条目仅备于 `catalog-entry.proposed.json`；未推 SandAdmin catalog、Wiki，未修改 SandAI 0.7.5 锁，未部署生产。
+
+## 发布后跨平台核验（2026-09-30）
+
+用户提醒 macOS/Windows 的标点、路径与执行差异。本轮只修复构建工具和两页受影响文档，不改业务 PHP、SQL、迁移、SandAI 依赖锁或已发布 ZIP。
+
+- 已修复旧构建器拒绝 Windows 盘符路径和 shell 参数转义风险，Git 命令直接接收参数数组，读取 NUL 分隔的 Git 文件名及原始 blob。文档分别给出可执行 macOS/PowerShell 命令，说明旧 `5c5e19c` 构建器限制、可信修复源码与固定旧包载荷复核的区别，以及 BOM SQL 的安全拒绝。
+- 修复源已公开在官方 feature `codex/iam076-cross-platform-regression`，固定 commit `e1b2af06f5ee578303999344fd7ca70b244ed9eb`；未推 main。CI：https://github.com/supdger/sand-iam/actions/runs/36734826308 。前两轮只分别失败于测试入口未识别缩进代码块、Windows 临时 Git 对象只读清理；失败记录保留，不改写为产品 SQL 或构建器执行失败。
+- Windows Server 2022 原生 CI 已通过，PHP `8.2.34`、PostgreSQL `14.24`、zip `1.21.1`、libzip `1.11.4`：公开 076 下载与实际 PowerShell 文档命令通过；固定旧源码仅替换构建工具后的全部 706 项载荷摘要与原发布清单一致，重复构建 ZIP 字节一致。不同环境 ZIP SHA-256 不同不冒充跨环境整包字节相同。
+- 原生 Windows 的中文/空格/`%`/`!` 路径、二进制、CRLF、BOM 与数据标点保真，错误目标路径、盘符相对路径、当前驱动器根路径、仓库内目标和 dirty source 均拒绝。公开 SandPackage `0.1.9` 执行器在真实 PostgreSQL 中执行原 LF/CRLF 076 SQL，两者均为 `READ ONLY`，108 张表、43 条账本及结构/数据/序列摘要前后相同；BOM `42601`、缺失/冲突账本 `P0001`、只读写入 `25006` 按预期拒绝，SQL 字面量中的 `; : / \` 保留。临时夹具与 PostgreSQL 实例已清理。
+- macOS 本机真实 PHP 的最小正反例、中文路径和字节保真通过，完整修复候选的 706 项双构建通过；SQL 专用 Docker PostgreSQL 18 回归通过。当前同轮 macOS CI 仍在准备环境，不能据此报告 CI 已通过。Windows 用户实机、UNC 网络共享、管理器 HTTP/界面、完整业务链和生产部署不属于已验证结果。
+- 原始证据：`/private/tmp/iam076-windows-native-evidence/iam076-sql-evidence/sql-summary.json`、`/private/tmp/iam076-windows-native-evidence/iam076-release-evidence/rebuilt-manifest.json`、`/private/tmp/iam076-windows-third-job.log`、`/private/tmp/iam076-cross-platform-localbuild/manifest.json`、`/private/tmp/iam076-cross-platform-sql/local-summary.json`。公开 `v0.7.6-preview` ZIP 与 tag 保持原值，此源码/文档修复尚未随新 Release 或 Wiki 交付。

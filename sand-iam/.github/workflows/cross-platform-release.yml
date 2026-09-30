@@ -1,0 +1,57 @@
+name: SandIAM cross-platform release regression
+
+on:
+  push:
+    branches:
+      - codex/iam076-cross-platform-regression
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: zip, pdo_pgsql, mbstring
+          coverage: none
+      - name: Verify public download, documented commands, Git blobs and native paths
+        shell: pwsh
+        run: |
+          ./tools/test-cross-platform-release.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'iam076-release-evidence')
+      - name: Execute actual macOS download verification commands
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/iam076-release-evidence/公开下载 中文 % !"
+          shasum -a 256 -c SHA256SUMS
+          unzip -t sand-iam-0.7.6.zip
+          unzip -l sand-iam-0.7.6.zip | grep 'sandadmin-artd/src/views/plugin/sand-iam/' > "$RUNNER_TEMP/iam076-release-evidence/frontend-list.txt"
+          echo "Success: actual documented macOS checksum, ZIP and frontend commands"
+      - name: Execute public 0.1.9 SQL executor against isolated native PostgreSQL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./tools/test-cross-platform-upgrade.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'iam076-sql-evidence')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iam076-${{ runner.os }}-evidence
+          path: |
+            ${{ runner.temp }}/iam076-release-evidence/rebuilt-manifest.json
+            ${{ runner.temp }}/iam076-release-evidence/frontend-list.txt
+            ${{ runner.temp }}/iam076-sql-evidence/sql-summary.json
+            ${{ runner.temp }}/iam076-sql-evidence/postgres.log
+          if-no-files-found: warn

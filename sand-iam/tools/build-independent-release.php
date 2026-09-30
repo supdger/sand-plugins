@@ -10,31 +10,60 @@ require_once __DIR__ . '/package-payload-policy.php';
 
 function command(array $args): string
 {
-    $output = [];
-    exec(implode(' ', array_map('escapeshellarg', $args)) . ' 2>&1', $output, $status);
-    if ($status !== 0) {
-        throw new RuntimeException(implode("\n", $output));
+    $errorStream = tmpfile();
+    if ($errorStream === false) {
+        throw new RuntimeException('Cannot create command error stream');
     }
-    return implode("\n", $output);
+    $pipes = [];
+    // An argument array avoids cmd.exe/PowerShell expansion of %, ! and quotes.
+    $process = proc_open($args, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => $errorStream],
+        $pipes, null, null, ['bypass_shell' => true]);
+    if (!is_resource($process)) {
+        fclose($errorStream);
+        throw new RuntimeException('Cannot start Git');
+    }
+    fclose($pipes[0]);
+    $output = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $status = proc_close($process);
+    rewind($errorStream);
+    $error = stream_get_contents($errorStream);
+    fclose($errorStream);
+    if ($status !== 0 || $output === false) {
+        throw new RuntimeException('Git command failed: ' . trim((string) $error));
+    }
+    return $output;
 }
 
-$root = dirname(__DIR__);
+$root = realpath(dirname(__DIR__));
+if ($root === false) {
+    throw new RuntimeException('Cannot resolve source repository');
+}
 $destination = $argv[1] ?? '';
-if ($destination === '' || !str_starts_with($destination, '/')
+$absolute = DIRECTORY_SEPARATOR === '\\'
+    ? preg_match('~^(?:[A-Za-z]:[/\\\\]|[/\\\\]{2}[^/\\\\]+[/\\\\][^/\\\\]+[/\\\\])~', $destination) === 1
+    : str_starts_with($destination, '/');
+if ($destination === '' || str_contains($destination, "\0") || !$absolute
     || file_exists($destination) || realpath(dirname($destination)) === false) {
     throw new RuntimeException('Provide a new absolute artifact directory with an existing parent');
 }
-if (str_starts_with(realpath(dirname($destination)) . '/', $root . '/')) {
+$parent = str_replace('\\', '/', (string) realpath(dirname($destination)));
+$source = str_replace('\\', '/', $root);
+if (DIRECTORY_SEPARATOR === '\\') {
+    $parent = strtolower($parent);
+    $source = strtolower($source);
+}
+if (str_starts_with(rtrim($parent, '/') . '/', rtrim($source, '/') . '/')) {
     throw new RuntimeException('Artifacts must stay outside the source repository');
 }
 if (command(['git', '-C', $root, 'status', '--porcelain=v1', '--untracked-files=all']) !== '') {
     throw new RuntimeException('Release source must be committed and clean');
 }
-$commit = command(['git', '-C', $root, 'rev-parse', 'HEAD']);
-$tree = command(['git', '-C', $root, 'rev-parse', 'HEAD^{tree}']);
-$listed = command(['git', '-C', $root, 'ls-tree', '-r', 'HEAD']);
+$commit = trim(command(['git', '-C', $root, 'rev-parse', 'HEAD']));
+$tree = trim(command(['git', '-C', $root, 'rev-parse', 'HEAD^{tree}']));
+$listed = command(['git', '-C', $root, 'ls-tree', '-rz', 'HEAD']);
 $entries = [];
-foreach (explode("\n", $listed) as $line) {
+foreach (explode("\0", rtrim($listed, "\0")) as $line) {
     if (preg_match('/^([0-9]+) blob ([a-f0-9]+)\t(.+)$/D', $line, $match) !== 1) {
         throw new RuntimeException('Unsupported Git tree entry: ' . $line);
     }
@@ -81,20 +110,7 @@ foreach (['primary', 'repeat'] as $stage) {
     $map = [];
     foreach ($entries as $path => $object) {
         // Binary blobs must be read without line splitting or newline trimming.
-        $pipes = [];
-        $process = proc_open(['git', '-C', $root, 'cat-file', 'blob', $object],
-            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-        if (!is_resource($process)) {
-            throw new RuntimeException('Cannot read committed blob');
-        }
-        fclose($pipes[0]);
-        $bytes = stream_get_contents($pipes[1]);
-        $error = stream_get_contents($pipes[2]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-        if (proc_close($process) !== 0 || $bytes === false) {
-            throw new RuntimeException('Cannot read blob: ' . $error);
-        }
+        $bytes = command(['git', '-C', $root, 'cat-file', 'blob', $object]);
         $target = $directory . '/source/' . $path;
         if (!is_dir(dirname($target))) {
             mkdir(dirname($target), 0700, true);
