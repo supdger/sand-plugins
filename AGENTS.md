@@ -17,6 +17,15 @@
 - 业务拒绝用 `plugin\sandadmin\exception\ApiException`，显式传 `400`/`401`。
 - 不跨改对方独占目录；未冻结字段不得猜测实现。
 
+## 插件宿主兼容范围
+
+插件元数据、发布与目录维护遵守 [SandAdmin 插件宿主兼容范围](../sandadmin/docs/repository-plugin-distribution.md#插件宿主兼容范围)。
+
+- 默认 catalog 只写 `host_min`，两份源码 `info.ini` 的 `support` 对应 `>=host_min`，不得用 `0.1.x` 等通配符隐式添加上限。安装器支持历史通配符不构成新发布方缩窄范围的许可。
+- 执行、审查与消费任务遇到源码、构包脚本、旧任务说明或 catalog 的相反声明时，报告兼容规则冲突并按权威规范修正，不静默沿用；这不证明插件业务在未来宿主上实际不兼容。
+- 真实旧版本上限只沿用规范要求的新版最低版本提高、实际存在且仍兼容的旧宿主上限证据；没有这些证据不得推定例外。默认自动门槛不鉴别该历史例外，需先明确核对范围和证据。
+- SandIAM 完整性检查、审查候选与独立发布构包入口复用 `tools/package-payload-policy.php` 的默认开放下限检查；独立发布读取已提交的两份 INI，在写出 ZIP 前拒绝冲突。提交前用 `bash scripts/install-pre-commit-checks.sh` 保留并接入既有 hook；暂存元数据检查只读实际 Git index 的变更插件及对应两份声明，不以无关 dirty 文件阻塞本次提交。
+
 ## 目录主责
 
 - Codex：`sand-iam/plugin/sand-iam/`、迁移、API / Adapter 契约。
