@@ -18,3 +18,15 @@ revision 和发布摘要见 [独立仓库迁移记录](docs/independent-plugin-r
 
 本地旧工作区如有未提交改动，应按插件分别审查并迁入对应独立仓库；不得把整个旧工作区
 直接覆盖到新仓库。
+
+## 版本更新
+
+准备升级时，先查看对应组件最近公开版本的功能变化、修复与升级影响，再从更新页进入完整历史。各组件的适用范围和升级要求以对应版本页为准。
+
+| 组件 | 版本更新与升级影响 | 完整公开历史 |
+| --- | --- | --- |
+| Sand Core | [版本更新（Wiki）](https://github.com/supdger/sandadmin/wiki/plugin-updates) | [完整更新日志](https://github.com/supdger/sand-core/blob/main/CHANGELOG.md) |
+| Sand Package | [版本更新（Wiki）](https://github.com/supdger/sandadmin/wiki/plugin-updates) | [完整更新日志](https://github.com/supdger/sand-package/blob/main/CHANGELOG.md) |
+| SandIAM | [版本更新（Wiki）](https://github.com/supdger/sand-iam/wiki/Changelog) | [完整更新日志](https://github.com/supdger/sand-iam/blob/main/CHANGELOG.md) |
+| SandAI | [版本更新（Wiki）](https://github.com/supdger/sandadmin/wiki/plugin-updates) | [全部公开发布记录](https://github.com/supdger/sand-ai/releases) |
+| SandWorkflow | [版本更新（Wiki）](https://github.com/supdger/sand-workflow/wiki/Changelog) | [全部公开发布记录](https://github.com/supdger/sand-workflow/releases) |
