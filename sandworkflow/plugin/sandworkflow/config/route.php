@@ -7,7 +7,7 @@ use plugin\sandworkflow\app\controller\IndexController;
 use plugin\sandworkflow\app\controller\InstanceController;
 use plugin\sandworkflow\app\controller\TaskController;
 
-Route::group('/admin', function () {
+Route::group('/app/sandworkflow/admin', function () {
     Route::get('/index/listUsers', [IndexController::class, 'listUsers']);
     Route::get('/index/listRoles', [IndexController::class, 'listRoles']);
     Route::get('/index/listDepts', [IndexController::class, 'listDepts']);
