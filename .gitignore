@@ -10,3 +10,19 @@ tmp/
 .cursor/autopilot/watch.log
 .cursor/autopilot/wake.signal
 .cursor/autopilot/_fp_*
+.artifacts/iam082-machine-test/
+.artifacts/iam083-machine-test/
+
+# local staging / artifact / scratch dirs (rebuildable, not for repo consumers)
+/.artifacts/
+/.staging/
+/.backups/
+/.archive/
+/.tmp/
+/.worktrees/
+/.pnpm-store/
+/.playwright-cli/
+/.agents/
+node_modules/
+/.codex/
+/.cursor/autopilot/
