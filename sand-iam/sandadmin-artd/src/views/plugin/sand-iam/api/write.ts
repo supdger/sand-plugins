@@ -34,11 +34,13 @@ export function saveSandIamResource(
 
 export function updateSandIamResource(
   endpoint: SandIamResourceEndpoint,
-  data: SandIamWriteBody
+  data: SandIamWriteBody,
+  showErrorMessage = true
 ): Promise<unknown> {
   return request.post<unknown>({
     url: `${SAND_IAM_ADMIN_PREFIX}/${endpoint}/update`,
-    data
+    data,
+    showErrorMessage
   })
 }
 
@@ -73,12 +75,14 @@ export function postSandIamForm(path: string, data: FormData): Promise<unknown> 
 
 export function getSandIamAdmin(
   path: string,
-  params: Readonly<Record<string, string | number>> = {}
+  params: Readonly<Record<string, string | number>> = {},
+  showErrorMessage = true
 ): Promise<unknown> {
   return request.get<unknown>({
     url: `${SAND_IAM_ADMIN_PREFIX}/${path}`,
     params,
-    headers: requestHeaders()
+    headers: requestHeaders(),
+    showErrorMessage
   })
 }
 

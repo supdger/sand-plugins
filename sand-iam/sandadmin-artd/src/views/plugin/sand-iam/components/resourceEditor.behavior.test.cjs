@@ -41,16 +41,17 @@ const body = ast.statements.filter(node => !ts.isImportDeclaration(node))
   .map(node => printer.printNode(ts.EmitHint.Unspecified, node, ast)).join('\n')
 const code = ts.transpileModule(`${body}
 globalThis.editor = { form, buildPayload, resetForm, loadReferenceField, hydrateSelectedReference, searchReference, showAdvancedConfig,
- referenceOptions, referenceError, prepareEditor, visibleFields,
+ referenceOptions, referenceError, prepareEditor, visibleFields, businessActionErrors, conditionErrors, submit, localValidationError,
  activate: () => { editorSession = editorSessions.next(); return editorSession } };`, { compilerOptions: options }).outputText
 function harness(fields = grantFields, creating = false, row = { id: 8 }) {
   const requests = []
+  const emitted = []
   const props = { modelValue: false, title: '服务授权', fields, creating, row, writeMode: 'grant' }
   const context = {
     ...vue, ...api('editorLifecycle'), ...api('referenceValues'), ...api('formValues'),
     ...api('uxContracts'), ...api('policyJson'),
     defineProps: () => props,
-    defineEmits: () => () => {},
+    defineEmits: () => (event, value) => emitted.push({ event, value }),
     describeSandIamError: error => ({ http: 403, code: null, detail: error.message }),
     getSandIamAdmin: (path, params) => {
       let resolve, reject
@@ -72,7 +73,7 @@ function harness(fields = grantFields, creating = false, row = { id: 8 }) {
   }
   const scope = vue.effectScope()
   scope.run(() => vm.runInNewContext(code, context))
-  return { ...context.editor, requests, props, stop: () => scope.stop() }
+  return { ...context.editor, requests, emitted, props, stop: () => scope.stop() }
 }
 function fillRequired(editor) {
   for (const field of grantFields) {
@@ -370,3 +371,110 @@ function grantOptionalConstraints() {
   console.log('ResourceEditor grant optional constraints PASS')
 }
 grantOptionalConstraints()
+
+const actionEditor = harness(api('fields').policyFields.filter(field => field.key === 'action'), true, null)
+actionEditor.resetForm()
+actionEditor.form.action = 'inspect'
+assert.throws(() => actionEditor.buildPayload(), /等待业务动作目录/)
+actionEditor.businessActionErrors.action = '当前动作已停用'
+assert.throws(() => actionEditor.buildPayload(), /已停用/)
+actionEditor.businessActionErrors.action = ''
+assert.equal(actionEditor.buildPayload().action, 'inspect', 'action must remain its exact business code, never its numeric id')
+actionEditor.stop()
+console.log('ResourceEditor business action validity and exact payload PASS')
+
+const policyDraftFields = api('policyPublication').policyEditorFields.filter(field => ['priority', 'state'].includes(field.key))
+const policyDraft = harness(policyDraftFields, false, { id: 5, priority: 10, state: 'published' })
+policyDraft.resetForm()
+policyDraft.form.state = 'draft'
+policyDraft.form.priority = 20
+assert.equal(policyDraft.buildPayload().priority, 20)
+assert.equal('state' in policyDraft.buildPayload(), false, 'saving a policy edit must not change the stored state by a hidden form default')
+policyDraft.stop()
+const freshPolicyDraft = harness(policyDraftFields, true, null)
+freshPolicyDraft.resetForm()
+assert.equal('state' in freshPolicyDraft.buildPayload(), false, 'new policy relies on existing server draft default')
+freshPolicyDraft.stop()
+
+// Exercise the actual child rule editor validation together with the parent submit.
+const conditionSource = fs.readFileSync(path.join(__dirname, 'ConditionEditor.vue'), 'utf8')
+const conditionScript = conditionSource.slice(conditionSource.indexOf('>') + 1, conditionSource.indexOf('</script>'))
+const conditionAst = ts.createSourceFile('condition.ts', conditionScript, ts.ScriptTarget.Latest, true)
+const conditionBody = conditionAst.statements.filter(node => !ts.isImportDeclaration(node))
+  .map(node => printer.printNode(ts.EmitHint.Unspecified, node, conditionAst)).join('\n')
+const conditionCode = ts.transpileModule(`${conditionBody}
+globalThis.conditionEditor = { groups, error };`, { compilerOptions: options }).outputText
+function validateCondition(editor, key) {
+  const context = {
+    ...vue, ...api('policyJson'), ...api('conditionValues'),
+    defineProps: () => ({ modelValue: editor.form[key], label: key }),
+    defineEmits: () => (event, value) => {
+      if (event === 'validation') editor.conditionErrors[key] = value
+    }
+  }
+  const scope = vue.effectScope()
+  scope.run(() => vm.runInNewContext(conditionCode, context))
+  const error = context.conditionEditor.error.value
+  const count = context.conditionEditor.groups.equals.length + context.conditionEditor.groups.in.length
+  scope.stop()
+  return { error, count }
+}
+const conditionFields = api('policyPublication').policyEditorFields
+  .filter(field => ['condition', 'scope', 'priority'].includes(field.key))
+const emptyPolicy = harness(conditionFields, true, null)
+emptyPolicy.resetForm()
+for (const key of ['condition', 'scope']) {
+  assert.equal(validateCondition(emptyPolicy, key).error, '')
+}
+emptyPolicy.submit()
+const createdPolicy = emptyPolicy.emitted.find(event => event.event === 'submit').value
+assert.equal(JSON.stringify(createdPolicy.condition), '{}')
+assert.equal(JSON.stringify(createdPolicy.scope), '{}')
+emptyPolicy.stop()
+
+// Real API shape: PHP jsonAssoc reads an empty saved clause back as [].
+const readback = { id: 4, condition: [], scope: { equals: { owner_id: 3 } },
+  priority: 101, published_version_id: 5, status: 1 }
+const reopenedPolicy = harness(conditionFields, false, readback)
+reopenedPolicy.resetForm()
+assert.equal(reopenedPolicy.form.condition, '[]')
+assert.deepEqual(validateCondition(reopenedPolicy, 'condition'), { error: '', count: 0 })
+assert.deepEqual(validateCondition(reopenedPolicy, 'scope'), { error: '', count: 1 })
+reopenedPolicy.form.priority = '102'
+reopenedPolicy.form.scope = '{"equals":{"owner_id":4}}'
+assert.equal(validateCondition(reopenedPolicy, 'scope').error, '')
+reopenedPolicy.submit()
+assert.equal(reopenedPolicy.localValidationError.value, null)
+const editedPolicy = reopenedPolicy.emitted.find(event => event.event === 'submit').value
+assert.equal(editedPolicy.id, 4)
+assert.equal(editedPolicy.priority, 102)
+assert.equal(JSON.stringify(editedPolicy.condition), '{}')
+assert.equal(JSON.stringify(editedPolicy.scope), '{"equals":{"owner_id":4}}')
+assert.equal('published_version_id' in editedPolicy, false)
+assert.equal(readback.published_version_id, 5, 'editing does not replace the runtime snapshot')
+reopenedPolicy.stop()
+
+for (const empty of [null, undefined, '', {}, []]) {
+  const editor = harness(conditionFields, false, { id: 4, condition: empty, scope: empty, priority: 101 })
+  editor.resetForm()
+  for (const key of ['condition', 'scope']) assert.equal(validateCondition(editor, key).error, '')
+  editor.submit()
+  assert.equal(editor.emitted.filter(event => event.event === 'submit').length, 1)
+  editor.stop()
+}
+for (const invalid of [[1], [{ equals: { owner_id: 3 } }], 'null', '{"contains":{}}', '{"equals":[]}', '{']) {
+  for (const key of ['condition', 'scope']) {
+    const editor = harness(conditionFields, false, { id: 4, condition: [], scope: [], priority: 101, [key]: invalid })
+    editor.resetForm()
+    const originalRaw = editor.form[key]
+    assert.match(validateCondition(editor, key).error, /已有规则无法读取/)
+    editor.submit()
+    assert.equal(editor.emitted.filter(event => event.event === 'submit').length, 0)
+    assert.match(editor.localValidationError.value, /已有规则无法读取/)
+    assert.equal(editor.form[key], originalRaw, 'invalid existing rules must stay visible and unchanged')
+    assert.throws(() => editor.buildPayload(), /SAND_IAM_VALIDATION_ERROR/)
+    editor.stop()
+  }
+}
+console.log('ConditionEditor + ResourceEditor empty create/read/edit/submit and fail-closed rules PASS')
+console.log('Policy editor omitted state PASS')

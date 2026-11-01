@@ -45,15 +45,18 @@ function assertEqualsIn(value: unknown, label: string): Record<string, unknown> 
   return value
 }
 
-export function parseJsonObject(raw: string, label: string): Record<string, unknown> {
+function parseJsonValue(raw: string, label: string): unknown {
   const trimmed = raw.trim()
   if (trimmed === '') return {}
-  let parsed: unknown
   try {
-    parsed = JSON.parse(trimmed) as unknown
+    return JSON.parse(trimmed) as unknown
   } catch {
     throw new Error(`SAND_IAM_VALIDATION_ERROR: ${label} 格式不正确`)
   }
+}
+
+export function parseJsonObject(raw: string, label: string): Record<string, unknown> {
+  const parsed = parseJsonValue(raw, label)
   if (!isRecord(parsed)) {
     throw new Error(`SAND_IAM_VALIDATION_ERROR: ${label} 必须是对象`)
   }
@@ -61,7 +64,10 @@ export function parseJsonObject(raw: string, label: string): Record<string, unkn
 }
 
 export function parseConditionOrScope(raw: string, label: string): Record<string, unknown> {
-  return assertEqualsIn(parseJsonObject(raw, label), label)
+  const parsed = parseJsonValue(raw, label)
+  // PHP's associative JSON model reads an empty condition/scope object back as [].
+  // Only that empty representation means no constraints; other arrays stay invalid.
+  return assertEqualsIn(Array.isArray(parsed) && parsed.length === 0 ? {} : parsed, label)
 }
 
 /**

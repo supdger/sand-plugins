@@ -24,7 +24,7 @@ if (getenv('SAND_IAM_RUN_PG_TESTS') !== '1') {
     exit(0);
 }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $sandIamRoot = dirname(__DIR__, 3);
 $sourcePluginRoot = getenv('SAND_IAM_SOURCE_PLUGIN_ROOT') ?: $sandIamRoot . '/plugin/sand-iam';
 $expectedDatabase = getenv('SAND_IAM_PG_EXPECTED_DATABASE') ?: 'sandadmin';

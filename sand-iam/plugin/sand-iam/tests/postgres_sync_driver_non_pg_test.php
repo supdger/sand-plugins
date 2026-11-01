@@ -21,7 +21,7 @@ function t10PostgresDriverExpect(callable $callback, string $code): void
     t10PostgresDriverFail("expected {$code}");
 }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $package = dirname(__DIR__);
 if (!is_file($hostRoot . '/vendor/autoload.php')) t10PostgresDriverFail('SandAdmin host dependencies are unavailable');
 require $hostRoot . '/vendor/autoload.php';

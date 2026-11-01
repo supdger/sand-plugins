@@ -14,7 +14,7 @@ use Webman\Config;
 function oidcRotationFail(string $message): never { fwrite(STDERR, "OIDC signing-key rotation non-PG test failed: {$message}\n"); exit(1); }
 function oidcRotationAssert(bool $condition, string $message): void { if (!$condition) oidcRotationFail($message); }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $root = dirname(__DIR__, 3);
 $plugin = $root . '/plugin/sand-iam';
 if (!is_file($hostRoot . '/vendor/autoload.php')) oidcRotationFail('SandAdmin dependencies are unavailable');

@@ -21,8 +21,12 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 $package = $root . '/plugin/sand-iam';
 require_once $root . '/tools/package-payload-policy.php';
+require_once $root . '/tools/check-existing-schema.php';
+require_once $root . '/tools/release-build-contract-policy.php';
 $arguments = array_slice($argv, 1);
 $releaseMode = in_array('--release', $arguments, true);
+$reproduceToolchain = in_array('--reproduce-toolchain', $arguments, true);
+$currentVersion = parse_ini_file($root . '/info.ini')['version'] ?? '';
 $printCandidateManifest = in_array('--print-candidate-manifest', $arguments, true);
 $trustedManifestPath = null;
 $trustedPublicKeyPath = null;
@@ -236,6 +240,11 @@ if ($printCandidateManifest) {
     }
 }
 
+$assert('existing-schema declaration matches package SQL and published ledger', static function () use ($root): bool {
+    sandIamCheckExistingSchema($root);
+    return in_array('existing-schema.json', sandIamPayloadFiles($root, true), true);
+});
+
 $assert('release artifact payload contains no symbolic links', static function () use ($releaseArtifactFiles): bool {
     $releaseArtifactFiles();
     return true;
@@ -255,7 +264,12 @@ if (is_string($builderSource)
     $updateSource = $updateMatch[1];
 }
 preg_match_all("/^\\s*'([0-9]{3}_[^']+\\.pgsql)',$/m", $updateSource, $updateMatches);
-$updateMigrationNames = $updateMatches[1] ?? [];
+$updateMigrationNames = in_array($currentVersion, ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4'], true)
+    ? ['043_scope_audit_event_key.pgsql']
+    : ($currentVersion === '0.7.6' ? [] : ($updateMatches[1] ?? []));
+if ($currentVersion === '0.7.3' && !is_file($root . '/migrations/042_permission_menu_hierarchy.pgsql')) {
+    $manifestMigrationNames = array_values(array_diff($manifestMigrationNames, ['042_permission_menu_hierarchy.pgsql']));
+}
 
 $assert('migration revisions are contiguous and begin at 001', static function () use ($migrationNames, $root): bool {
     $names = $migrationNames($root . '/migrations');
@@ -302,7 +316,7 @@ $assert('normal 0.7.3 payload excludes historical failed-upgrade recovery descri
     return true;
 });
 
-$assert('generated lifecycle separates full install from guarded 0.7.2 to 0.7.3 update and safe cleanup payload', static function () use ($root, $manifestMigrationNames, $updateMigrationNames): bool {
+$assert('generated lifecycle separates full install from guarded versioned update and safe cleanup payload', static function () use ($root, $manifestMigrationNames, $updateMigrationNames, $currentVersion): bool {
     $install = file_get_contents($root . '/install.sql');
     $update = file_get_contents($root . '/update.sql');
     $uninstall = file_get_contents($root . '/uninstall.sql');
@@ -365,38 +379,65 @@ $assert('generated lifecycle separates full install from guarded 0.7.2 to 0.7.3 
             throw new RuntimeException('update replays historical migration ' . $name);
         }
     }
-    if ($updateMigrationNames !== [
-        '041_authorization_scope_integrity.pgsql',
-    ]) {
-        throw new RuntimeException('0.7.3 update manifest must contain only 041');
-    }
-    $preflight = file_get_contents($root . '/lifecycle/update-072-to-073-preflight.pgsql');
-    if (!is_string($preflight) || !str_contains($update, '-- lifecycle source: lifecycle/update-072-to-073-preflight.pgsql')
-        || !str_contains($update, $collapse($preflight))
-        || strpos($update, $collapse($preflight)) > strpos($update, '-- lifecycle source: migrations/041_authorization_scope_integrity.pgsql')) {
-        throw new RuntimeException('0.7.3 update must admit exact 001-040 before 041');
-    }
-    foreach ($updateMigrationNames as $name) {
-        $source = file_get_contents($root . '/migrations/' . $name);
-        $payload = is_string($source) ? $collapse($source) : '';
-        if (in_array($name, $updateMigrationNames, true)) {
-            $beginOffset = strpos($payload, "\nBEGIN;");
-            $commitOffset = strrpos($payload, "\nCOMMIT;");
-            if ($beginOffset === false || $commitOffset === false || $beginOffset >= $commitOffset) {
-                throw new RuntimeException($name . ' has no composable outer transaction');
+    if (in_array($currentVersion, ['0.7.6', '0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4'], true)) {
+        $preflightFile = in_array($currentVersion, ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4'], true)
+            ? '/lifecycle/update-073-or-075-or-076-to-080-preflight.pgsql'
+            : '/lifecycle/update-073-or-075-to-076-preflight.pgsql';
+        $preflight = (string) file_get_contents($root . $preflightFile);
+        if (in_array($currentVersion, ['0.8.2', '0.8.3', '0.8.4'], true)) {
+            require_once $root . '/tools/build-upgrade-082.php';
+            if ($update !== sandIamBuild082Update($root)) {
+                throw new RuntimeException('0.8.2 update differs from strict43/44 admission and immutable043 conditional body');
             }
-            $payload = rtrim(
-                substr($payload, 0, $beginOffset + 1)
-                . substr($payload, $beginOffset + strlen("\nBEGIN;"), $commitOffset - ($beginOffset + strlen("\nBEGIN;")))
-            );
+        } elseif (in_array($currentVersion, ['0.8.0', '0.8.1'], true)) {
+            $admission = str_replace('BEGIN TRANSACTION READ ONLY;', 'BEGIN;', $preflight);
+            $admission = substr($admission, 0, (int) strrpos($admission, "\nCOMMIT;") + 1);
+            if (!str_starts_with($update, $admission)
+                || !str_contains($update, '-- lifecycle source: migrations/043_scope_audit_event_key.pgsql')
+                || substr_count($update, "\nBEGIN;") !== 1
+                || substr_count($update, "\nCOMMIT;") !== 1
+                || preg_match('/^\s*(?:UPDATE|DELETE|TRUNCATE)\s/im', $update) === 1) {
+                throw new RuntimeException('0.8.0 update must atomically admit published073 and apply only043');
+            }
+        } elseif ($update !== $preflight || !str_contains($update, 'BEGIN TRANSACTION READ ONLY;')
+            || !str_contains($update, 'exact published 0.7.3 ledger (001-042, 43 files)')
+            || preg_match('/^\s*(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\s/im', $update) === 1) {
+            throw new RuntimeException('Current update must only validate the complete published073 baseline read-only');
         }
-        if ($payload === '' || !str_contains($update, $payload)) {
-            throw new RuntimeException('update is missing release migration payload ' . $name);
+    } else {
+        if ($updateMigrationNames !== [
+            '041_authorization_scope_integrity.pgsql',
+        ]) {
+            throw new RuntimeException('0.7.3 update manifest must contain only 041');
         }
-    }
-    if (!str_contains($update, "\nBEGIN;\n-- lifecycle source: lifecycle/update-072-to-073-preflight.pgsql")
-        || !str_ends_with($update, "COMMIT;\n")) {
-        throw new RuntimeException('0.7.3 update must compose preflight and 041 under one explicit transaction');
+        $preflight = file_get_contents($root . '/lifecycle/update-072-to-073-preflight.pgsql');
+        if (!is_string($preflight) || !str_contains($update, '-- lifecycle source: lifecycle/update-072-to-073-preflight.pgsql')
+            || !str_contains($update, $collapse($preflight))
+            || strpos($update, $collapse($preflight)) > strpos($update, '-- lifecycle source: migrations/041_authorization_scope_integrity.pgsql')) {
+            throw new RuntimeException('0.7.3 update must admit exact 001-040 before 041');
+        }
+        foreach ($updateMigrationNames as $name) {
+            $source = file_get_contents($root . '/migrations/' . $name);
+            $payload = is_string($source) ? $collapse($source) : '';
+            if (in_array($name, $updateMigrationNames, true)) {
+                $beginOffset = strpos($payload, "\nBEGIN;");
+                $commitOffset = strrpos($payload, "\nCOMMIT;");
+                if ($beginOffset === false || $commitOffset === false || $beginOffset >= $commitOffset) {
+                    throw new RuntimeException($name . ' has no composable outer transaction');
+                }
+                $payload = rtrim(
+                    substr($payload, 0, $beginOffset + 1)
+                    . substr($payload, $beginOffset + strlen("\nBEGIN;"), $commitOffset - ($beginOffset + strlen("\nBEGIN;")))
+                );
+            }
+            if ($payload === '' || !str_contains($update, $payload)) {
+                throw new RuntimeException('update is missing release migration payload ' . $name);
+            }
+        }
+        if (!str_contains($update, "\nBEGIN;\n-- lifecycle source: lifecycle/update-072-to-073-preflight.pgsql")
+            || !str_ends_with($update, "COMMIT;\n")) {
+            throw new RuntimeException('0.7.3 update must compose preflight and 041 under one explicit transaction');
+        }
     }
     if (!str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_security_operation')
         || !str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_application_business_action')) {
@@ -509,7 +550,15 @@ $assert('published 0.6.0 migration 021 remains byte-immutable in root and packag
     return true;
 });
 
-$assert('migration ledger catalogs the published baseline and 037-041 self-register with exact checksums', static function () use ($root, $manifestMigrationNames): bool {
+$assert('current lifecycle generation preserves frozen SQL bytes', static function () use ($root, $currentVersion): bool {
+    if (!in_array($currentVersion, ['0.7.6', '0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4'], true)) return true;
+    $output = [];
+    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($root . '/tools/build-lifecycle.php') . ' --check 2>&1', $output, $status);
+    if ($status !== 0) throw new RuntimeException(implode("\n", $output));
+    return true;
+});
+
+$assert('migration ledger catalogs the published baseline and versioned migrations self-register with exact checksums', static function () use ($root, $manifestMigrationNames): bool {
     $ledger = (string) file_get_contents($root . '/migrations/035_schema_migration_ledger.pgsql');
     if ($ledger === '' || !str_contains($ledger, 'CREATE TABLE IF NOT EXISTS sand_iam_schema_migration')
         || !str_contains($ledger, 'migration_file varchar(160) PRIMARY KEY')
@@ -526,7 +575,7 @@ $assert('migration ledger catalogs the published baseline and 037-041 self-regis
         return false;
     }
     foreach ($manifestMigrationNames as $name) {
-        if (in_array($name, ['039_service_grant_nullable_data_class.pgsql', '040_passkey_auth_challenge_identity.pgsql', '041_authorization_scope_integrity.pgsql'], true)) {
+        if (in_array($name, ['039_service_grant_nullable_data_class.pgsql', '040_passkey_auth_challenge_identity.pgsql', '041_authorization_scope_integrity.pgsql', '042_permission_menu_hierarchy.pgsql', '043_scope_audit_event_key.pgsql'], true)) {
             continue;
         }
         if (!str_contains($ledger, "'{$name}'")) {
@@ -586,6 +635,22 @@ $assert('migration ledger catalogs the published baseline and 037-041 self-regis
         || !str_contains($authorizationScopeIntegrity, 'fk_sand_iam_policy_published_version_owner')
         || !str_contains($authorizationScopeIntegrity, "package_version <> '0.7.3'")) {
         return false;
+    }
+    if (in_array('042_permission_menu_hierarchy.pgsql', $manifestMigrationNames, true)) {
+        $hierarchy = (string) file_get_contents($root . '/migrations/042_permission_menu_hierarchy.pgsql');
+        if (preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $hierarchy, $hierarchyChecksum) !== 1
+            || hash('sha256', str_replace($hierarchyChecksum[1], '__SELF_SHA256__', $hierarchy)) !== $hierarchyChecksum[1]
+            || !str_contains($hierarchy, "SELECT '042_permission_menu_hierarchy.pgsql', 42")
+            || !str_contains($hierarchy, '(SELECT count(*) FROM sand_iam_schema_migration) <> 43')
+            || !str_contains($hierarchy, 'changed the logical role-permission set')) return false;
+    }
+    if (in_array('043_scope_audit_event_key.pgsql', $manifestMigrationNames, true)) {
+        $scope = (string) file_get_contents($root . '/migrations/043_scope_audit_event_key.pgsql');
+        if (preg_match("/WITH self_checksum\\(checksum\\) AS \\(VALUES \\('([0-9a-f]{64})'\\)\\)/", $scope, $checksum) !== 1
+            || hash('sha256', str_replace($checksum[1], '__SELF_SHA256__', $scope)) !== $checksum[1]
+            || !str_contains($scope, "SELECT '043_scope_audit_event_key.pgsql', 43")
+            || !str_contains($scope, '(SELECT count(*) FROM sand_iam_schema_migration) <> 44')
+            || !str_contains($scope, 'UNIQUE (request_id, action, event_key)')) return false;
     }
     return str_contains($ledger, 'migration ledger checksum or package-version conflict; refusing to continue')
         && str_contains($ledger, 'exact legacy or ledger-backed relation fingerprint is incompatible')
@@ -648,7 +713,7 @@ $requiredFiles = [
         'bin/RuntimeConfigurationPreflight.php', 'bin/check-runtime-configuration.php',
         'bin/RuntimeRequirementsPreflight.php', 'bin/check-runtime-requirements.php',
     ],
-    'account portal runtime source and packaged assets' => ['../../portal/package.json', '../../portal/pnpm-lock.yaml', '../../portal/scripts/build.mjs', '../../portal/src/app.ts', 'public/account/index.html', 'public/account/account.js'],
+    'account portal runtime source and packaged assets' => ['../../app/package.json', '../../app/pnpm-lock.yaml', '../../app/scripts/build.mjs', '../../app/src/app.ts', 'public/account/index.html', 'public/account/account.js'],
     'admin UI payload' => ['../../sandadmin-artd/src/views/plugin/sand-iam/index/index.vue', '../../sandadmin-artd/src/views/plugin/sand-iam/api/types.ts'],
     'SDK and user-facing documentation' => [
         '../../sdk/dart/README.md', '../../sdk/php/composer.json', '../../sdk/typescript/package.json',
@@ -802,107 +867,11 @@ $assert('TypeScript SDK exports resolve to packaged ESM and declaration files on
     return isset($expected['sdk/typescript/dist/index.js'], $expected['sdk/typescript/dist/index.d.ts'], $expected['sdk/typescript/dist/management.js'], $expected['sdk/typescript/dist/management.d.ts']);
 });
 
-$assert('release build contract locks toolchain and reviewed runtime payloads', static function () use ($root, $releaseArtifactFiles, $cleanGitPayloadMaps): bool {
-    $contractPath = $root . '/release-build-contract.json';
-    $contract = json_decode((string) file_get_contents($contractPath), true, 512, JSON_THROW_ON_ERROR);
-    if (!is_array($contract)
-        || ($contract['schema'] ?? null) !== 'sand-iam.release-build-contract/v1'
-        || ($contract['kind'] ?? null) !== 'reviewed-runtime-payload-inputs'
-        || ($contract['source']['formal_builder'] ?? null) !== 'git-blob-only'
-        || ($contract['source']['repeat_build'] ?? null) !== 'independent-git-stage') {
-        return false;
-    }
-    $toolchain = $contract['toolchain'] ?? null;
-    if (!is_array($toolchain)
-        || ($toolchain['php'] ?? null) !== PHP_VERSION
-        || ($toolchain['zip_extension'] ?? null) !== phpversion('zip')
-        || ($toolchain['libzip'] ?? null) !== (defined('ZipArchive::LIBZIP_VERSION') ? ZipArchive::LIBZIP_VERSION : null)) {
-        return false;
-    }
-    $commandVersion = static function (array $command): string {
-        $output = [];
-        exec(implode(' ', array_map('escapeshellarg', $command)) . ' 2>&1', $output, $status);
-        if ($status !== 0) throw new RuntimeException('cannot read fixed build toolchain version');
-        return trim(implode("\n", $output));
-    };
-    $composerVersion = $commandVersion(['composer', '--version']);
-    $nodeVersion = $commandVersion(['node', '--version']);
-    $pnpmVersion = $commandVersion(['pnpm', '--version']);
-    if (preg_match('/Composer version ([0-9]+\.[0-9]+\.[0-9]+)/', $composerVersion, $composerMatch) !== 1
-        || ($toolchain['composer'] ?? null) !== $composerMatch[1]
-        || ($toolchain['node'] ?? null) !== $nodeVersion
-        || ($toolchain['pnpm'] ?? null) !== $pnpmVersion
-        || ($toolchain['typescript'] ?? null) !== '5.9.3') {
-        return false;
-    }
-    $composer = $contract['composer'] ?? null;
-    $typescript = $contract['typescript'] ?? null;
-    $installedComposer = (string) file_get_contents($root . '/plugin/sand-iam/vendor/composer/installed.php');
-    if (!is_array($composer) || !is_array($typescript)
-        || ($composer['lock_sha256'] ?? null) !== hash_file('sha256', $root . '/plugin/sand-iam/composer.lock')
-        || ($composer['environment'] ?? null) !== [
-            'COMPOSER_DISABLE_NETWORK' => '1',
-            'COMPOSER_ROOT_VERSION' => '0.7.3',
-        ]
-        || ($composer['arguments'] ?? null) !== [
-            'install', '--no-dev', '--prefer-dist', '--optimize-autoloader', '--classmap-authoritative',
-            '--no-interaction', '--no-plugins', '--no-scripts',
-        ]
-        || substr_count($installedComposer, "'pretty_version' => '0.7.3'") !== 2
-        || substr_count($installedComposer, "'version' => '0.7.3.0'") !== 2
-        || str_contains($installedComposer, "'pretty_version' => '0.7.2'")
-        || ($typescript['lock_sha256'] ?? null) !== hash_file('sha256', $root . '/sdk/typescript/pnpm-lock.yaml')
-        || ($typescript['package_integrity'] ?? null) !== 'sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==') {
-        return false;
-    }
-    $payload = $releaseArtifactFiles();
-    $generatedPayloads = $contract['generated_payloads'] ?? null;
-    $requiredGeneratedPayloads = ['plugin/sand-iam/vendor', 'sdk/typescript/dist'];
-    if (!is_array($generatedPayloads)) {
-        return false;
-    }
-    $declaredGeneratedPayloads = array_keys($generatedPayloads);
-    sort($declaredGeneratedPayloads, SORT_STRING);
-    if ($declaredGeneratedPayloads !== $requiredGeneratedPayloads) {
-        return false;
-    }
-    $gitPayloadMaps = $cleanGitPayloadMaps($requiredGeneratedPayloads);
-    foreach ($requiredGeneratedPayloads as $directory) {
-        $expected = $generatedPayloads[$directory] ?? null;
-        if (!is_array($expected)) {
-            return false;
-        }
-        $expectedFields = array_keys($expected);
-        sort($expectedFields, SORT_STRING);
-        if ($expectedFields !== ['file_count', 'tree_sha256']
-            || !is_int($expected['file_count']) || $expected['file_count'] < 1
-            || !is_string($expected['tree_sha256']) || preg_match('/^[0-9a-f]{64}$/', $expected['tree_sha256']) !== 1) {
-            return false;
-        }
-        if ($gitPayloadMaps !== null) {
-            $map = $gitPayloadMaps[$directory] ?? null;
-            if (!is_array($map)) return false;
-        } else {
-            $absolute = $root . '/' . $directory;
-            if (!is_dir($absolute) || is_link($absolute)) return false;
-            $map = [];
-            $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($absolute, FilesystemIterator::SKIP_DOTS));
-            foreach ($iterator as $file) {
-                if (!$file instanceof SplFileInfo || !$file->isFile() || $file->isLink()) continue;
-                $relative = substr($file->getPathname(), strlen($absolute) + 1);
-                $hash = hash_file('sha256', $file->getPathname());
-                if (!is_string($hash)) return false;
-                $map[$relative] = $hash;
-            }
-            ksort($map, SORT_STRING);
-        }
-        if (($expected['file_count'] ?? null) !== count($map)
-            || ($expected['tree_sha256'] ?? null) !== hash('sha256', json_encode($map, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR))) {
-            return false;
-        }
-    }
-    return isset($payload['plugin/sand-iam/vendor/autoload.php'], $payload['sdk/typescript/dist/index.js']);
+$assert('release build contract locks toolchain and reviewed runtime payloads', static function () use ($root, $reproduceToolchain): bool {
+    sandIamCheckReleaseBuildContract($root, $reproduceToolchain);
+    return true;
 });
+if (!$reproduceToolchain) echo "[SCOPE] frozen dependency bytes checked; toolchain rebuild reproduction was not requested\n";
 
 $assert('eligible release payload is clean, tracked, and matches HEAD Git blobs', static function () use ($root, $releaseArtifactFiles, $hasGitMetadataAncestor): bool {
     $workspace = $root;
@@ -993,16 +962,7 @@ $assert('release metadata versions and host support are consistent', static func
         || !is_string($packageInfo['website'] ?? null)
         || $rootInfo['support'] !== $packageInfo['support']
         || $rootInfo['website'] !== $packageInfo['website']
-        || preg_match('/^\d+\.x(?:\|\d+\.x)*$/', $rootInfo['support']) !== 1) {
-        return false;
-    }
-    $supportsHostVersion = static function (string $support, string $hostVersion): bool {
-        if (preg_match('/^(\d+)\./', $hostVersion, $match) !== 1) {
-            return false;
-        }
-        return in_array($match[1] . '.x', explode('|', $support), true);
-    };
-    if (!$supportsHostVersion($rootInfo['support'], '6.0.11')) {
+        || preg_match('/^(?:\d+(?:\.\d+)?\.x(?:\|\d+(?:\.\d+)?\.x)*|>=\d+\.\d+\.\d+(?: <=\d+\.\d+\.\d+)?)$/D', $rootInfo['support']) !== 1) {
         return false;
     }
     $appSource = file_get_contents($package . '/config/app.php');
@@ -1011,40 +971,68 @@ $assert('release metadata versions and host support are consistent', static func
     return $version !== null && $version === $rootInfo['version'] && $version === $packageInfo['version'];
 });
 
+$assert('host support follows the default open minimum producer policy', static function () use ($root, $package): bool {
+    $rootInfo = parse_ini_file($root . '/info.ini');
+    $packageInfo = parse_ini_file($package . '/info.ini');
+    sandIamAssertOpenHostSupport(is_array($rootInfo) ? $rootInfo : [], is_array($packageInfo) ? $packageInfo : []);
+    return true;
+});
+
 /** @return non-empty-string */
 $externalRegularFile = static function (?string $path, string $label) use ($root): string {
     if (!is_string($path) || $path === '') {
         throw new RuntimeException('missing ' . $label);
     }
-    if (!str_starts_with($path, '/') || preg_match('#/(?:\.{1,2})(?:/|$)#', $path) === 1) {
+    $windows = DIRECTORY_SEPARATOR === '\\';
+    $normalized = $windows ? str_replace('\\', '/', $path) : $path;
+    if ($windows && preg_match('~^([A-Za-z]:)/(.+)$~D', $normalized, $drive) === 1) {
+        $anchor = $drive[1];
+        $parts = explode('/', $drive[2]);
+    } elseif ($windows && preg_match('~^//([^/]+)/([^/]+)/(.+)$~D', $normalized, $share) === 1) {
+        $anchor = '//' . $share[1] . '/' . $share[2];
+        $parts = explode('/', $share[3]);
+    } elseif (!$windows && str_starts_with($normalized, '/')) {
+        $anchor = '';
+        $parts = explode('/', substr($normalized, 1));
+    } else {
         throw new RuntimeException($label . ' must use an absolute canonical path outside the sand-iam package root');
     }
+    foreach ($parts as $part) {
+        if ($part === '' || $part === '.' || $part === '..' || preg_match('/[\\x00-\\x1f]/', $part) === 1
+            || ($windows && (str_contains($part, ':') || str_ends_with($part, '.') || str_ends_with($part, ' ')))) {
+            throw new RuntimeException($label . ' must use an absolute canonical path outside the sand-iam package root');
+        }
+    }
     $rootPath = realpath($root);
-    if ($rootPath === false) {
-        throw new RuntimeException('cannot resolve sand-iam package root');
-    }
-    if ($path === $rootPath || str_starts_with($path, $rootPath . DIRECTORY_SEPARATOR)) {
-        throw new RuntimeException($label . ' must be stored outside the sand-iam package root');
-    }
-    $parts = array_values(array_filter(explode('/', $path), static fn (string $part): bool => $part !== ''));
-    $current = '';
+    if ($rootPath === false) throw new RuntimeException('cannot resolve sand-iam package root');
+    $compare = static fn (string $value): string => $windows ? strtolower(str_replace('\\', '/', $value)) : $value;
+    $inside = static function (string $value) use ($compare, $rootPath): bool {
+        $candidate = $compare($value);
+        $packageRoot = rtrim($compare($rootPath), '/');
+        return $candidate === $packageRoot || str_starts_with($candidate, $packageRoot . '/');
+    };
+    if ($inside($normalized)) throw new RuntimeException($label . ' must be stored outside the sand-iam package root');
+    $current = $anchor;
     foreach ($parts as $offset => $part) {
         $current .= '/' . $part;
         $stat = lstat($current);
-        if ($stat === false) {
-            throw new RuntimeException($label . ' path does not exist');
-        }
-        if (($stat['mode'] & 0170000) === 0120000) {
+        if ($stat === false) throw new RuntimeException($label . ' path does not exist');
+        if (is_link($current) || ($stat['mode'] & 0170000) === 0120000) {
             throw new RuntimeException($label . ' path must not contain symbolic links');
         }
         if ($offset < count($parts) - 1 && (($stat['mode'] & 0170000) !== 0040000)) {
             throw new RuntimeException($label . ' parent is not a directory');
         }
     }
-    $finalStat = lstat($path);
-    if ($finalStat === false || (($finalStat['mode'] & 0170000) !== 0100000) || !is_file($path)) {
+    $finalStat = lstat($normalized);
+    if ($finalStat === false || (($finalStat['mode'] & 0170000) !== 0100000) || !is_file($normalized)) {
         throw new RuntimeException($label . ' must be a regular file');
     }
+    $resolved = realpath($normalized);
+    if (!is_string($resolved) || $inside($resolved)) {
+        throw new RuntimeException($label . ' must be stored outside the sand-iam package root');
+    }
+    $path = $normalized;
     return $path;
 };
 

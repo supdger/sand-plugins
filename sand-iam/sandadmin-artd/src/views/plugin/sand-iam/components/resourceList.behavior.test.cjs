@@ -20,7 +20,7 @@ const body = ast.statements.filter(node => !ts.isImportDeclaration(node))
 const code = ts.transpileModule(`${body}
 globalThis.page = { load, runWrite, onEditorSubmit, clearSensitiveState, confirmAction, openCreate, openEdit,
  confirmDisable, restoreEnabled, editorOpen, keywords,
- rows, total, loading, saving, requestError, issuedSecret, credentialDialogOpen, identityId, referenceKeys,
+ rows, total, loading, saving, requestError, editorSubmitError, issuedSecret, credentialDialogOpen, identityId, referenceKeys,
  relationTargetId, referenceOptions, loadReferenceOption, grantRelation };`,
 { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 function deferred() {
@@ -33,7 +33,12 @@ function harness(overrides = {}, manualConfirm = false) {
   const allowed = vue.ref(true)
   let unmount = () => {}
   const context = {
-    ...vue, console, onMounted: () => {}, onUnmounted: callback => { unmount = callback },
+    ...vue, console,
+    useRoute: () => ({ query: {}, fullPath: '/sand-iam/policy' }),
+    taskContextKeys: ['organization_id', 'application_id', 'environment_id', 'workload_client_id'],
+    verifyTaskContext: async context => ({ context, rows: {} }),
+    readSandIamResource: async () => ({}),
+    onMounted: () => {}, onUnmounted: callback => { unmount = callback },
     defineProps: () => ({ endpoint: 'credential', title: '凭证', filters: [], columns: [], ...overrides }),
     withDefaults: (props, defaults) => ({ ...defaults, ...props, formFields: [] }),
     useAuth: () => ({ hasAuth: permission => allowed.value &&
@@ -60,6 +65,52 @@ function harness(overrides = {}, manualConfirm = false) {
     stop: () => { unmount(); scope.stop() } }
 }
 async function run() {
+  const policy = harness({ endpoint: 'policy', writeMode: 'policy', permissionPrefix: 'sand_iam:policy' })
+  policy.page.openCreate()
+  const save = policy.page.onEditorSubmit({ action: 'inspect' })
+  assert.equal(policy.writes[0].args[2], false, 'inline form error must suppress conflicting generic HTTP toast')
+  policy.writes[0].reject(Object.assign(new Error('业务动作尚未声明，请先声明并启用'), { http: 409 }))
+  await save
+  assert.match(policy.page.editorSubmitError.value.detail, /业务动作尚未声明/)
+  assert.equal(policy.page.editorOpen.value, true)
+  assert.equal(policy.notices.length, 0)
+  policy.stop()
+
+  const publishing = harness({
+    endpoint: 'policy', writeMode: 'policy', permissionPrefix: 'sand_iam:policy',
+    saveSuccessMessage: '保存编辑，不会发布', publishSuccessMessage: '发布成功，核对版本历史'
+  })
+  publishing.page.openCreate()
+  let publishingAction = publishing.page.onEditorSubmit({ action: 'inspect', priority: 1 })
+  assert.equal(publishing.writes[0].name, 'saveSandIamResource')
+  assert.equal(publishing.writes.length, 1, 'save must not call publish automatically')
+  publishing.writes[0].resolve({ id: 5 })
+  await new Promise(resolve => setImmediate(resolve))
+  publishing.requests.at(-1).resolve([{ id: 5, status: 1, state: 'draft', published_version_id: null }])
+  await publishingAction
+  assert.equal(publishing.notices.at(-1), '保存编辑，不会发布')
+  assert.equal(publishing.page.rows.value[0].published_version_id, null)
+  publishingAction = publishing.page.confirmAction('policy/publish', { id: 5 }, '发布策略', publishing.page.rows.value[0], '')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(publishing.writes.at(-1).args[0], 'policy/publish')
+  publishing.writes.at(-1).resolve({ published_version_id: 45, version_no: 1 })
+  await new Promise(resolve => setImmediate(resolve))
+  publishing.requests.at(-1).resolve([{ id: 5, status: 1, state: 'published', published_version_id: 45 }])
+  await publishingAction
+  assert.equal(publishing.notices.at(-1), '发布成功，核对版本历史')
+  publishing.page.openEdit(publishing.page.rows.value[0])
+  publishingAction = publishing.page.onEditorSubmit({ priority: 2 })
+  assert.equal(publishing.writes.at(-1).name, 'updateSandIamResource')
+  assert.equal('state' in publishing.writes.at(-1).args[1], false)
+  publishing.writes.at(-1).resolve({})
+  await new Promise(resolve => setImmediate(resolve))
+  publishing.requests.at(-1).resolve([{ id: 5, priority: 2, status: 1, state: 'published', published_version_id: 45 }])
+  await publishingAction
+  assert.equal(publishing.page.rows.value[0].published_version_id, 45)
+  assert.equal(publishing.notices.at(-1), '保存编辑，不会发布')
+  assert.equal(publishing.writes.length, 3, 'edit/save must not replace the published snapshot via another publish call')
+  publishing.stop()
+
   const crud = harness({ endpoint: 'environment', writeMode: 'crud', permissionPrefix: 'sand_iam:environment', filters: ['keywords'] }, true)
   crud.page.openCreate()
   let action = crud.page.onEditorSubmit({ name: 'Env', code: 'test', application_id: 1 })
@@ -74,6 +125,7 @@ async function run() {
   crud.page.openEdit(visible)
   action = crud.page.onEditorSubmit({ id: 999, name: 'Updated' })
   assert.equal(crud.writes.at(-1).args[1].id, 4, 'editor cannot replace original ID')
+  assert.equal(crud.writes.at(-1).args[2], false, 'update keeps precise inline errors without generic toast')
   crud.writes.at(-1).reject(new Error('retry')); await action
   assert.equal(crud.page.editorOpen.value, true); assert.equal(crud.page.saving.value, false)
   action = crud.page.onEditorSubmit({ name: 'Updated' })

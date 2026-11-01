@@ -47,6 +47,8 @@
     readonly description: string
     readonly createTitle?: string
     readonly objectHint?: string
+    readonly saveSuccessMessage?: string
+    readonly publishSuccessMessage?: string
     readonly endpoint: SandIamResourceEndpoint
     readonly indexPermission: string
     readonly permissionPrefix: string
@@ -63,6 +65,8 @@
   const props = withDefaults(defineProps<Props>(), {
     createTitle: '',
     objectHint: '',
+    saveSuccessMessage: '已保存',
+    publishSuccessMessage: '已发布',
     formFields: () => [],
     writeMode: 'crud',
     requireIdentityId: false,
@@ -412,6 +416,15 @@
       if (disposed || referenceRequestId[key] !== requestId) return
       const described = describeSandIamError(error)
       if (described.http === 401) clearSensitiveState()
+      if (described.http === 403 && key === 'organization_id') {
+        const application = referenceOptions.application_id?.find(option => option.value === applicationId.value)
+        const organization = application ? organizationOptionFromApplication(application.row) : null
+        if (organization !== null && organization.value === organizationId.value) {
+          referenceOptions[key] = [organization]
+          referenceError[key] = ''
+          return
+        }
+      }
       referenceOptions[key] = []
       referenceError[key] =
         described.http === 403
@@ -842,8 +855,8 @@
     if (creating.value) {
       const isEnvironmentCreation = props.endpoint === 'environment'
       await runWrite(
-        () => saveSandIamResource(props.endpoint, payload, !isEnvironmentCreation),
-        '已保存',
+        () => saveSandIamResource(props.endpoint, payload, false),
+        props.saveSuccessMessage,
         isEnvironmentCreation ? describeEnvironmentEditorSaveError : undefined,
         props.writeMode === 'oauth-client',
         current,
@@ -853,7 +866,7 @@
     }
     const id = editorRowId
     if (id === null || original === null || rowId(original) !== id) return
-    await runWrite(() => updateSandIamResource(props.endpoint, { ...payload, id }), '已保存', undefined, false, current)
+    await runWrite(() => updateSandIamResource(props.endpoint, { ...payload, id }, false), props.saveSuccessMessage, undefined, false, current)
   }
 
   async function confirmDisable(row: SandIamResourceRow): Promise<void> {
@@ -942,7 +955,7 @@
     const successText = title.includes('撤销')
       ? '已撤销'
       : title.includes('发布')
-        ? '已发布'
+        ? props.publishSuccessMessage
         : title.includes('轮换')
           ? '已轮换'
           : '已保存'
@@ -1350,7 +1363,7 @@
       />
 
       <ElAlert
-        v-if="requestError"
+        v-if="requestError && !editorOpen"
         class="mb-4"
         type="error"
         :closable="false"
@@ -1384,7 +1397,7 @@
         >
           <template #default="scope">
             <ElSpace v-if="column.copyable === true" :size="8">
-              <span>{{ displayValue(column.key, scope.row[column.key], scope.row) }}</span>
+              <span>{{ column.format ? column.format(scope.row) : displayValue(column.key, scope.row[column.key], scope.row) }}</span>
               <ElButton
                 v-if="typeof scope.row[column.key] === 'string' && scope.row[column.key] !== ''"
                 link
@@ -1395,7 +1408,7 @@
                 复制
               </ElButton>
             </ElSpace>
-            <span v-else>{{ displayValue(column.key, scope.row[column.key], scope.row) }}</span>
+            <span v-else>{{ column.format ? column.format(scope.row) : displayValue(column.key, scope.row[column.key], scope.row) }}</span>
           </template>
         </ElTableColumn>
         <ElTableColumn

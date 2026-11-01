@@ -56,6 +56,7 @@ export type SandIamWriteMode =
 
 export type SandIamFieldKind =
   | 'text'
+  | 'business-action'
   | 'number'
   | 'reference'
   | 'status'
@@ -122,6 +123,8 @@ export interface SandIamResourceColumn {
   readonly key: string
   readonly label: string
   readonly minWidth?: number
+  /** Resource-owned presentation based on the complete server row. */
+  readonly format?: (row: SandIamResourceRow) => string
   /** 次要列可复制原文，例如系统代码。默认主列不要打开。 */
   readonly copyable?: boolean
 }

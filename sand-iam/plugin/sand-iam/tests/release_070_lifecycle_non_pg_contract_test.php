@@ -344,13 +344,13 @@ release070Assert('uninstall removes the ledger in root and package payloads',
 $rootInfo = parse_ini_file($root . '/info.ini');
 $packageInfo = parse_ini_file($package . '/info.ini');
 $appConfig = (string) file_get_contents($package . '/config/app.php');
-$portal = json_decode((string) file_get_contents($root . '/portal/package.json'), true);
+$portal = json_decode((string) file_get_contents($root . '/app/package.json'), true);
 $managementCatalog = (string) file_get_contents($package . '/app/developer/ManagementApiCatalog.php');
-release070Assert('0.7.3 release metadata declares matching SandAdmin 6.x support while OpenAPI stays 0.13.0-candidate',
+release070Assert('0.7.3 release metadata declares matching SandAdmin open minimum support while OpenAPI stays 0.13.0-candidate',
     ($rootInfo['version'] ?? null) === '0.7.3'
     && ($packageInfo['version'] ?? null) === '0.7.3'
-    && ($rootInfo['support'] ?? null) === '6.x'
-    && ($packageInfo['support'] ?? null) === '6.x'
+    && ($rootInfo['support'] ?? null) === '>=0.1.0'
+    && ($packageInfo['support'] ?? null) === '>=0.1.0'
     && str_contains($appConfig, "'version' => '0.7.3'")
     && is_array($portal) && ($portal['version'] ?? null) === '0.7.3'
     && str_contains($managementCatalog, "'version' => '0.13.0-candidate'"));

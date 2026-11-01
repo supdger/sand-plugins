@@ -46,8 +46,9 @@ final class ServiceInvocationAuthorizer
         $claims = $this->contexts->verifyForService($context, $expectedServiceCode, $expectedAudience, $requiredAction, $trustedSourceIp, $requestId);
         $grant = $claims['action_grants'][$requiredAction] ?? null;
         if (!is_array($grant)) throw new ApiException('SAND_IAM_SERVICE_ACTION_FORBIDDEN: 当前上下文没有目标服务动作授权', 403);
-        $facts = ResolvedInvocationFacts::resolve($this->factResolvers, $resolverCode, $expectedServiceCode, $requiredAction, $resourceKey);
+        $facts = null;
         try {
+            $facts = ResolvedInvocationFacts::resolve($this->factResolvers, $resolverCode, $expectedServiceCode, $requiredAction, $resourceKey);
             $this->assertFactsScope($claims, $facts);
         } catch (ApiException $exception) {
             $this->auditWriter->write(
@@ -56,11 +57,11 @@ final class ServiceInvocationAuthorizer
                 (int) ($claims['organization_id'] ?? 0),
                 (int) ($claims['application_id'] ?? 0),
                 'service.invoke.authorize',
-                $facts->resourceType,
+                $facts?->resourceType ?? 'service_invocation_operation',
                 null,
                 'denied',
                 $requestId,
-                ['code' => 'SAND_IAM_INVOCATION_SCOPE_FORBIDDEN', 'service_code' => $expectedServiceCode, 'action_code' => $requiredAction],
+                ['code' => $this->errorCode($exception), 'service_code' => $expectedServiceCode, 'action_code' => $requiredAction],
             );
             throw $exception;
         }

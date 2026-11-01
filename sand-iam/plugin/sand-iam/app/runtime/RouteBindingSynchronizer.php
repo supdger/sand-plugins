@@ -216,8 +216,8 @@ final class RouteBindingSynchronizer
             $changes[] = $this->change($operation, $code, $label, $route, $binding === null ? null : (int) $binding->id);
         }
         if ($disableMissing) {
-            foreach ($existing as $key => $binding) {
-                if (isset($desired[$key]) || (string) $binding->source !== 'route_scan' || (int) $binding->status !== 1) {
+            foreach ($existing as $existingKey => $binding) {
+                if (isset($desired[$existingKey]) || (string) $binding->source !== 'route_scan' || (int) $binding->status !== 1) {
                     continue;
                 }
                 $changes[] = [

@@ -32,7 +32,7 @@
 2. **契约是交接物。** 后端先发布增量版本并标注「可消费」；前端只消费已冻结版本。向后兼容的新增字段不要求前端同步等待。
 3. **每个任务只依赖可验证物。** U-01 不依赖 IAM-01；U-03 依赖已冻结管理 API，而不是「Codex 做完宿主验收」。IAM-01 的 Adapter 契约一旦冻结，SandAI `SAND-113C` 即可继续，不必等管理页。
 4. **交接不靠口头提醒。** 完成者补四项：变更路径、契约版本、验证命令/真实路径、已解锁任务。
-5. **合并只在验收点发生。** 日常开发互不等待；真实联调在 `/Users/code/project/sand_plugins/sandadmin-demo-host`。`/Users/code/project/sandadmin` 保持纯净通用宿主，不用于插件演示。
+5. **合并只在验收点发生。** 日常开发互不等待；真实联调在 `/Users/code/project/sand_demo`。`/Users/code/project/sandadmin` 保持纯净通用宿主，不用于插件演示。
 
 未冻结的接口不得被视为前端阻塞。页面壳、加载/空/失败状态可以先做；禁止发明未冻结 DTO 字段或假 CRUD。
 
@@ -42,7 +42,7 @@
 | --- | --- |
 | SandIAM 插件源码（本仓库） | `/Users/code/project/sand_plugins/sand-iam` |
 | 插件集合仓（Codex 当前任务工作区） | `/Users/code/project/sand_plugins` |
-| 安装、演示与功能验收宿主 | `/Users/code/project/sand_plugins/sandadmin-demo-host`（服务端为其 `server/` 子目录） |
+| 安装、演示与功能验收宿主 | `/Users/code/project/sand_demo`（服务端为其 `server/` 子目录） |
 | 纯净通用 SandAdmin 宿主 | `/Users/code/project/sandadmin`（不用于插件演示） |
 | SandAI 消费方（Adapter 实现落点） | `/Users/code/project/sand_ai` |
 

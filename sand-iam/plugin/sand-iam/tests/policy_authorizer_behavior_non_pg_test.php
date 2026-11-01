@@ -109,6 +109,8 @@ namespace {
     use function PolicyAuthorizerTest\check;
     require dirname(__DIR__) . '/app/service/RequestId.php';
     require dirname(__DIR__) . '/app/runtime/ScopeMatcher.php';
+    require dirname(__DIR__) . '/vendor/autoload.php';
+    spl_autoload_register(static function (string $class): void { $prefix = 'plugin\\SandIam\\'; if (str_starts_with($class, $prefix)) { $file = dirname(__DIR__) . '/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php'; if (is_file($file)) require_once $file; } });
     require dirname(__DIR__) . '/app/runtime/PolicyAuthorizer.php';
 
     Application::$rows = [['id' => 10, 'organization_id' => 1, 'status' => 1]];
@@ -118,7 +120,22 @@ namespace {
     $policy = ['id' => 1, 'application_id' => 10, 'status' => 1, 'published_version_id' => 101, 'state' => 'published'];
     Policy::$rows = [$policy];
     PolicyVersion::$rows = [['id' => 101, 'policy_id' => 1, 'snapshot' => $snapshot]];
-    $authorizer = new PolicyAuthorizer();
+    $loader = new class implements \plugin\SandIam\app\runtime\PolicySnapshotLoader {
+        public function load(int $app, int $identity, string $resourceCode, string $action, ?array $apiContext = null): array {
+            $application = Application::where('id', $app)->where('status', 1)->find();
+            $principal = Identity::where('id', $identity)->where('application_id', $app)->where('status', 1)->find();
+            $resource = Resource::where('application_id', $app)->where('code', $resourceCode)->where('status', 1)->find();
+            $policies = [];
+            foreach (Policy::where('application_id', $app)->where('status', 1)->where('published_version_id', '>', 0)->order('id', 'asc')->select() as $p) {
+                $v = PolicyVersion::where('id', (int) $p->published_version_id)->where('policy_id', (int) $p->id)->find();
+                $policies[] = ['id' => $p->id, 'published_version_id' => $p->published_version_id, 'version_id' => $v?->id, 'version_policy_id' => $v?->policy_id, 'version_application_id' => $v === null ? null : $app, 'snapshot' => $v?->snapshot];
+            }
+            $direct = \plugin\SandIam\app\model\IdentityRole::alias('identity_role')->join('sand_iam_role iam_role', 'iam_role.id = identity_role.role_id')->where('identity_role.identity_id', $identity)->where('identity_role.status', 1)->where('iam_role.application_id', $app)->where('iam_role.status', 1)->column('iam_role.id');
+            $group = \plugin\SandIam\app\model\IdentityGroupMember::alias('group_member')->join('sand_iam_identity_group iam_group', 'iam_group.id = group_member.identity_group_id')->join('sand_iam_identity_group_role group_role', 'group_role.identity_group_id = iam_group.id')->join('sand_iam_role iam_role', 'iam_role.id = group_role.role_id')->where('group_member.identity_id', $identity)->where('group_member.application_id', $app)->where('group_member.status', 1)->where('iam_group.application_id', $app)->where('iam_group.status', 1)->where('group_role.application_id', $app)->where('group_role.status', 1)->where('iam_role.application_id', $app)->where('iam_role.status', 1)->field('iam_role.id AS role_id,iam_group.id AS group_id')->select();
+            return ['application_id' => $app, 'identity_id' => $identity, 'application' => $application === null ? null : ['id' => $application->id, 'organization_id' => $application->organization_id], 'resource' => $resource === null ? null : ['id' => $resource->id], 'available' => $application !== null && $principal !== null && $resource !== null && $action !== '', 'policies' => $policies, 'references' => ['identity' => array_column(Identity::$rows, 'id'), 'resource' => array_column(Resource::$rows, 'id'), 'role' => array_column(Relations::$tables['sand_iam_role'] ?? [], 'id')], 'direct_roles' => array_map(static fn ($id): array => ['role_id' => $id], $direct), 'group_roles' => array_map(static fn ($row): array => (array) $row, $group)];
+        }
+    };
+    $authorizer = new PolicyAuthorizer(snapshotLoader: $loader);
     $decide = static fn (array $attributes = ['region' => 'cn']): array => $authorizer->authorize(10, 20, 'invoice', 'invoice.read', 'read', $attributes, 'authorizer-behavior');
     $result = $decide();
     check($result['allowed'] && $result['scope'] === $snapshot['scope'], 'Published direct identity allow failed');

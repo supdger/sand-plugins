@@ -12,7 +12,7 @@ use plugin\SandIam\app\service\HumanAuthService;
 use plugin\SandIam\app\service\MfaService;
 use plugin\sandadmin\exception\ApiException;
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $sandIamRoot = dirname(__DIR__, 3);
 chdir($hostRoot);
 require $hostRoot . '/vendor/autoload.php';

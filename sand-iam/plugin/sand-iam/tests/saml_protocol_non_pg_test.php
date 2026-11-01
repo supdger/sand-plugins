@@ -50,6 +50,25 @@ namespace {
         t04ProtocolFail("{$message}: response was accepted");
     }
 
+    function t04BridgeAssert(bool $condition, string $message): void
+    {
+        t04ProtocolAssert($condition, $message);
+        echo "[PASS] {$message}\n";
+    }
+
+    /** Compare server keys, values and value types without depending on map insertion order. */
+    function t04ServerEqual(array $expected): bool
+    {
+        $actual = $_SERVER;
+        ksort($actual); ksort($expected);
+        return $actual === $expected;
+    }
+
+    function t04UtilsState(): array
+    {
+        return [\OneLogin\Saml2\Utils::getProxyVars(), \OneLogin\Saml2\Utils::getSelfHost(), \OneLogin\Saml2\Utils::getSelfPort(), \OneLogin\Saml2\Utils::getSelfProtocol(), \OneLogin\Saml2\Utils::getBaseURLPath()];
+    }
+
     function t04ProtocolTime(int $time): string
     {
         return gmdate('Y-m-d\\TH:i:s\\Z', $time);
@@ -154,6 +173,74 @@ namespace {
     t04ProtocolReject(static fn () => $verifier->verify(t04ProtocolResponse(['not_before' => t04ProtocolTime(time() + 600)], $keyPair['private_key'], $keyPair['certificate']), $config, '_t04-request', 'https://sp.example.test/saml/acs'), 'future NotBefore');
     t04ProtocolReject(static fn () => $verifier->verify(t04ProtocolResponse(['not_on_or_after' => t04ProtocolTime(time() - 600), 'subject_not_on_or_after' => t04ProtocolTime(time() - 600)], $keyPair['private_key'], $keyPair['certificate']), $config, '_t04-request', 'https://sp.example.test/saml/acs'), 'expired NotOnOrAfter');
     t04ProtocolReject(static fn () => $verifier->verify(t04ProtocolResponse(['wrap' => true], $keyPair['private_key'], $keyPair['certificate']), $config, '_t04-request', 'https://sp.example.test/saml/acs'), 'duplicate assertion ID XML wrapping');
+
+    $originalServer = $_SERVER;
+    $originalProxyVars = \OneLogin\Saml2\Utils::getProxyVars();
+    try {
+        // A Webman worker has CLI process state, not this HTTP request's CGI
+        // variables. Client forwarded headers must never become the ACS authority.
+        $_SERVER = [
+            'SCRIPT_NAME' => 'start.php', 'HTTPS' => null, 'PATH_INFO' => null,
+            'HTTP_X_FORWARDED_HOST' => 'attacker.example.test:8080',
+            'HTTP_X_FORWARDED_PROTO' => 'http', 'HTTP_X_FORWARDED_PORT' => '8080',
+            'UNRELATED_CONTEXT' => ['keep' => true],
+        ];
+        \OneLogin\Saml2\Utils::setProxyVars(true);
+        $beforeServer = $_SERVER; $beforeUtils = t04UtilsState();
+        $claims = $verifier->verify($valid, $config, '_t04-request', 'https://sp.example.test/saml/acs');
+        t04BridgeAssert($claims['assertion_id'] === '_t04-assertion', 'official signed validation succeeds with missing Webman CGI URL and hostile forwarded headers');
+        t04BridgeAssert(t04ServerEqual($beforeServer) && t04UtilsState() === $beforeUtils, 'success restores every server key/value/type and leaves OneLogin static URL settings untouched');
+
+        $tenantAcs = 'https://tenant-b.example.test:9447/federation/saml/acs';
+        $tenantEntity = 'https://tenant-b.example.test/entity';
+        $tenantConfig = [...$config, 'sp_entity_id' => $tenantEntity];
+        $tenantResponse = t04ProtocolResponse(['destination' => $tenantAcs, 'recipient' => $tenantAcs, 'audience' => $tenantEntity], $keyPair['private_key'], $keyPair['certificate']);
+        $tenantClaims = $verifier->verify($tenantResponse, $tenantConfig, '_t04-request', $tenantAcs);
+        t04BridgeAssert($tenantClaims['assertion_id'] === '_t04-assertion', 'a second tenant uses its exact configured host/nonstandard TLS port/ACS path');
+        $claims = $verifier->verify($valid, $config, '_t04-request', 'https://sp.example.test/saml/acs');
+        t04BridgeAssert($claims['assertion_id'] === '_t04-assertion' && t04ServerEqual($beforeServer) && t04UtilsState() === $beforeUtils, 'tenant A after tenant B retains no tenant URL state');
+        t04ProtocolReject(static fn () => $verifier->verify($tenantResponse, $tenantConfig, '_t04-request', 'https://sp.example.test/saml/acs'), 'cross-tenant signed ACS destination');
+        t04BridgeAssert(t04ServerEqual($beforeServer) && t04UtilsState() === $beforeUtils, 'cross-tenant rejection restores the worker URL context');
+
+        foreach ([
+            'wrong IdP signature' => static fn () => $verifier->verify($valid, [...$config, 'idp_x509cert' => $wrongKeyPair['certificate']], '_t04-request', 'https://sp.example.test/saml/acs'),
+            'wrong request correlation' => static fn () => $verifier->verify($valid, $config, '_other-request', 'https://sp.example.test/saml/acs'),
+            'spoofed forwarded destination' => static fn () => $verifier->verify(t04ProtocolResponse(['destination' => 'https://attacker.example.test/saml/acs', 'recipient' => 'https://attacker.example.test/saml/acs'], $keyPair['private_key'], $keyPair['certificate']), $config, '_t04-request', 'https://sp.example.test/saml/acs'),
+            'recipient prefix instead of exact ACS' => static fn () => $verifier->verify(t04ProtocolResponse(['recipient' => 'https://sp.example.test/saml/acs/other'], $keyPair['private_key'], $keyPair['certificate']), $config, '_t04-request', 'https://sp.example.test/saml/acs'),
+            'wrong audience' => static fn () => $verifier->verify(t04ProtocolResponse(['audience' => $tenantEntity], $keyPair['private_key'], $keyPair['certificate']), $config, '_t04-request', 'https://sp.example.test/saml/acs'),
+            'malformed XML before validation' => static fn () => $verifier->verify(base64_encode('<invalid>'), $config, '_t04-request', 'https://sp.example.test/saml/acs'),
+        ] as $label => $negative) {
+            t04ProtocolReject($negative, $label);
+            t04BridgeAssert(t04ServerEqual($beforeServer) && t04UtilsState() === $beforeUtils, "{$label} fails closed and restores the worker URL context");
+        }
+
+        \OneLogin\Saml2\Utils::setBaseURL('https://preexisting.example.test:9666/worker-base/');
+        $overriddenUtils = t04UtilsState();
+        t04ProtocolReject(static fn () => $verifier->verify($valid, $config, '_t04-request', 'https://sp.example.test/saml/acs'), 'conflicting preexisting OneLogin URL override');
+        t04BridgeAssert(t04ServerEqual($beforeServer) && t04UtilsState() === $overriddenUtils, 'conflicting OneLogin static URL fails closed without clearing or replacing that state');
+        \OneLogin\Saml2\Utils::setBaseURL(null);
+
+        if (class_exists(\Fiber::class)) {
+            $sequence = [];
+            $fiberA = new \Fiber(static function () use (&$sequence, $verifier, $valid, $config): void {
+                $sequence[] = 'A:start';
+                $verifier->verify($valid, $config, '_t04-request', 'https://sp.example.test/saml/acs');
+                $sequence[] = 'A:complete';
+            });
+            $fiberB = new \Fiber(static function () use (&$sequence, $verifier, $tenantResponse, $tenantConfig, $tenantAcs): void {
+                $sequence[] = 'B:start';
+                $verifier->verify($tenantResponse, $tenantConfig, '_t04-request', $tenantAcs);
+                $sequence[] = 'B:complete';
+            });
+            $fiberA->start(); $fiberB->start();
+            t04BridgeAssert($fiberA->isTerminated() && $fiberB->isTerminated() && $sequence === ['A:start', 'A:complete', 'B:start', 'B:complete'], 'official verification does not suspend either tenant Fiber while URL facts are scoped');
+            t04BridgeAssert(t04ServerEqual($beforeServer) && t04UtilsState() === $beforeUtils, 'Fiber caller URL context is restored after both tenant validations');
+        }
+    } finally {
+        $_SERVER = $originalServer;
+        \OneLogin\Saml2\Utils::setBaseURL(null);
+        \OneLogin\Saml2\Utils::setProxyVars($originalProxyVars);
+    }
 
     $start = $verifier->start([...$config, 'sp_x509cert' => $keyPair['certificate'], 'sp_private_key' => $keyPair['private_key']], 'https://sp.example.test/saml/acs', 'fs_' . str_repeat('a', 48));
     $query = [];

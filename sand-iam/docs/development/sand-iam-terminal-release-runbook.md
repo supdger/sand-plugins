@@ -160,7 +160,7 @@
 
 ### 4. 真实宿主 HTTP
 
-受控同步到 `/Users/code/project/sand_plugins/sandadmin-demo-host` 后完整重启演示宿主（服务端为其 `server/` 子目录），再验证。`/Users/code/project/sandadmin` 保持纯净通用宿主，不用于插件演示：
+受控同步到 `/Users/code/project/sand_demo` 后完整重启演示宿主（服务端为其 `server/` 子目录），再验证。`/Users/code/project/sandadmin` 保持纯净通用宿主，不用于插件演示：
 
 - 注册 → 验证 → 登录 → 刷新 → 会话 → 改密全撤销 → 新密码登录 → 退出；
 - TOTP、恢复码、Passkey 真实浏览器仪式；

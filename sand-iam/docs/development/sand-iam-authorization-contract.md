@@ -24,6 +24,8 @@
 
 ## 3. PolicyAuthorizer 契约
 
+0.8.0 源码候选保留该公开类作为薄门面，承担参数校验、审计及业务 `assertScope`；策略主体、资源、动作、域、角色关系与优先级效果均由官方 PHP-Casbin 判定。原自研匹配、角色遍历、效果裁决和模拟算法已删除，没有备用引擎。策略 condition 的严格比较交由 Symfony ExpressionLanguage 的固定 `===` / `in` 表达式执行；JSON 形状及缺键检查仅适配既有发布快照。业务范围仍由可信实体事实落实。
+
 ```text
 authorize(application_id, identity_id, resource_code, action, operation, attributes, request_id)
   -> { allowed, code, policy_ids, scope }

@@ -97,6 +97,8 @@ namespace plugin\SandIam\app\model {
 }
 
 namespace {
+    require dirname(__DIR__) . '/vendor/autoload.php';
+    spl_autoload_register(static function (string $class): void { $prefix = 'plugin\\SandIam\\'; if (str_starts_with($class, $prefix)) { $file = dirname(__DIR__) . '/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php'; if (is_file($file)) require_once $file; } });
     require_once dirname(__DIR__) . '/app/runtime/ScopeMatcher.php';
     require_once dirname(__DIR__) . '/app/service/RequestId.php';
     require_once dirname(__DIR__) . '/app/runtime/PolicyAuthorizer.php';
@@ -131,7 +133,8 @@ namespace {
     Resource::$rows = [(object) ['id' => 3, 'application_id' => 1, 'code' => 'record', 'status' => 1]];
     Policy::$rows = [];
 
-    $simulation = (new PolicyAuthorizer(new AuditWriter(), new ScopeMatcher()))->simulate(
+    $emptyFacts = new class implements \plugin\SandIam\app\runtime\PolicySnapshotLoader { public function load(int $app, int $identity, string $resourceCode, string $action, ?array $apiContext = null): array { return ['application_id' => $app, 'identity_id' => $identity, 'available' => true, 'resource' => ['id' => 3], 'policies' => [], 'references' => ['identity' => [2], 'role' => [], 'resource' => [3]], 'direct_roles' => [], 'group_roles' => []]; } };
+    $simulation = (new PolicyAuthorizer(new AuditWriter(), new ScopeMatcher(), $emptyFacts))->simulate(
         1,
         2,
         'record',

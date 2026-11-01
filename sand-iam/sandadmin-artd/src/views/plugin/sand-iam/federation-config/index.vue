@@ -1,4 +1,11 @@
 <script setup lang="ts">
+  import TaskContinuation from '../components/TaskContinuation.vue'
+  import { useRoute as useGuidanceRoute } from 'vue-router'
+  import { verifyTaskContext as verifyGuidanceContext, parseTaskContext as parseGuidanceContext } from '../api/taskContext'
+  import { readSandIamResource as readGuidanceResource } from '../api/write'
+  const guidanceRoute = useGuidanceRoute()
+  const continuationContext = () => mountApplicationId.value ? { application_id: Number(mountApplicationId.value) } : {}
+
   import '../components/sandIamPage.css'
   import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
@@ -103,6 +110,7 @@
     mappingActive.value = 'active'
     conflictPolicy.value = 'reject'
     mountApplicationId.value = ''
+    if (guidanceRoute.query.goal) void restoreGuidanceScope()
     requestError.value = null
     lastRequestHint.value = ''
   }, { flush: 'sync' })
@@ -517,14 +525,28 @@
     }
   }
 
-  onMounted(() => {
-    void loadOptions()
+  async function restoreGuidanceScope(): Promise<void> {
+    const original = mountApplicationId.value
+    try {
+      const verified = await verifyGuidanceContext(parseGuidanceContext(guidanceRoute.query), readGuidanceResource)
+      if (disposed || original !== mountApplicationId.value) return
+      const row = verified.rows.application_id
+      if (row && typeof row.id === 'number') {
+        if (!applications.value.some(item => item.id === row.id)) applications.value = [row, ...applications.value]
+        mountApplicationId.value = String(row.id)
+      }
+    } catch (error: unknown) { if (!disposed) requestError.value = describeSandIamError(error) }
+  }
+  onMounted(async () => {
+    await loadOptions()
+    if (!disposed) await restoreGuidanceScope()
     void loadPresets()
   })
 </script>
 
 <template>
   <div class="sand-iam-page">
+    <TaskContinuation :context="continuationContext()" />
     <ElCard class="sand-iam-page-card" shadow="never" v-loading="loading || saving">
       <div class="mb-4">
         <h2 class="m-0 text-lg font-semibold">联合身份源配置</h2>

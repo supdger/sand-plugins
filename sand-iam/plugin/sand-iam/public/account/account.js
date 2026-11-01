@@ -1409,9 +1409,16 @@ async function decideOAuthInteraction(accessToken, requestToken, csrfToken, deci
   if (completed === null) throw new SandIamPortalTransportError("\u6388\u6743\u7ED3\u679C\u6CA1\u6709\u8FD4\u56DE\u5730\u5740\u3002", null);
   return { requestId: result.requestId, data: completed };
 }
-function describePortalError(error) {
+function describePortalError(error, operation) {
   const http = error instanceof SandIamPortalTransportError ? error.http : null;
   const detail = error instanceof Error ? error.message : "\u8BF7\u6C42\u672A\u5B8C\u6210";
+  if (operation === "password-login" && http === 401 && /^SAND_IAM_AUTHENTICATION_FAILED(?::|$)/.test(detail)) {
+    return {
+      title: "\u767B\u5F55\u672A\u6210\u529F",
+      detail: "\u8BF7\u6838\u5BF9\u6240\u9009\u5E94\u7528\u3001\u8D26\u53F7\u548C\u5BC6\u7801\u540E\u91CD\u8BD5\uFF1B\u82E5\u4ECD\u65E0\u6CD5\u767B\u5F55\uFF0C\u8BF7\u8054\u7CFB\u5E94\u7528\u7BA1\u7406\u5458\u3002",
+      http
+    };
+  }
   if (http === 401) {
     return {
       title: "\u767B\u5F55\u5DF2\u5931\u6548",
@@ -1760,8 +1767,8 @@ function inputValue(id) {
   const element = document.getElementById(id);
   return element instanceof HTMLInputElement ? element.value : "";
 }
-function setError(error) {
-  const described = describePortalError(error);
+function setError(error, operation) {
+  const described = describePortalError(error, operation);
   state.errorTitle = described.title;
   state.errorDetail = described.detail;
 }
@@ -2021,6 +2028,7 @@ async function submitLogin() {
   const identifier = inputValue("login-identifier");
   const organization = state.organizationCode;
   const application = state.applicationCode;
+  let loginRequestCompleted = false;
   try {
     const result = await portalLogin(
       state.organizationCode,
@@ -2029,6 +2037,7 @@ async function submitLogin() {
       inputValue("login-password"),
       captcha
     );
+    loginRequestCompleted = true;
     if (submission !== authSubmission || organization !== state.organizationCode || application !== state.applicationCode) return;
     rememberRequest(result.requestId);
     if (result.data.verificationRequired) {
@@ -2054,7 +2063,7 @@ async function submitLogin() {
     if (error instanceof Error && error.message.includes("SAND_IAM_AUTH_VERIFICATION_REQUIRED")) {
       openVerification(identifier, organization, application);
     } else {
-      setError(error);
+      setError(error, loginRequestCompleted ? void 0 : "password-login");
     }
     render();
   } finally {

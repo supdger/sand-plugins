@@ -1,4 +1,10 @@
 <script setup lang="ts">
+  import TaskContinuation from '../components/TaskContinuation.vue'
+  import { useRoute as useGuidanceRoute } from 'vue-router'
+  import { parseTaskContext as parseGuidanceContext } from '../api/taskContext'
+  const guidanceRoute = useGuidanceRoute()
+  const continuationContext = () => { try { return parseGuidanceContext(guidanceRoute.query) } catch { return {} } }
+
   import '../components/sandIamPage.css'
   import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { useAuth } from '@/hooks/core/useAuth'
@@ -151,6 +157,55 @@
 
 <template>
   <div class="sand-iam-page">
+    <TaskContinuation :context="continuationContext()" />
+    <ElCard v-if="guidanceRoute.query.goal === 'login'" class="mb-4" shadow="never">
+      <h2>把用户登录接入应用</h2>
+      <p>管理员提供部署地址、组织和应用代码；测试用户先接受邀请或注册。开发者在可信服务端安装本地 PHP SDK，使用以下登录入口。验证码启用时应由应用完成挑战后传 captchaToken；MFA 返回挑战时继续应用的验证页面，不绕过验证。</p>
+      <pre class="overflow-auto rounded bg-gray-50 p-3 text-xs">composer config repositories.sand-iam path /path/to/sand-iam/sdk/php
+composer require sand/iam-sdk:*</pre>
+      <pre class="overflow-auto rounded bg-gray-50 p-3 text-xs">require 'vendor/autoload.php';
+$iam = new \Sand\Iam\Sdk\SandIamClient(
+    getenv('SAND_IAM_BASE_URL'), getenv('SAND_IAM_ORGANIZATION_CODE'),
+    getenv('SAND_IAM_APPLICATION_CODE')
+);
+$login = $iam->login(
+    getenv('SAND_IAM_TEST_IDENTIFIER'), getenv('SAND_IAM_TEST_PASSWORD'),
+    'app-login-test', 'login-' . bin2hex(random_bytes(12))
+);
+if (($login['mfa_required'] ?? false) === true) {
+    throw new \RuntimeException('请在应用中完成多因素验证');
+}
+$accessToken = $login['access_token'] ?? null;
+if (!is_string($accessToken) || $accessToken === '') {
+    throw new \RuntimeException('没有取得用户会话');
+}
+// 应用安全保存会话，不打印密码、令牌或完整登录响应。</pre>
+      <p>使用正确密码应取得会话，错误密码应拒绝。退出后用原令牌访问账户必须拒绝；重新登录可以生成新会话。本目标不要求创建资源或策略，下方授权示例仅在继续配置业务权限时使用。</p>
+    </ElCard>
+    <ElCard v-if="guidanceRoute.query.goal === 'machine'" class="mb-4" shadow="never">
+      <h2>后端服务调用：交接和最小接入</h2>
+      <p>管理员提供应用代码和一次性工作负载凭证；服务提供方提供服务代码、动作、受众、业务地址与调用协议。下面签发短期上下文；实际业务调用按服务提供方接口执行。</p>
+      <p>可信服务端安装本地 PHP SDK：路径替换为已检出的 sand-iam/sdk/php 实际路径。凭证由密钥管理或服务端环境变量注入，不放浏览器。</p>
+      <pre class="overflow-auto rounded bg-gray-50 p-3 text-xs">composer config repositories.sand-iam path /path/to/sand-iam/sdk/php
+composer require sand/iam-sdk:*</pre>
+      <pre class="overflow-auto rounded bg-gray-50 p-3 text-xs">require 'vendor/autoload.php';
+$iam = new \Sand\Iam\Sdk\SandIamClient(
+    getenv('SAND_IAM_BASE_URL'),
+    getenv('SAND_IAM_ORGANIZATION_CODE'),
+    getenv('SAND_IAM_APPLICATION_CODE')
+);
+$requestId = 'issue-' . bin2hex(random_bytes(12));
+$issued = $iam->issueContext(
+    getenv('SAND_IAM_WORKLOAD_CREDENTIAL'),
+    getenv('TARGET_SERVICE_CODE'),
+    getenv('TARGET_AUDIENCE'),
+    [getenv('TARGET_ACTION')], null, $requestId
+);
+// 按服务提供方协议，经请求头交付 $issued['context']；不写日志。
+// 服务方执行业务前 verifyContext 校验服务、受众、动作，异常时停止业务。</pre>
+      <p>先以最小授权执行一项测试业务，再验证错误受众、未授权动作、撤销后的请求均拒绝。按请求号查询双方审计；签发上下文本身不代表服务完成业务。</p>
+      <p>下面人员 authorize/decide 示例不用于机器凭证。</p>
+    </ElCard>
     <ElCard class="sand-iam-page-card" shadow="never">
       <h2 class="m-0 text-lg font-semibold">开发者接入</h2>
       <p class="mb-4 mt-2 text-sm text-gray-500">

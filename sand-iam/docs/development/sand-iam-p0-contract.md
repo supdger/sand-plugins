@@ -7,7 +7,7 @@
 ## 1. 权威边界与交付面
 
 - 包标识固定为 `sand-iam`，PHP 命名空间 `plugin\\SandIam`，路由段 `sand-iam`，PostgreSQL 表前缀、配置与权限码干 `sand_iam`。只使用 PostgreSQL。
-- 本仓 `sand-iam/` 是源码；`/Users/code/project/sand_plugins/sandadmin-demo-host` 是插件安装、演示与功能验收宿主（服务端为其 `server/` 子目录）。`/Users/code/project/sandadmin` 是纯净通用 SandAdmin 宿主，不用于插件演示。演示宿主的后台账号只管理插件，绝不作为业务应用的人类用户账号。
+- 本仓 `sand-iam/` 是源码；`/Users/code/project/sand_demo` 是插件安装、演示与功能验收宿主（服务端为其 `server/` 子目录）。`/Users/code/project/sandadmin` 是纯净通用 SandAdmin 宿主，不用于插件演示。演示宿主的后台账号只管理插件，绝不作为业务应用的人类用户账号。
 - SandIAM 是 organization、application、environment、workload client、credential、service/action/grant、应用身份、用户类型、角色、策略、数据范围和访问审计的唯一权威。
 - SandAI 只拥有 provider、model、AI 路由、文件、任务、用量和 AI 执行审计；它只调用本契约的 Adapter，禁止跨库读 `sand_iam_*`，也不得继续维护 application、environment、credential 或 grant 的平行权威表。
 - 业务应用保留业务实体、文件和业务状态。它向 SandIAM 注册资源与策略，在每次操作提供业务属性事实并保留最终业务校验；不复制或迁移业务实体到 SandIAM。
@@ -51,7 +51,7 @@ all security-sensitive operations -> audit_log
 | `sand_iam_identity_role` | `identity_id bigint`、`role_id bigint` | 两列 FK RESTRICT；`uk_sand_iam_identity_role_identity_role(identity_id,role_id)`。 |
 | `sand_iam_resource` | `application_id bigint`、`code varchar(64)`、`name varchar(128)`、`owner_field varchar(64) NULL`、`organization_field varchar(64) NULL` | FK application RESTRICT；`uk_sand_iam_resource_application_code(application_id,code)`。字段名只声明业务表的真实属性，SandIAM 不建业务表。 |
 | `sand_iam_policy` | `application_id bigint`、`resource_id bigint`、`role_id bigint NULL`、`identity_id bigint NULL`、`action varchar(96)`、`effect varchar(8)`、`condition jsonb`、`scope jsonb`、`priority integer`、`state varchar(16)` | resource、role、identity 通过组合 FK 与 policy 属于同一应用；CHECK `role_id` 与 `identity_id` 恰有一个、`effect IN ('allow','deny')`、`state IN ('draft','published','revoked')`；主体/资源/动作/优先级索引。`scope` 表达属性/范围约束，业务应用传入属性事实。 |
-| `sand_iam_audit_log` | `actor_type varchar(32)`、`actor_ref varchar(128)`、`organization_id bigint NULL`、`application_id bigint NULL`、`action varchar(96)`、`resource_type varchar(64)`、`resource_id bigint NULL`、`outcome varchar(16)`、`request_id varchar(96)`、`context jsonb`、`create_time` | 不软删除；FK organization/application RESTRICT；`uk_sand_iam_audit_log_request_action(request_id,action)`；应用/动作/结果/时间索引。`context` 不得含明文凭证、完整 token 或敏感业务正文。 |
+| `sand_iam_audit_log` | `actor_type varchar(32)`、`actor_ref varchar(128)`、`organization_id bigint NULL`、`application_id bigint NULL`、`action varchar(96)`、`resource_type varchar(64)`、`resource_id bigint NULL`、`outcome varchar(16)`、`request_id varchar(96)`、`context jsonb`、`create_time` | 不软删除；FK organization/application RESTRICT；迁移 043 已新增 `event_key varchar(64) NOT NULL DEFAULT ''`，空或 64 位小写十六进制；迁移 043 以 `uk_sand_iam_audit_log_request_action_event(request_id,action,event_key)` 替换原两字段唯一约束，旧事实及非 scope 空键语义不变；应用/动作/结果/时间索引。`context` 不得含明文凭证、完整 token 或敏感业务正文。 |
 
 所有跨表 ID 都是 `bigint`；所有配置删除先禁用，运行时禁止级联删除授权/审计事实。安装、更新、卸载 SQL 均须只影响 `sand_iam_*` 及 SandIAM 自有菜单/权限对象。
 

@@ -8,7 +8,7 @@ use Webman\Config;
 
 function t10InvitationFail(string $message): never { fwrite(STDERR, "IAM-T10 invitation crypto test failed: {$message}\n"); exit(1); }
 function t10InvitationExpect(callable $callback, string $code): void { try { $callback(); } catch (ApiException $exception) { if (str_contains($exception->getMessage(), $code)) return; } t10InvitationFail("expected {$code}"); }
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server'; $sandIamRoot = dirname(__DIR__, 3);
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server'; $sandIamRoot = dirname(__DIR__, 3);
 if (!is_file($hostRoot . '/vendor/autoload.php')) t10InvitationFail('SandAdmin host dependencies are unavailable');
 chdir($hostRoot); require $hostRoot . '/vendor/autoload.php'; require $sandIamRoot . '/plugin/sand-iam/app/functions.php';
 $keyV1 = base64_encode(random_bytes(SODIUM_CRYPTO_SECRETBOX_KEYBYTES)); putenv('SAND_IAM_INVITATION_ENCRYPTION_KEY=' . $keyV1); putenv('SAND_IAM_INVITATION_ENCRYPTION_KEY_VERSION=v1'); putenv('SAND_IAM_INVITATION_ENCRYPTION_KEYS={}');

@@ -205,3 +205,13 @@ three externally supplied Ed25519 receipts using one separately supplied,
 trusted public-key file; neither plans nor receipts contain a public key or a
 secret value. Missing `consumer_l04_cleanup_v1` returns `preflight_blocked`
 with `before_first_write=true`; every v2 report remains `real_l04=false`.
+
+## Lifecycle and frozen dependency verification
+
+`php tools/build-lifecycle.php --check` regenerates the current 0.8.3 lifecycle in memory and checks both SQL copies without writing them. `--output=/new/external/directory` saves generated SQL and migrations for review. `--profile=legacy-0.7.3` selects the historical embedded07342-file recipe; it is not the published07343-file baseline. Source replacement requires explicit `--write`. Neither mode connects to a database or executes SQL.
+
+The committed-runtime dependency contract verifies existing vendor/SDK bytes, lockfiles and the current package root version. It records the original dependency toolchain without claiming that this machine rebuilt those dependencies. Add `--reproduce-toolchain` to `check-package-integrity.php`, or to the unsigned-release/Git-stage verification mode of `build-review-candidate.php`, to require the recorded toolchain as well. Historical reviewed-runtime contracts always retain that toolchain requirement. Clean tracked Git source remains required for unsigned release construction.
+
+The 0.8.2 profile preserves the original install/uninstall bytes and frozen historical profiles. Its update has one executor-visible transaction and one DO statement: the strict43 branch reuses the original admission and immutable043 SQL body, while an existing44 branch checks every ledger row and all six typed catalog groups without DDL. `tools/resources/schema-043-catalog.json` is the exact public-provider PostgreSQL 18.6 structural capture (SHA-256 `4adf9cd8200fab6f95bc11542d3a5f973aebf78107f31d55a235faa1dc34ecb7`), a build-only input excluded from runtime ZIPs. `php plugin/sand-iam/tests/upgrade_082_build_non_pg_test.php` checks compiler inputs and executor framing only; real PostgreSQL positive/negative acceptance remains separate. No new help flag is introduced.
+
+The 0.8.3 profile delegates to the reviewed `sandIamBuild082Update()` function. All install/update/uninstall SQL bytes, including diagnostic labels referring to 0.8.2, remain identical to the 0.8.2 profile. Package metadata and declaration version identify 0.8.3; schema, migration identities, historical profile bytes and provider contracts remain unchanged.

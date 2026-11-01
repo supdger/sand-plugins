@@ -29,6 +29,37 @@ final class ServiceCatalog
         $this->persist($serviceCode, $serviceName, $normalizedActions, 0);
     }
 
+    /**
+     * Read-only preview. Registration still checks the same rows under locks.
+     *
+     * @param array{code:string,name:string} $service
+     * @param array<string,string> $actions
+     * @return array{service_code:string,service_status:string,action_statuses:array<string,string>,can_register:bool}
+     */
+    public function inspectServiceActions(array $service, array $actions): array
+    {
+        [$serviceCode, , $normalizedActions] = $this->declaration($service, $actions);
+        $serviceRecord = Service::where('code', $serviceCode)->find();
+        $serviceStatus = $serviceRecord === null
+            ? 'missing'
+            : ((int) $serviceRecord->status === 1 ? 'active' : 'disabled');
+        $actionStatuses = [];
+        $canRegister = $serviceStatus !== 'disabled';
+        foreach ($normalizedActions as $actionCode => $_actionName) {
+            $action = $serviceRecord === null ? null : ServiceAction::where('service_id', (int) $serviceRecord->id)
+                ->where('code', $actionCode)->find();
+            $status = $action === null ? 'missing' : ((int) $action->status === 1 ? 'active' : 'disabled');
+            $actionStatuses[$actionCode] = $status;
+            if ($status === 'disabled') $canRegister = false;
+        }
+        return [
+            'service_code' => $serviceCode,
+            'service_status' => $serviceStatus,
+            'action_statuses' => $actionStatuses,
+            'can_register' => $canRegister,
+        ];
+    }
+
     /** @param array<string,string> $actions */
     private function persist(string $serviceCode, string $serviceName, array $actions, int $retry): void
     {

@@ -11,7 +11,7 @@ declare(strict_types=1);
  */
 $sandIamRoot = dirname(__DIR__, 3);
 $repositoryRoot = dirname($sandIamRoot);
-$demoHostRoot = $repositoryRoot . '/sandadmin-demo-host';
+$demoHostRoot = '/Users/code/project/sand_demo';
 $demoServerRoot = $demoHostRoot . '/server';
 $pureHostRoot = '/Users/code/project/sandadmin';
 $hostRootVariable = 'SAND_IAM_T01_' . 'HOST_ROOT';

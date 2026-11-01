@@ -108,6 +108,48 @@ namespace {
         }
     };
     $service = new ServiceInvocationAuthorizer(factResolvers: new ServiceInvocationFactResolverRegistry(['records' => $resolver]));
+    $missingFacts = new class implements ServiceInvocationFactResolver {
+        public function resolve(string $serviceCode, string $actionCode, string $resourceKey): array {
+            throw new \RuntimeException('private resolver details');
+        }
+    };
+    $missingService = new ServiceInvocationAuthorizer(factResolvers: new ServiceInvocationFactResolverRegistry(['records' => $missingFacts]));
+    $auditCount = count(State::$audits);
+    try {
+        $missingService->authorizeInvocation('verified-fixture', 'records', 'records-api', 'read', 'records', 'secret-resource-key', '192.0.2.1', 'missing-facts', 'missing-facts-request');
+        throw new \RuntimeException('Missing facts allowed');
+    } catch (ApiException $exception) {
+        check(str_starts_with($exception->getMessage(), 'SAND_IAM_INVOCATION_FACTS_UNVERIFIED'), 'Missing facts error changed');
+    }
+    check(count(State::$audits) === $auditCount + 1, 'Missing facts denial did not produce one audit');
+    $denial = end(State::$audits);
+    check($denial[4] === 'service.invoke.authorize' && $denial[7] === 'denied'
+        && $denial[8] === 'missing-facts-request'
+        && $denial[9]['code'] === 'SAND_IAM_INVOCATION_FACTS_UNVERIFIED'
+        && $denial[9]['service_code'] === 'records' && $denial[9]['action_code'] === 'read'
+        && !str_contains(json_encode($denial, JSON_THROW_ON_ERROR), 'secret-resource-key')
+        && !str_contains(json_encode($denial, JSON_THROW_ON_ERROR), 'private resolver details'),
+        'Missing facts audit contains wrong or sensitive data');
+    check(State::$rows[ServiceInvocationOperation::class][9]['outcome'] === 'allowed'
+        && State::$transaction === null, 'Missing facts changed authorization state');
+    $wrongScope = new class($scope) implements ServiceInvocationFactResolver {
+        public function __construct(private array $scope) {}
+        public function resolve(string $serviceCode, string $actionCode, string $resourceKey): array {
+            return array_replace($this->scope, ['organization_id' => 99])
+                + ['resource_type' => 'record', 'resource_ref' => $resourceKey, 'data_class' => 'internal'];
+        }
+    };
+    $wrongScopeService = new ServiceInvocationAuthorizer(factResolvers: new ServiceInvocationFactResolverRegistry(['records' => $wrongScope]));
+    $auditCount = count(State::$audits);
+    try {
+        $wrongScopeService->authorizeInvocation('verified-fixture', 'records', 'records-api', 'read', 'records', '42', '192.0.2.1', 'wrong-scope', 'wrong-scope-request');
+        throw new \RuntimeException('Cross-scope facts allowed');
+    } catch (ApiException $exception) {
+        check(str_starts_with($exception->getMessage(), 'SAND_IAM_INVOCATION_SCOPE_FORBIDDEN'), 'Cross-scope error changed');
+    }
+    check(count(State::$audits) === $auditCount + 1
+        && end(State::$audits)[9]['code'] === 'SAND_IAM_INVOCATION_SCOPE_FORBIDDEN',
+        'Cross-scope denial audit is missing');
     $invoke = static fn (): array => $service->revalidateInvocation(9, 'verified-fixture', 'records', 'records-api', 'read', 'records', '42', '192.0.2.1', 'revalidate-test');
     check($invoke()['authorization_id'] === 9 && State::$transaction === null, 'Active invocation rejected');
     foreach ([[ServiceGrant::class, 6, 'status', 2, 403], [ServiceGrant::class, 6, 'revoked_time', '2020-01-01 00:00:00', 403], [ServiceGrant::class, 6, 'expire_time', '2020-01-01 00:00:00', 403], [Credential::class, 5, 'status', 2, 401]] as [$model, $id, $field, $value, $code]) {

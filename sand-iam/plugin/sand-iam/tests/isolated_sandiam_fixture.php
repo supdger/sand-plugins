@@ -12,6 +12,7 @@ declare(strict_types=1);
  */
 function sandIamWithIsolatedFixture(string $authorityRoot, callable $callback): mixed
 {
+    require_once $authorityRoot . '/tools/package-payload-policy.php';
     $seed = tempnam(sys_get_temp_dir(), 'sand-iam-test-fixture-');
     if ($seed === false || !unlink($seed) || !mkdir($seed, 0700)) {
         throw new RuntimeException('cannot create isolated SandIAM test fixture');
@@ -28,8 +29,8 @@ function sandIamWithIsolatedFixture(string $authorityRoot, callable $callback): 
             if (!$entry instanceof SplFileInfo) {
                 continue;
             }
-            $relative = substr($entry->getPathname(), strlen($authorityRoot) + 1);
-            $segments = explode(DIRECTORY_SEPARATOR, $relative);
+            $relative = sandIamFilesystemRelativePath(substr($entry->getPathname(), strlen($authorityRoot) + 1));
+            $segments = explode('/', $relative);
             // The published TypeScript SDK is native ESM; unlike frontend
             // build output, its dist tree is part of the installable payload.
             if (!str_starts_with($relative, 'sdk/typescript/dist/')

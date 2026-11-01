@@ -179,7 +179,7 @@ function onboardingPgMutateFromAnotherProcess(int $environmentId): void
     }
 }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $packageRoot = dirname(__DIR__);
 if (getenv('SAND_IAM_RUN_PG_TESTS') !== '1' || !is_file($hostRoot . '/vendor/autoload.php')) {
     echo "SKIP onboarding PostgreSQL integration; set SAND_IAM_RUN_PG_TESTS=1 and provide SandAdmin host dependencies\n";

@@ -25,6 +25,8 @@ final class PolicyVersionService
             $source = $rollbackVersionId === null ? null : PolicyVersion::where('id', $rollbackVersionId)->where('policy_id', $policyId)->find();
             if ($rollbackVersionId !== null && $source === null) throw new ApiException('SAND_IAM_POLICY_VERSION_NOT_FOUND: 要回滚的策略版本不存在或不属于当前策略', 400);
             $snapshot = $source === null ? $this->snapshot($policy) : (array) $source->snapshot;
+            try { \plugin\SandIam\app\runtime\PublishedPolicyAdapter::assertSnapshot($snapshot, (int) $policy->application_id); }
+            catch (\RuntimeException $exception) { throw new ApiException('SAND_IAM_POLICY_MAPPING_INVALID: 策略版本无法无损映射到授权模型', 400); }
             $operation = $source === null ? 'publish' : 'rollback';
             $fingerprint = hash('sha256', json_encode(['operation' => $operation, 'rollback_version_id' => $rollbackVersionId, 'snapshot' => $snapshot], JSON_THROW_ON_ERROR));
             $existing = PolicyVersion::where('policy_id', $policyId)->where('request_id', $requestId)->lock(true)->find();

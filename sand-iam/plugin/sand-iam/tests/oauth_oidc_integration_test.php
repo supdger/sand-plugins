@@ -118,7 +118,7 @@ putenv('SAND_IAM_OIDC_LOGOUT_ENCRYPTION_KEY=' . base64_encode(random_bytes(SODIU
 putenv('SAND_IAM_OIDC_LOGOUT_ENCRYPTION_KEY_VERSION=t03');
 putenv('SAND_IAM_OIDC_LOGOUT_ENCRYPTION_KEYS={}');
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $sandIamRoot = dirname(__DIR__, 3);
 if (!is_file($hostRoot . '/vendor/autoload.php')) t03Fail("SandAdmin host dependencies are unavailable at {$hostRoot}");
 chdir($hostRoot);

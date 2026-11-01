@@ -138,7 +138,7 @@
   <ResourceListPage
     title="应用业务动作"
     create-title="新建业务动作"
-    object-hint="先声明已启用动作，再到接口目录中引用。"
+    object-hint="先复用当前应用已有的启用动作；缺少时按开发者提供的代码和名称声明，再到策略或接口目录选择。声明本身不会授予权限。"
     description="应用自己的稳定语义词典，和技术服务动作不是同一套。默认列表只显示名称、代码、说明、发布状态和启停。"
     endpoint="application-business-action"
     index-permission="sand_iam:api_resource:index"

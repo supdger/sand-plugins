@@ -2,6 +2,7 @@
   "name": "sand/sand-iam",
   "description": "SandIAM plugin-local audited federation dependencies",
   "require": {
+    "casbin/casbin": "4.5.0",
     "ext-ctype": "*",
     "ext-curl": "*",
     "ext-dom": "*",
@@ -15,11 +16,14 @@
     "ext-sodium": "*",
     "ext-zip": "*",
     "ext-zlib": "*",
-    "php": ">=8.2",
-    "onelogin/php-saml": "^4.3.2"
+    "onelogin/php-saml": "^4.3.2",
+    "php": ">=8.2"
   },
   "config": {
     "optimize-autoloader": true,
-    "sort-packages": true
+    "sort-packages": true,
+    "platform": {
+      "php": "8.2.0"
+    }
   }
 }

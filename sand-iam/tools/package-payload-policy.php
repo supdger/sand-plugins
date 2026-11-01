@@ -11,14 +11,29 @@ declare(strict_types=1);
  * must never influence a release descriptor after a candidate is frozen.
  */
 
+/** Default current-source producer policy; historical catalog bounds need separate evidence. */
+function sandIamAssertOpenHostSupport(array $rootInfo, array $packageInfo): void
+{
+    $support = $rootInfo['support'] ?? null;
+    if (!is_string($support)
+        || ($packageInfo['support'] ?? null) !== $support
+        || preg_match('/^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/D', $support) !== 1) {
+        throw new RuntimeException(
+            'host compatibility rule conflict: both support declarations must match >=host_min '
+            . 'with an open upper bound; a historical upper bound requires documented catalog '
+            . 'boundary evidence, which this current-source checker does not automatically verify'
+        );
+    }
+}
+
 /** @return list<string> */
 function sandIamPayloadRoots(): array
 {
     return [
         'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'SBOM.cdx.json', 'release-build-contract.json',
-        'config.json', 'info.ini', 'install.sql', 'update.sql', 'uninstall.sql',
+        'config.json', 'info.ini', 'existing-schema.json', 'install.sql', 'update.sql', 'uninstall.sql',
         'migrations', 'lifecycle', 'plugin/sand-iam',
-        'sandadmin-artd/src/views/plugin/sand-iam', 'portal', 'sdk', 'docs/user-guide', 'examples',
+        'sandadmin-artd/src/views/plugin/sand-iam', 'app', 'sdk', 'docs/user-guide', 'examples',
     ];
 }
 
@@ -71,7 +86,17 @@ function sandIamPayloadExcluded(string $path): bool
     ], true)) {
         return true;
     }
-    return preg_match('#(?:^|/)(?:\.git|\.env(?:\.|$)|node_modules|\.pnpm-store|\.dart_tool|\.DS_Store|\.staging|\.tmp|\.backups|backups|artifacts|coverage|test-results|tests?|dist|build|cache|logs?|waiting-codex)(?:/|$)|(?:^|/)[^/]+\.(?:test|spec)\.[^/]+$|(?:^|/)(?:id_rsa|[^/]+\.(?:pem|key|log|dump))$#i', $path) === 1;
+    // These frozen Composer packages use cache/log as runtime namespaces.
+    // Mask only the confirmed dependency prefix; descendant tests, secrets,
+    // logs, caches and transient files still pass through the same exclusions.
+    foreach (['plugin/sand-iam/vendor/psr/cache', 'plugin/sand-iam/vendor/psr/log',
+        'plugin/sand-iam/vendor/symfony/cache', 'plugin/sand-iam/vendor/casbin/casbin/src/Log'] as $runtimePrefix) {
+        if ($path === $runtimePrefix || str_starts_with($path, $runtimePrefix . '/')) {
+            $path = 'plugin/sand-iam/vendor-runtime' . substr($path, strlen($runtimePrefix));
+            break;
+        }
+    }
+    return preg_match('#(?:^|/)(?:\.git|\.env(?:\.[^/]*)?|node_modules|\.pnpm-store|\.dart_tool|\.DS_Store|\.staging|\.tmp|\.backups|backups|artifacts|coverage|test-results|tests?|dist|build|cache|logs?|waiting-codex)(?:/|$)|(?:^|/)[^/]+\.(?:test|spec)\.[^/]+$|(?:^|/)(?:id_rsa|[^/]+\.(?:pem|key|log|dump))$#i', $path) === 1;
 }
 
 /**
@@ -95,6 +120,19 @@ function sandIamCanonicalPayloadPath(string $path): string
         }
     }
     return $path;
+}
+
+/**
+ * Only use for relative names obtained from filesystem iteration. Windows
+ * backslashes represent separators; on POSIX a literal backslash filename
+ * remains invalid. Git/ZIP/user-supplied paths keep the strict boundary above.
+ */
+function sandIamFilesystemRelativePath(string $path): string
+{
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $path = str_replace('\\', '/', $path);
+    }
+    return sandIamCanonicalPayloadPath($path);
 }
 
 /**
@@ -142,7 +180,7 @@ function sandIamPayloadFiles(string $root, bool $includeGeneratedDescriptors): a
             if (!$file instanceof SplFileInfo) {
                 continue;
             }
-            $relative = $entry . '/' . substr($file->getPathname(), strlen($path) + 1);
+            $relative = sandIamFilesystemRelativePath($entry . '/' . substr($file->getPathname(), strlen($path) + 1));
             if (!sandIamPayloadPathSupported($relative)) {
                 throw new RuntimeException('payload path contains unsupported characters');
             }

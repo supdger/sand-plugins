@@ -103,7 +103,23 @@ namespace {
     $catalog = new ServiceCatalog();
 
     $reset();
+    $missing = $catalog->inspectServiceActions($service, $actions);
+    if ($missing !== [
+        'service_code' => 'sand_ai', 'service_status' => 'missing',
+        'action_statuses' => ['sand_ai.model.read' => 'missing', 'sand_ai.chat.complete' => 'missing'],
+        'can_register' => true,
+    ] || Db::$starts !== 0 || Service::$rows !== [] || ServiceAction::$rows !== []) {
+        throw new \RuntimeException('Read-only missing catalog inspection is wrong');
+    }
     $catalog->registerServiceActions($service, $actions);
+    $active = $catalog->inspectServiceActions($service, $actions);
+    if ($active !== [
+        'service_code' => 'sand_ai', 'service_status' => 'active',
+        'action_statuses' => ['sand_ai.model.read' => 'active', 'sand_ai.chat.complete' => 'active'],
+        'can_register' => true,
+    ] || Db::$starts !== 1) {
+        throw new \RuntimeException('Read-only active catalog inspection is wrong');
+    }
     $catalog->registerServiceActions(['code' => 'sand_ai', 'name' => '不会覆盖原名称'], [
         'sand_ai.model.read' => '不会覆盖动作名称',
         'sand_ai.chat.complete' => '提交 AI 对话任务',
@@ -117,6 +133,9 @@ namespace {
     }
 
     Service::$rows[1]->status = 2;
+    $disabled = $catalog->inspectServiceActions($service, $actions);
+    if ($disabled['service_status'] !== 'disabled' || $disabled['can_register'] !== false
+        || Db::$starts !== 2) throw new \RuntimeException('Disabled service was not visible before registration');
     try {
         $catalog->registerServiceActions($service, $actions);
         fwrite(STDERR, "disabled service was silently restored\n");
@@ -128,12 +147,25 @@ namespace {
     $reset();
     $catalog->registerServiceActions($service, $actions);
     ServiceAction::$rows[1]->status = 2;
+    $disabledAction = $catalog->inspectServiceActions($service, $actions);
+    if ($disabledAction['service_status'] !== 'active'
+        || $disabledAction['action_statuses']['sand_ai.model.read'] !== 'disabled'
+        || $disabledAction['can_register'] !== false || Db::$starts !== 1) {
+        throw new \RuntimeException('Disabled action was not visible before registration');
+    }
     try {
         $catalog->registerServiceActions($service, $actions);
         fwrite(STDERR, "disabled service action was silently restored\n");
         exit(1);
     } catch (ApiException $exception) {
         if ($exception->getCode() !== 409 || ServiceAction::$rows[1]->status !== 2) throw $exception;
+    }
+
+    try {
+        $catalog->inspectServiceActions($service, ['invalid action' => 'bad']);
+        throw new \RuntimeException('Invalid preview declaration was accepted');
+    } catch (ApiException $exception) {
+        if ($exception->getCode() !== 400) throw $exception;
     }
 
     $reset();

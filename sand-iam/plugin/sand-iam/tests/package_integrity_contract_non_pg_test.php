@@ -70,7 +70,7 @@ $releaseManifest = static function (array $candidate, string $signature) : array
 
 /** @param callable(string): bool $callback */
 $withPrivateTempDirectory = static function (callable $callback): bool {
-    $seed = tempnam('/private/tmp', 'sand-iam-integrity-');
+    $seed = tempnam(sys_get_temp_dir(), 'sand-iam-integrity-');
     if ($seed === false || !unlink($seed) || !mkdir($seed, 0700)) {
         return false;
     }
@@ -122,8 +122,8 @@ $checks = [
         $source = file_get_contents($tool);
         return is_string($source)
             && str_contains($source, 'composer declares complete platform and locked SAML runtime dependency')
-            && str_contains($source, "'COMPOSER_ROOT_VERSION' => '0.7.3'")
-            && str_contains($source, "\"'pretty_version' => '0.7.3'\"")
+            && str_contains($source, 'release-build-contract-policy.php')
+            && str_contains($source, 'sandIamCheckReleaseBuildContract')
             && str_contains($source, 'SAML dependency resolves through composer autoload')
             && str_contains($source, 'protocol adapter guards and references the declared SAML runtime');
     },
@@ -156,9 +156,7 @@ $checks = [
             && str_contains($source, 'SDK and user-facing documentation')
             && str_contains($source, 'CycloneDX SBOM matches committed dependency locks')
             && str_contains($source, 'PostgreSQL SQL has no sa_* business table or MySQL dialect')
-            && str_contains($source, 'release metadata versions and host support are consistent')
-            && str_contains($source, "'/^\\d+\\.x(?:\\|\\d+\\.x)*$/'")
-            && str_contains($source, "'6.0.11'");
+            && str_contains($source, 'release metadata versions and host support are consistent');
     },
     'release build contract rejects incomplete, unknown, or malformed generated payload declarations' => static function () use ($root, $runToolAt, $withTemporarilyReplacedFixtureFile): bool {
         return sandIamWithIsolatedFixture($root, static function (string $fixtureRoot) use ($runToolAt, $withTemporarilyReplacedFixtureFile): bool {
@@ -194,19 +192,31 @@ $checks = [
                 && $expectFailure($wrongShape) && $expectFailure($wrongEnvironment) && $expectFailure($wrongArguments);
         });
     },
-    'real worktree provenance fails closed when Git is unavailable' => static function () use ($tool): bool {
-        $output = [];
-        $command = 'PATH=' . escapeshellarg('/private/tmp/sand-iam-no-git-path')
-            . ' ' . escapeshellarg(PHP_BINARY)
-            . ' ' . escapeshellarg($tool)
-            . ' 2>&1';
-        exec($command, $output, $status);
-        $text = implode(PHP_EOL, $output);
-        return $status !== 0
-            && str_contains($text, '[FAIL] eligible release payload is clean, tracked, and matches HEAD Git blobs')
-            && !str_contains($text, '[PASS] eligible release payload is clean, tracked, and matches HEAD Git blobs');
+    'Git metadata provenance fails closed when Git is unavailable' => static function () use ($root): bool {
+        return sandIamWithIsolatedFixture($root, static function (string $fixture): bool {
+            // A source carrying Git metadata must never be accepted as a
+            // non-Git fixture merely because the Git executable is missing.
+            if (!mkdir($fixture . '/.git', 0700)) return false;
+            $environment = getenv();
+            foreach (array_keys($environment) as $name) {
+                if (strtolower($name) === 'path') unset($environment[$name]);
+            }
+            $environment['PATH'] = $fixture . '/no-git-executable';
+            $stdout = tmpfile(); $stderr = tmpfile();
+            $process = proc_open([PHP_BINARY, $fixture . '/tools/check-package-integrity.php'],
+                [0 => ['pipe', 'r'], 1 => $stdout, 2 => $stderr], $pipes, null, $environment, ['bypass_shell' => true]);
+            if (!is_resource($process)) return false;
+            fclose($pipes[0]);
+            $status = proc_close($process);
+            rewind($stdout); rewind($stderr);
+            $text = stream_get_contents($stdout) . stream_get_contents($stderr);
+            fclose($stdout); fclose($stderr);
+            return $status !== 0
+                && str_contains($text, '[FAIL] eligible release payload is clean, tracked, and matches HEAD Git blobs')
+                && !str_contains($text, '[PASS] eligible release payload is clean, tracked, and matches HEAD Git blobs');
+        });
     },
-    'tool fails closed for missing, malformed, mismatched, or host-incompatible support metadata' => static function () use ($root, $runToolAt, $withTemporarilyReplacedFixtureFile): bool {
+    'tool fails closed for missing, malformed, mismatched, or noncanonical support metadata' => static function () use ($root, $runToolAt, $withTemporarilyReplacedFixtureFile): bool {
         return sandIamWithIsolatedFixture($root, static function (string $fixtureRoot) use ($runToolAt, $withTemporarilyReplacedFixtureFile): bool {
             $runTool = static fn (array $arguments): array => $runToolAt($fixtureRoot, $arguments);
             $rootInfo = $fixtureRoot . '/info.ini';
@@ -222,12 +232,12 @@ $checks = [
                     return $status !== 0 && str_contains($output, 'release metadata versions and host support are consistent');
                 });
             };
-            return $expectFailure(str_replace("support = 6.x\n", '', $rootSource))
-                && $expectFailure(str_replace('support = 6.x', 'support = undefined', $rootSource))
-                && $expectFailure(str_replace('support = 6.x', 'support = 6.0', $rootSource))
-                && $expectFailure(str_replace('support = 6.x', 'support = 5.x', $rootSource))
+            return $expectFailure(preg_replace('/^support\s*=.*\n/m', '', $rootSource))
+                && $expectFailure(preg_replace('/^support\s*=.*$/m', 'support = "undefined"', $rootSource))
+                && $expectFailure(preg_replace('/^support\s*=.*$/m', 'support = "0.1.0"', $rootSource))
+                && $expectFailure(preg_replace('/^support\s*=.*$/m', 'support = "0.0.x"', $rootSource))
                 && $expectFailure(str_replace("website = https://saithink.top\n", '', $rootSource))
-                && $withTemporarilyReplacedFixtureFile($packageInfo, str_replace('support = 6.x', 'support = 7.x', $packageSource), static function () use ($runTool): bool {
+                && $withTemporarilyReplacedFixtureFile($packageInfo, preg_replace('/^support\s*=.*$/m', 'support = "0.2.x"', $packageSource), static function () use ($runTool): bool {
                     [$status, $output] = $runTool([]);
                     return $status !== 0 && str_contains($output, 'release metadata versions and host support are consistent');
                 })
@@ -235,6 +245,74 @@ $checks = [
                     [$status, $output] = $runTool([]);
                     return $status !== 0 && str_contains($output, 'release metadata versions and host support are consistent');
                 });
+        });
+    },
+    'producer policy accepts open minimum and rejects matching closed declarations' => static function () use ($root, $runToolAt): bool {
+        return sandIamWithIsolatedFixture($root, static function (string $fixture) use ($runToolAt): bool {
+            foreach (['>=0.1.0' => true, '0.1.x' => false, '0.x' => false,
+                '>=0.1.0 <=0.2.0' => false, '>=00.1.0' => false] as $support => $accepted) {
+                foreach (['info.ini', 'plugin/sand-iam/info.ini'] as $relative) {
+                    $path = $fixture . '/' . $relative;
+                    $source = (string) file_get_contents($path);
+                    $replacement = preg_replace('/^support\\s*=.*$/m', 'support = "' . $support . '"', $source);
+                    if (!is_string($replacement) || file_put_contents($path, $replacement) === false) return false;
+                }
+                [$status, $output] = $runToolAt($fixture, []);
+                $label = 'host support follows the default open minimum producer policy';
+                if ($accepted && !str_contains($output, '[PASS] ' . $label)) return false;
+                if (!$accepted && ($status === 0 || !str_contains($output, '[FAIL] ' . $label)
+                    || !str_contains($output, 'host compatibility rule conflict'))) return false;
+            }
+            return true;
+        });
+    },
+    'independent release builder rejects committed support conflicts before artifact creation' => static function () use ($root): bool {
+        return sandIamWithIsolatedFixture($root, static function (string $fixture): bool {
+            $run = static function (array $arguments): array {
+                $command = implode(' ', array_map('escapeshellarg', $arguments));
+                $output = [];
+                exec($command . ' 2>&1', $output, $status);
+                return [$status, implode(PHP_EOL, $output)];
+            };
+            foreach ([['init', '-q'], ['config', 'user.name', 'Fixture'],
+                ['config', 'user.email', 'fixture@example.invalid']] as $arguments) {
+                [$status] = $run(array_merge(['git', '-C', $fixture], $arguments));
+                if ($status !== 0) return false;
+            }
+            // This committed fixture deliberately has an incomplete payload.
+            // Open support must reach that next gate; conflicts stop earlier.
+            unlink($fixture . '/README.md');
+            $originalInfo = [
+                'info.ini' => (string) file_get_contents($fixture . '/info.ini'),
+                'plugin/sand-iam/info.ini' => (string) file_get_contents($fixture . '/plugin/sand-iam/info.ini'),
+            ];
+            foreach ([
+                ['>=0.1.0', '>=0.1.0', true],
+                ['0.1.x', '0.1.x', false],
+                ['>=0.1.0 <=0.2.0', '>=0.1.0 <=0.2.0', false],
+                [null, null, false],
+                ['undefined', 'undefined', false],
+                ['>=0.1.0', '>=0.2.0', false],
+            ] as [$support, $peer, $accepted]) {
+                foreach (['info.ini' => $support, 'plugin/sand-iam/info.ini' => $peer] as $relative => $value) {
+                    $path = $fixture . '/' . $relative;
+                    $source = $originalInfo[$relative];
+                    $replacement = preg_replace('/^support\s*=.*\n/m',
+                        $value === null ? '' : 'support = "' . $value . '"' . "\n", $source);
+                    if (!is_string($replacement) || file_put_contents($path, $replacement) === false) return false;
+                }
+                [$status] = $run(['git', '-C', $fixture, 'add', '.']);
+                if ($status !== 0) return false;
+                [$status] = $run(['git', '-C', $fixture, 'commit', '-qm', 'support fixture']);
+                if ($status !== 0) return false;
+                $outputDirectory = dirname($fixture) . '/must-not-create-artifacts';
+                [$status, $output] = $run([PHP_BINARY, $fixture . '/tools/build-independent-release.php', $outputDirectory]);
+                if ($status === 0 || file_exists($outputDirectory)) return false;
+                if ($accepted && (!str_contains($output, '[PASS] committed host support')
+                    || !str_contains($output, 'Required committed payload missing: README.md'))) return false;
+                if (!$accepted && !str_contains($output, 'host compatibility rule conflict')) return false;
+            }
+            return true;
         });
     },
     'tool collects every foreign key from one ALTER TABLE statement' => static function () use ($root, $runToolAt, $withTemporarilyReplacedFixtureFile): bool {
@@ -436,7 +514,7 @@ $checks = [
     'candidate rejects a symbolic-link payload file' => static function () use ($root, $runToolAt): bool {
         return sandIamWithIsolatedFixture($root, static function (string $fixtureRoot) use ($runToolAt): bool {
             $path = $fixtureRoot . '/migrations/.package-integrity-link.pgsql';
-            if (file_exists($path) || is_link($path) || !symlink('/private/tmp', $path)) {
+            if (file_exists($path) || is_link($path) || !symlink($fixtureRoot . '/install.sql', $path)) {
                 return false;
             }
             try {

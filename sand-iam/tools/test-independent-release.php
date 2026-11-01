@@ -63,7 +63,7 @@ try {
     }
     $directories = [
         'migrations', 'lifecycle', 'plugin/sand-iam', 'sandadmin-artd/src/views/plugin/sand-iam',
-        'portal', 'sdk', 'docs/user-guide', 'examples',
+        'app', 'sdk', 'docs/user-guide', 'examples',
     ];
     foreach (sandIamPayloadRoots() as $root) {
         if (in_array($root, $directories, true)) {

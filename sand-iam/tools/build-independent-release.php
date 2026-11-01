@@ -61,6 +61,10 @@ if (command(['git', '-C', $root, 'status', '--porcelain=v1', '--untracked-files=
 }
 $commit = trim(command(['git', '-C', $root, 'rev-parse', 'HEAD']));
 $tree = trim(command(['git', '-C', $root, 'rev-parse', 'HEAD^{tree}']));
+$info = parse_ini_string(command(['git', '-C', $root, 'show', 'HEAD:info.ini']));
+$packageInfo = parse_ini_string(command(['git', '-C', $root, 'show', 'HEAD:plugin/sand-iam/info.ini']));
+sandIamAssertOpenHostSupport(is_array($info) ? $info : [], is_array($packageInfo) ? $packageInfo : []);
+echo "[PASS] committed host support follows the default open minimum producer policy\n";
 $listed = command(['git', '-C', $root, 'ls-tree', '-rz', 'HEAD']);
 $entries = [];
 foreach (explode("\0", rtrim($listed, "\0")) as $line) {
@@ -90,7 +94,6 @@ foreach (sandIamPayloadRoots() as $required) {
         throw new RuntimeException('Required committed payload missing: ' . $required);
     }
 }
-$info = parse_ini_string(command(['git', '-C', $root, 'show', 'HEAD:info.ini']));
 $version = $info['version'] ?? '';
 if (($info['app'] ?? '') !== 'sand-iam' || preg_match('/^\d+\.\d+\.\d+$/D', $version) !== 1) {
     throw new RuntimeException('Invalid committed package identity');

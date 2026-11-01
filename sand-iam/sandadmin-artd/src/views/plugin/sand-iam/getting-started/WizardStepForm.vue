@@ -2,12 +2,14 @@
   import { computed, reactive, watch } from 'vue'
   import { describeSandIamObjectCodeError } from '../api/uxContracts'
   import type { WizardRecord, WizardStep } from './wizardState'
+  import { readWizardDraft } from './wizardEntry'
 
   interface Props {
     readonly step: WizardStep
     readonly record: WizardRecord | null
     readonly parentLabel: string
     readonly saving: boolean
+    readonly draftKey?: string
   }
 
   const props = defineProps<Props>()
@@ -36,9 +38,16 @@
   })
 
   function resetForm(): void {
-    form.name = props.record?.name ?? ''
-    form.code = props.record?.code ?? ''
-    form.status = String(props.record?.status ?? 1)
+    let draft = null
+    try {
+      if (props.draftKey) {
+        if (props.record) localStorage.removeItem(props.draftKey)
+        else draft = readWizardDraft(localStorage.getItem(props.draftKey), Date.now())
+      }
+    } catch { /* Browser storage is optional; the current form remains usable. */ }
+    form.name = props.record?.name ?? draft?.name ?? ''
+    form.code = props.record?.code ?? draft?.code ?? ''
+    form.status = String(props.record?.status ?? draft?.status ?? 1)
   }
 
   function submit(): void {
@@ -50,7 +59,11 @@
     })
   }
 
-  watch(() => props.record, resetForm, { immediate: true })
+  watch(() => [props.record, props.draftKey], resetForm, { immediate: true })
+  watch(form, () => {
+    if (!props.draftKey || props.record) return
+    try { localStorage.setItem(props.draftKey, JSON.stringify({ ...form, savedAt: Date.now() })) } catch { /* optional draft storage */ }
+  })
 </script>
 
 <template>

@@ -24,7 +24,7 @@ if (getenv('SAND_IAM_RUN_PG_TESTS') !== '1') {
     exit(0);
 }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $root = dirname(__DIR__, 3);
 if (!is_file($hostRoot . '/vendor/autoload.php')) throw new RuntimeException('SandAdmin ThinkORM harness is unavailable');
 chdir($hostRoot); require $hostRoot . '/vendor/autoload.php'; require $root . '/plugin/sand-iam/app/functions.php';
@@ -63,21 +63,20 @@ try {
     else { $directRoleOriginal = (int) $directRole->status; $directRole->save(['status' => 2]); }
     $group->save(['status' => 1]); $role->save(['status' => 1]);
 
-    $authorizer = (new ReflectionClass(PolicyAuthorizer::class))->newInstanceWithoutConstructor();
-    $effective = new ReflectionMethod(PolicyAuthorizer::class, 'effectiveRoles');
-    $sources = $effective->invoke($authorizer, $applicationId, $identityId);
+    $effective = static function (int $app, int $identity) use ($resource): array { $facts = (new \plugin\SandIam\app\runtime\PostgresPolicySnapshotLoader())->load($app, $identity, (string) $resource->code, 'group-role-test'); $sources = (new \plugin\SandIam\app\runtime\PublishedPolicyAdapter($facts))->sources(); return ['role_ids' => array_keys($sources), 'sources' => $sources]; };
+    $sources = $effective($applicationId, $identityId);
     groupRolePgAssert($sources['role_ids'] === [$roleId] && $sources['sources'][$roleId] === ['identity_group:' . $groupId], 'active user-group role was not the sole effective source');
 
     $groupRole->save(['status' => 2]);
-    groupRolePgAssert($effective->invoke($authorizer, $applicationId, $identityId)['role_ids'] === [], 'revoked group role remained effective');
+    groupRolePgAssert($effective($applicationId, $identityId)['role_ids'] === [], 'revoked group role remained effective');
     $groupRole->save(['status' => 1]); $member->save(['status' => 2]);
-    groupRolePgAssert($effective->invoke($authorizer, $applicationId, $identityId)['role_ids'] === [], 'removed member retained group role');
+    groupRolePgAssert($effective($applicationId, $identityId)['role_ids'] === [], 'removed member retained group role');
     $member->save(['status' => 1]); $group->save(['status' => 2]);
-    groupRolePgAssert($effective->invoke($authorizer, $applicationId, $identityId)['role_ids'] === [], 'disabled group retained role');
+    groupRolePgAssert($effective($applicationId, $identityId)['role_ids'] === [], 'disabled group retained role');
     $group->save(['status' => 1]); $role->save(['status' => 2]);
-    groupRolePgAssert($effective->invoke($authorizer, $applicationId, $identityId)['role_ids'] === [], 'disabled role remained effective');
+    groupRolePgAssert($effective($applicationId, $identityId)['role_ids'] === [], 'disabled role remained effective');
     $role->save(['status' => 1]); $directRole->save(['status' => 1]);
-    $sources = $effective->invoke($authorizer, $applicationId, $identityId);
+    $sources = $effective($applicationId, $identityId);
     groupRolePgAssert($sources['role_ids'] === [$roleId] && $sources['sources'][$roleId] === ['direct_identity_role', 'identity_group:' . $groupId], 'direct and group sources were not merged and de-duplicated');
 
     $action = 'group-role-' . bin2hex(random_bytes(8));

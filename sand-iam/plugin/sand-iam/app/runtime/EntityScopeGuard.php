@@ -26,6 +26,7 @@ final class EntityScopeGuard
 
     public function assertEntity(object $entity): void
     {
+        $this->completed = false;
         if ($this->mode !== 'entity') {
             throw new ApiException('SAND_IAM_ENTITY_SCOPE_MODE_INVALID: 当前路由必须逐对象校验集合', 500);
         }
@@ -36,6 +37,7 @@ final class EntityScopeGuard
     /** @param iterable<object> $entities */
     public function assertCollection(iterable $entities): void
     {
+        $this->completed = false;
         if ($this->mode !== 'collection') {
             throw new ApiException('SAND_IAM_ENTITY_SCOPE_MODE_INVALID: 当前路由只能校验单个实体', 500);
         }

@@ -22,7 +22,7 @@ if ((string) getenv('SAND_IAM_T12_PG_ENABLED') !== '1') {
 function t12PgFail(string $message): never { throw new RuntimeException("T12 PostgreSQL idempotency fixture failed: {$message}"); }
 function t12PgAssert(bool $condition, string $message): void { if (!$condition) t12PgFail($message); }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $sandIamRoot = dirname(__DIR__, 3);
 if (!is_file($hostRoot . '/vendor/autoload.php')) t12PgFail('SandAdmin dependencies are unavailable');
 

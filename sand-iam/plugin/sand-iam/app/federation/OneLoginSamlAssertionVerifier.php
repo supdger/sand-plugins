@@ -41,6 +41,7 @@ final class OneLoginSamlAssertionVerifier implements SamlAssertionVerifier
         $this->https((string) ($config['sso_url'] ?? ''));
         $certificate = trim((string) ($config['idp_x509cert'] ?? ''));
         if ($certificate === '' || $expectedRequestId === '' || $expectedRecipient === '') throw new ApiException('SAND_IAM_SAML_CONFIGURATION_INVALID', 400);
+        $this->https($expectedRecipient);
         $settings = [
             'strict' => true,
             'debug' => false,
@@ -62,7 +63,7 @@ final class OneLoginSamlAssertionVerifier implements SamlAssertionVerifier
             // Response receives the exact controller argument; it never reads
             // $_POST and therefore cannot verify a different assertion.
             $response = new \OneLogin\Saml2\Response($settingsObject, $samlResponse);
-            if (!$response->isValid($expectedRequestId)) throw new ApiException('SAND_IAM_SAML_ASSERTION_INVALID', 401);
+            if (!$this->validateAtExpectedAcs($response, $expectedRequestId, $expectedRecipient)) throw new ApiException('SAND_IAM_SAML_ASSERTION_INVALID', 401);
             $this->requireExpectedAcsBinding($response, $expectedRecipient);
             $nameId = $response->getNameId();
             if (!is_string($nameId) || $nameId === '') throw new ApiException('SAND_IAM_SAML_ASSERTION_INVALID', 401);
@@ -78,6 +79,52 @@ final class OneLoginSamlAssertionVerifier implements SamlAssertionVerifier
             throw $exception;
         } catch (\Throwable) {
             throw new ApiException('SAND_IAM_SAML_ASSERTION_INVALID', 401);
+        }
+    }
+
+    /**
+     * FederationService supplies the ACS frozen in its provider transaction,
+     * never a URL from the response body or forwarded headers. Webman has no
+     * per-request PHP server URL, while OneLogin's supported URL reconstruction
+     * reads that environment. Supply only this trusted URL during its synchronous
+     * DOM / local-schema / OpenSSL validation, then restore every touched key.
+     * No OneLogin static URL setters or asynchronous operations enter this scope.
+     */
+    private function validateAtExpectedAcs(\OneLogin\Saml2\Response $response, string $expectedRequestId, string $expectedRecipient): bool
+    {
+        $parts = parse_url($expectedRecipient);
+        $host = (string) $parts['host'];
+        $port = (int) ($parts['port'] ?? 443);
+        $path = (string) ($parts['path'] ?? '/');
+        $values = [
+            'HTTPS' => 'on',
+            'HTTP_HOST' => $host . (isset($parts['port']) ? ':' . $port : ''),
+            'SERVER_NAME' => $host, 'SERVER_PORT' => $port,
+            'SCRIPT_NAME' => $path, 'REQUEST_URI' => $path, 'QUERY_STRING' => '',
+            'PATH_INFO' => null, 'HTTP_X_FORWARDED_HOST' => null,
+            'HTTP_X_FORWARDED_PROTO' => null, 'HTTP_X_FORWARDED_PORT' => null,
+        ];
+        $previous = [];
+        foreach ($values as $key => $value) {
+            $previous[$key] = ['exists' => array_key_exists($key, $_SERVER), 'value' => $_SERVER[$key] ?? null];
+        }
+        try {
+            foreach ($values as $key => $value) {
+                if ($value === null) unset($_SERVER[$key]);
+                else $_SERVER[$key] = $value;
+            }
+            // Existing library-wide overrides must not silently validate this
+            // tenant against a different URL. Leave them untouched and fail closed.
+            if (!hash_equals($expectedRecipient, \OneLogin\Saml2\Utils::getSelfRoutedURLNoQuery())
+                || !hash_equals($expectedRecipient, \OneLogin\Saml2\Utils::getSelfURLNoQuery())) {
+                throw new ApiException('SAND_IAM_SAML_ASSERTION_INVALID', 401);
+            }
+            return $response->isValid($expectedRequestId);
+        } finally {
+            foreach ($previous as $key => $entry) {
+                if ($entry['exists']) $_SERVER[$key] = $entry['value'];
+                else unset($_SERVER[$key]);
+            }
         }
     }
 

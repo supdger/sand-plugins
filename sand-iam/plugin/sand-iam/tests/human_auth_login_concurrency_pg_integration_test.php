@@ -110,7 +110,7 @@ function cleanupLoginRace(int $organizationId, int $applicationId, int $identity
     Db::table('sand_iam_organization')->where('id', $organizationId)->delete();
 }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $packageRoot = dirname(__DIR__);
 if (getenv('SAND_IAM_RUN_PG_TESTS') !== '1' || !is_file($hostRoot . '/vendor/autoload.php')) {
     echo "SKIP human auth login concurrency PostgreSQL integration; set SAND_IAM_RUN_PG_TESTS=1 and provide SandAdmin host dependencies\n";

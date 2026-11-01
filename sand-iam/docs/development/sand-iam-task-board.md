@@ -1250,6 +1250,8 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 | UX-02 | Codex | ✅ Cursor 七链证据（Codex 独立验收待办） | 体验契约第 5 节、受控宿主与夹具授权 | Cursor `ux02-1787930822471` 七链 7/7 通过，见 `.cursor/autopilot/executions/UX-02.md`。Codex 需独立验收，并将演示宿主热修（`PolicyAuthorizer` / `ApiResourceController` / `identity-group-role` / `simulate` 空规则）并回权威包。不上调正式 FLOW。 |
 | U-17 | Codex | ✅ 源码完成（宿主/浏览器待同步验收） | 体验契约第 4 节、U-14 布局规则、用户 2026-08-31 指派 | 去掉宿主 `art-full-height`/`art-table-card` 裁切；改为 `sand-iam-page` 最小高度容器。源码与文案门禁通过，见 `.cursor/autopilot/executions/U-17.md`。未改宿主；双视口滚动未验收。不上调正式 FLOW。 |
 | IAM-06 | Codex | ▶ 进行中 | SandAI 发布包需要受信任的 SandIAM 安装前置 | `ServiceCatalog` 已补齐声明校验、行锁、重复安装不覆盖/不复活、`23505` 单次收敛重试和越界模型门禁；机器调用 quota/network/data_class 约束（030）已通过源码与隔离 PostgreSQL。SandAI 的 4/4 隔离生命周期是其自身证据，仍需真实 SandAI allow/deny/audit 业务闭环，不能替代 SandIAM 宿主验收。见 `.codex/autopilot/executions/IAM-06-service-catalog-draft.md`。 |
+
+2026-09-25 IAM-06 接口增量：`ServiceCatalog::inspectServiceActions` 已在权威源码候选中按服务与动作声明只读返回 `missing/active/disabled` 和 `can_register`；原登记事务继续复核停用状态。无数据库行为测试覆盖全缺失、已登记、服务/动作停用、错误声明以及预检后正式登记拒绝；未以此代替 SandAI 真实 SandIAM/PostgreSQL/安装整链验收，IAM-06 仍进行中。
 | IAM-07 | Codex | ✅ 已完成 | 应用账号独立，旧 `provider_code + subject` 全局唯一边界需要修正 | v0.2.0 已实现以 `identity_provider_id + subject` 为边界的身份绑定、显式 application/organization 两种身份源作用域及 application mount、兼容管理 API。PostgreSQL 18 新装为 19 表 / 228 约束 / 60 索引；隔离验收已证明 0.1→0.2 旧绑定回填、重复升级幂等、跨应用相同 subject 放行、同身份源重复拒绝、跨应用错绑拒绝，卸载后 0 张表且临时数据库残留为 0。 |
 | IAM-T01 | Codex | ✅ 已完成 | IAM-T00 终极边界和应用身份隔离已冻结 | v0.3.0 已实现应用级注册、验证、登录、Argon2id 密码、认证策略、失败锁定、数据库限流、可撤销会话、刷新令牌轮换/重放撤销、退出、密码重置和审计。隔离 PostgreSQL 中使用真实 SandAdmin ORM 依赖执行服务级流程通过；跨应用相同邮箱独立注册通过，敏感材料审计泄露扫描通过，安装、两次升级、卸载通过，临时库残留为 0。契约见 [人类身份认证 API v0.1](sand-iam-human-auth-api-v0.1.md)，执行证据见 `.codex/autopilot/executions/IAM-T01.md`。真实宿主 HTTP、管理端和发布验收归 IAM-T07/T08。 |
 | IAM-T02 | Codex | ✅ 已完成 | IAM-T01 | v0.4.0 已实现应用隔离的 TOTP、一次性恢复码、密码后 MFA challenge 和 ES256 WebAuthn/Passkey。绑定新认证器必须通过当前密码二次认证；MFA 验证有独立数据库限流；challenge、TOTP 时间步、恢复码与 signCount 重放均拒绝。隔离 PostgreSQL 已通过真实 ORM 服务流程、密钥 key ring 兼容、BE/BS 与 userHandle 校验、跨应用拒绝、fresh install、003→当前重复升级、复合外键反例和两轮卸载清理。契约见 [MFA 与通行密钥 API v0.1](sand-iam-mfa-passkey-api-v0.1.md)，执行证据见 `.codex/autopilot/executions/IAM-T02.md`。真实浏览器、宿主 HTTP、管理端和发布验收归 IAM-T07/T08。 |
@@ -1274,7 +1276,7 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 ## 历史开工输入（IAM-01，非当前指令）
 
 - 源码包：`/Users/code/project/sand_plugins/sand-iam`
-- 演示与验收宿主：`/Users/code/project/sand_plugins/sandadmin-demo-host`（服务端为其 `server/` 子目录）；`/Users/code/project/sandadmin` 保持纯净通用宿主，不用于插件演示
+- 演示与验收宿主：`/Users/code/project/sand_demo`（服务端为其 `server/` 子目录）；`/Users/code/project/sandadmin` 保持纯净通用宿主，不用于插件演示
 - 产品/边界已确认：`docs/product/sand-iam-product-requirements.md`、`docs/architecture/sand-iam-access-boundary.md`
 - 开发门槛：`docs/development/sand-iam-development-entry.md`
 - Cursor 已占用：`sandadmin-artd/src/views/plugin/sand-iam/` 页面壳；请勿改该目录
@@ -1351,3 +1353,8 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 - 核心验证结果为 **1 个正例 + 9 个 hash 重算负例**；六文件独立 Astra 验收为 **ACCEPT（P0/P1/P2=0）**。validator SHA-256：`fece73aa13ec4917f5c122f563716c2ab0945572ecd84d88245968022aa1206f`。
 - `real_g=false`。本批未执行真实 PostgreSQL、KMS 或恢复演练；不构成 D06、正式 FLOW、业务闭环、部署或线上验证通过。
 - 本批不改变冻结统计：需求/架构/票据 **8/9**、模块实现 **20/20**、正式 FLOW **0/7**、本地业务闭环 **0/4**、可上线部署 **0/8**，完整目标仍 **28/48**；发布门槛仍 **0/10**。除本节与对应 terminal ledger 外，不回写其他过时全仓统计。
+
+### 2026-09-25 工作负载客户端资源引用端口
+
+- 为 SandAI 文件尚未创建前的正式调用授权，增加 SandIAM 宿主本地只读 `WorkloadClientReferenceVerifier::verifyForService`：从当前 `sand_iam_*` 四级身份记录核实客户端、环境、应用、组织均启用且未删除，只返回 ID 与状态，不返回凭证。归属、接口和验收边界已冻结在开发入口。
+- 测试场无数据库行为测试 **11/11** 覆盖有效、非法 ID、缺失、四级停用及软删除；未进行真实 PostgreSQL/HTTP/宿主安装、grant 撤权或插件发行验收，不改变 SandIAM 正式 FLOW 和发布统计。SandAI 消费端另在其 OpenSpec 证据中记录。

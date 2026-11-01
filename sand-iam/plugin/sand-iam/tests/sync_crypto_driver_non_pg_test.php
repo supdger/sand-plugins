@@ -65,7 +65,7 @@ function t10SyncExpect(callable $callback, string $code): void
     t10SyncFail("expected {$code}");
 }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $sandIamRoot = dirname(__DIR__, 3);
 if (!is_file($hostRoot . '/vendor/autoload.php')) {
     t10SyncFail('SandAdmin host dependencies are unavailable');

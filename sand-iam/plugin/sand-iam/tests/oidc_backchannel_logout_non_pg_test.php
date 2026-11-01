@@ -14,7 +14,7 @@ use Webman\Config;
 function t11BackFail(string $message): never { fwrite(STDERR, "IAM-T11 back-channel logout test failed: {$message}\n"); exit(1); }
 function t11BackExpect(callable $callback, string $code): void { try { $callback(); } catch (ApiException $exception) { if (str_contains($exception->getMessage(), $code)) return; } t11BackFail("expected {$code}"); }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $root = dirname(__DIR__, 3);
 if (!is_file($hostRoot . '/vendor/autoload.php')) t11BackFail('SandAdmin host dependencies are unavailable');
 chdir($hostRoot); require $hostRoot . '/vendor/autoload.php'; require $root . '/plugin/sand-iam/app/functions.php';

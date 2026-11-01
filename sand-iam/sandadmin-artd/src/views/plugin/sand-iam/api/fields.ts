@@ -180,7 +180,7 @@ export const grantFields: SandIamFormField[] = [
   field('audience', 'text', {
     required: true,
     placeholder: '例如：provider-b（以服务提供方为准）',
-    help: '从所选调用身份复制“服务受众”，并与服务提供方核对；必须逐字一致。创建后不能更改调用身份、服务动作或受众。'
+    help: '创建时从所选调用身份自动带入“服务受众”，请与服务提供方核对；无法读取时先重新选择身份，不凭名称猜测。必须逐字一致。创建后不能更改调用身份、服务动作或受众。'
   }),
   field('quota_policy', 'json', {
     advanced: true,
@@ -415,9 +415,10 @@ export const policyFields: SandIamFormField[] = [
     dependency: { sourceKey: 'application_id', targetParam: 'application_id' },
     help: '策略主体二选一：选择应用身份，或选择上面的角色。'
   }),
-  field('action', 'text', {
+  field('action', 'business-action', {
     required: true,
-    help: '从接入开发者的业务动作清单复制准确值。配套工作项示例读取使用 work_item.read；自行起名不会让业务接口自动支持该动作。'
+    dependency: { sourceKey: 'application_id', targetParam: 'application_id' },
+    help: '选择当前应用已声明并启用的业务动作。没有所需动作时，先按开发者提供的准确代码和名称到「应用业务动作」登记，再返回刷新。'
   }),
   field('effect', 'select', {
     required: true,
@@ -515,7 +516,7 @@ export const applicationExperienceFields: SandIamFormField[] = [
       { label: '关闭注册', value: 'disabled' }
     ],
     defaultValue: 'disabled',
-    help: '开放注册必须同时启用密码登录。邀请注册的接受页归后续任务。'
+    help: '内置门户自行开户请选择开放注册，并同时启用密码登录；仅接受管理员邀请请选择邀请注册。此设置还需与认证策略及部署开关一致。'
   }),
   field('login_methods', 'select', {
     required: true,
@@ -790,10 +791,10 @@ export const apiResourceFields: SandIamFormField[] = [
     dependency: { sourceKey: 'application_id', targetParam: 'application_id' },
     help: '必须先登记业务资源。'
   }),
-  field('action', 'text', {
+  field('action', 'business-action', {
     required: true,
     createOnly: true,
-    placeholder: 'order.read',
+    dependency: { sourceKey: 'application_id', targetParam: 'application_id' },
     help: '稳定的业务语义动作，必须引用同一应用中已启用的声明；不是页面按钮或 HTTP 方法。'
   }),
   field('operation', 'select', {

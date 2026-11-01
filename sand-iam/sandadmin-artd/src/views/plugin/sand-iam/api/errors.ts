@@ -483,7 +483,7 @@ const RECOVERY: Record<StableCode, string> = {
   SAND_IAM_ROUTE_BINDING_CONFLICT:
     '同一请求方法和路由模板已经绑定，请改清单或停用旧绑定，系统不会猜测覆盖。',
   SAND_IAM_APPLICATION_ACTION_UNDECLARED:
-    '请先在应用业务动作目录声明并启用该动作，再登记接口或同步路由。',
+    '请先在当前应用的「应用业务动作」目录声明并启用该动作，再返回选择并保存策略或接口；已有声明请直接复用。',
   SAND_IAM_APPLICATION_ACTION_DISABLED: '已停用的业务动作不能用于新接口或授权，请改用已启用声明。',
   SAND_IAM_APPLICATION_ACTION_CODE_IMMUTABLE:
     '业务动作代码创建后不可修改；请新建声明并迁移接口和策略引用。',

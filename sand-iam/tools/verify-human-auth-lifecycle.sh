@@ -105,7 +105,7 @@ SQL
 
 psql_test --file="${sand_iam_root}/install.sql"
 
-export SAND_IAM_T01_HOST_ROOT="${SAND_IAM_T01_HOST_ROOT:-/Users/code/project/sand_plugins/sandadmin-demo-host/server}"
+export SAND_IAM_T01_HOST_ROOT="${SAND_IAM_T01_HOST_ROOT:-/Users/code/project/sand_demo/server}"
 export DB_TYPE='pgsql'
 export DB_HOST='/tmp'
 export DB_PORT='5432'

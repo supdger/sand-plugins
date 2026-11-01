@@ -247,6 +247,7 @@ final class ApplicationAuthorizationService
             (string) $api->operation,
             $attributes,
             $requestId,
+            ['id' => (int) $api->id, 'action' => (string) $api->action, 'operation' => (string) $api->operation, 'code' => (string) $api->code, 'api_version' => (string) $api->api_version],
         );
         return $decision + [
             'application_id' => (int) $application->id,

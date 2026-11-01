@@ -1,4 +1,11 @@
 <script setup lang="ts">
+  import TaskContinuation from '../components/TaskContinuation.vue'
+  import { useRoute as useGuidanceRoute } from 'vue-router'
+  import { verifyTaskContext as verifyGuidanceContext, parseTaskContext as parseGuidanceContext } from '../api/taskContext'
+  import { readSandIamResource as readGuidanceResource } from '../api/write'
+  const guidanceRoute = useGuidanceRoute()
+  const continuationContext = () => applicationId.value ? { application_id: Number(applicationId.value) } : {}
+
   import '../components/sandIamPage.css'
   import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { ElMessage } from 'element-plus'
@@ -303,14 +310,25 @@
 
   onScopeDispose(() => { disposed = true; listVersion++; detailVersion++ })
 
-  onMounted(() => {
-    void loadOptions()
-    void loadAudits()
+  onMounted(async () => {
+    await loadOptions()
+    try {
+      const verified = await verifyGuidanceContext(parseGuidanceContext(guidanceRoute.query), readGuidanceResource)
+      if (disposed) return
+      const row = verified.rows.application_id
+      if (row && typeof row.id === 'number') {
+        if (!applicationRows.value.some(item => item.id === row.id)) applicationRows.value = [row, ...applicationRows.value]
+        applications.value = auditApplicationOptions(applicationRows.value)
+        applicationId.value = String(row.id)
+      }
+      void loadAudits()
+    } catch (error: unknown) { if (!disposed) requestError.value = describeSandIamError(error) }
   })
 </script>
 
 <template>
   <div class="sand-iam-page">
+    <TaskContinuation :context="continuationContext()" />
     <ElCard class="sand-iam-page-card" shadow="never">
       <div class="mb-4">
         <h2 class="m-0 text-lg font-semibold">访问审计</h2>

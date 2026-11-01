@@ -6,9 +6,9 @@
     "metadata": {
         "component": {
             "type": "application",
-            "bom-ref": "pkg:generic/sandiam@0.7.6",
+            "bom-ref": "pkg:generic/sandiam@0.8.4",
             "name": "SandIAM",
-            "version": "0.7.6",
+            "version": "0.8.4",
             "licenses": [
                 {
                     "license": {
@@ -37,6 +37,35 @@
     "components": [
         {
             "type": "library",
+            "bom-ref": "pkg:composer/casbin/casbin@v4.5.0",
+            "name": "casbin/casbin",
+            "version": "v4.5.0",
+            "scope": "required",
+            "purl": "pkg:composer/casbin/casbin@v4.5.0",
+            "properties": [
+                {
+                    "name": "sandiam:lockfile",
+                    "value": "plugin/sand-iam/composer.lock"
+                },
+                {
+                    "name": "sandiam:license-evidence",
+                    "value": "plugin/sand-iam/vendor/casbin/casbin/LICENSE"
+                },
+                {
+                    "name": "sandiam:vcs-reference",
+                    "value": "c856b5f9a009af6bc4679095a2095846a7629470"
+                }
+            ],
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "library",
             "bom-ref": "pkg:composer/onelogin/php-saml@4.3.2",
             "name": "onelogin/php-saml",
             "version": "4.3.2",
@@ -54,6 +83,93 @@
                 {
                     "name": "sandiam:vcs-reference",
                     "value": "26b3a47349415e5b7aa300ba4ab7fc316c65f19e"
+                }
+            ],
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "pkg:composer/psr/cache@3.0.0",
+            "name": "psr/cache",
+            "version": "3.0.0",
+            "scope": "required",
+            "purl": "pkg:composer/psr/cache@3.0.0",
+            "properties": [
+                {
+                    "name": "sandiam:lockfile",
+                    "value": "plugin/sand-iam/composer.lock"
+                },
+                {
+                    "name": "sandiam:license-evidence",
+                    "value": "https://github.com/php-fig/cache.git"
+                },
+                {
+                    "name": "sandiam:vcs-reference",
+                    "value": "aa5030cfa5405eccfdcb1083ce040c2cb8d253bf"
+                }
+            ],
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "pkg:composer/psr/container@2.0.2",
+            "name": "psr/container",
+            "version": "2.0.2",
+            "scope": "required",
+            "purl": "pkg:composer/psr/container@2.0.2",
+            "properties": [
+                {
+                    "name": "sandiam:lockfile",
+                    "value": "plugin/sand-iam/composer.lock"
+                },
+                {
+                    "name": "sandiam:license-evidence",
+                    "value": "plugin/sand-iam/vendor/psr/container/LICENSE"
+                },
+                {
+                    "name": "sandiam:vcs-reference",
+                    "value": "c71ecc56dfe541dbd90c5360474fbc405f8d5963"
+                }
+            ],
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "pkg:composer/psr/log@3.0.2",
+            "name": "psr/log",
+            "version": "3.0.2",
+            "scope": "required",
+            "purl": "pkg:composer/psr/log@3.0.2",
+            "properties": [
+                {
+                    "name": "sandiam:lockfile",
+                    "value": "plugin/sand-iam/composer.lock"
+                },
+                {
+                    "name": "sandiam:license-evidence",
+                    "value": "plugin/sand-iam/vendor/psr/log/LICENSE"
+                },
+                {
+                    "name": "sandiam:vcs-reference",
+                    "value": "f16e1d5863e37f8d8c2a01719f5b34baa2b714d3"
                 }
             ],
             "licenses": [
@@ -95,6 +211,180 @@
         },
         {
             "type": "library",
+            "bom-ref": "pkg:composer/symfony/cache-contracts@v3.7.1",
+            "name": "symfony/cache-contracts",
+            "version": "v3.7.1",
+            "scope": "required",
+            "purl": "pkg:composer/symfony/cache-contracts@v3.7.1",
+            "properties": [
+                {
+                    "name": "sandiam:lockfile",
+                    "value": "plugin/sand-iam/composer.lock"
+                },
+                {
+                    "name": "sandiam:license-evidence",
+                    "value": "plugin/sand-iam/vendor/symfony/cache-contracts/LICENSE"
+                },
+                {
+                    "name": "sandiam:vcs-reference",
+                    "value": "9789738bc19af1106dc54d6afba9a0b467516cf2"
+                }
+            ],
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "pkg:composer/symfony/cache@v7.4.20",
+            "name": "symfony/cache",
+            "version": "v7.4.20",
+            "scope": "required",
+            "purl": "pkg:composer/symfony/cache@v7.4.20",
+            "properties": [
+                {
+                    "name": "sandiam:lockfile",
+                    "value": "plugin/sand-iam/composer.lock"
+                },
+                {
+                    "name": "sandiam:license-evidence",
+                    "value": "plugin/sand-iam/vendor/symfony/cache/LICENSE"
+                },
+                {
+                    "name": "sandiam:vcs-reference",
+                    "value": "e7e604eab58639503495a46f5c194cc69a9c80a8"
+                }
+            ],
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "pkg:composer/symfony/deprecation-contracts@v3.7.1",
+            "name": "symfony/deprecation-contracts",
+            "version": "v3.7.1",
+            "scope": "required",
+            "purl": "pkg:composer/symfony/deprecation-contracts@v3.7.1",
+            "properties": [
+                {
+                    "name": "sandiam:lockfile",
+                    "value": "plugin/sand-iam/composer.lock"
+                },
+                {
+                    "name": "sandiam:license-evidence",
+                    "value": "plugin/sand-iam/vendor/symfony/deprecation-contracts/LICENSE"
+                },
+                {
+                    "name": "sandiam:vcs-reference",
+                    "value": "f3202fa1b5097b0af062dc978b32ecf63404e31d"
+                }
+            ],
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "pkg:composer/symfony/expression-language@v7.4.18",
+            "name": "symfony/expression-language",
+            "version": "v7.4.18",
+            "scope": "required",
+            "purl": "pkg:composer/symfony/expression-language@v7.4.18",
+            "properties": [
+                {
+                    "name": "sandiam:lockfile",
+                    "value": "plugin/sand-iam/composer.lock"
+                },
+                {
+                    "name": "sandiam:license-evidence",
+                    "value": "plugin/sand-iam/vendor/symfony/expression-language/LICENSE"
+                },
+                {
+                    "name": "sandiam:vcs-reference",
+                    "value": "b73866506ff02800836a40fa1f95614a71064f35"
+                }
+            ],
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "pkg:composer/symfony/service-contracts@v3.7.3",
+            "name": "symfony/service-contracts",
+            "version": "v3.7.3",
+            "scope": "required",
+            "purl": "pkg:composer/symfony/service-contracts@v3.7.3",
+            "properties": [
+                {
+                    "name": "sandiam:lockfile",
+                    "value": "plugin/sand-iam/composer.lock"
+                },
+                {
+                    "name": "sandiam:license-evidence",
+                    "value": "plugin/sand-iam/vendor/symfony/service-contracts/LICENSE"
+                },
+                {
+                    "name": "sandiam:vcs-reference",
+                    "value": "15e6a07ec2a2c75ceb1b21dd98105ee8456d2257"
+                }
+            ],
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "pkg:composer/symfony/var-exporter@v7.4.18",
+            "name": "symfony/var-exporter",
+            "version": "v7.4.18",
+            "scope": "required",
+            "purl": "pkg:composer/symfony/var-exporter@v7.4.18",
+            "properties": [
+                {
+                    "name": "sandiam:lockfile",
+                    "value": "plugin/sand-iam/composer.lock"
+                },
+                {
+                    "name": "sandiam:license-evidence",
+                    "value": "plugin/sand-iam/vendor/symfony/var-exporter/LICENSE"
+                },
+                {
+                    "name": "sandiam:vcs-reference",
+                    "value": "d6a87acbe48cbc707b9aba7f1a6c2215aab02603"
+                }
+            ],
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "library",
             "bom-ref": "pkg:npm/%40esbuild/aix-ppc64@0.25.10",
             "name": "@esbuild/aix-ppc64",
             "version": "0.25.10",
@@ -103,7 +393,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -128,7 +418,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -153,7 +443,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -178,7 +468,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -203,7 +493,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -228,7 +518,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -253,7 +543,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -278,7 +568,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -303,7 +593,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -328,7 +618,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -353,7 +643,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -378,7 +668,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -403,7 +693,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -428,7 +718,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -453,7 +743,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -478,7 +768,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -503,7 +793,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -528,7 +818,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -553,7 +843,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -578,7 +868,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -603,7 +893,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -628,7 +918,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -653,7 +943,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -678,7 +968,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -703,7 +993,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -728,7 +1018,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -753,7 +1043,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -782,7 +1072,7 @@
                 },
                 {
                     "name": "sandiam:lockfile",
-                    "value": "portal/pnpm-lock.yaml"
+                    "value": "app/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:lockfile",
@@ -2546,10 +2836,20 @@
     ],
     "dependencies": [
         {
-            "ref": "pkg:generic/sandiam@0.7.6",
+            "ref": "pkg:generic/sandiam@0.8.4",
             "dependsOn": [
+                "pkg:composer/casbin/casbin@v4.5.0",
                 "pkg:composer/onelogin/php-saml@4.3.2",
+                "pkg:composer/psr/cache@3.0.0",
+                "pkg:composer/psr/container@2.0.2",
+                "pkg:composer/psr/log@3.0.2",
                 "pkg:composer/robrichards/xmlseclibs@3.1.5",
+                "pkg:composer/symfony/cache-contracts@v3.7.1",
+                "pkg:composer/symfony/cache@v7.4.20",
+                "pkg:composer/symfony/deprecation-contracts@v3.7.1",
+                "pkg:composer/symfony/expression-language@v7.4.18",
+                "pkg:composer/symfony/service-contracts@v3.7.3",
+                "pkg:composer/symfony/var-exporter@v7.4.18",
                 "pkg:npm/%40esbuild/aix-ppc64@0.25.10",
                 "pkg:npm/%40esbuild/android-arm64@0.25.10",
                 "pkg:npm/%40esbuild/android-arm@0.25.10",

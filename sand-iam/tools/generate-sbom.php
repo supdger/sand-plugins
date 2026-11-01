@@ -128,7 +128,7 @@ $readPnpm = static function (string $relative, array $licenseMap) use ($root, $a
         $add($component);
     }
 };
-$readPnpm('portal/pnpm-lock.yaml', $licensePolicy['npm']);
+$readPnpm('app/pnpm-lock.yaml', $licensePolicy['npm']);
 $readPnpm('sdk/typescript/pnpm-lock.yaml', $licensePolicy['npm']);
 
 $dartPath = $root . '/sdk/dart/pubspec.lock';

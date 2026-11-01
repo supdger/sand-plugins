@@ -150,7 +150,7 @@ function invocationPgCompete(array $base): array
     }
 }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $root = dirname(__DIR__, 3);
 if (getenv('SAND_IAM_RUN_PG_TESTS') !== '1' || !is_file($hostRoot . '/vendor/autoload.php')) { echo "SKIP service invocation PostgreSQL integration; use a disposable installed SandIAM database\n"; exit(0); }
 $sourcePluginRoot = getenv('SAND_IAM_SOURCE_PLUGIN_ROOT') ?: $root . '/plugin/sand-iam';

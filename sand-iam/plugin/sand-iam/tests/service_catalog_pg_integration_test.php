@@ -35,7 +35,7 @@ function catalogPgExpectConflict(callable $callback, string $message): void
     catalogPgFail($message);
 }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $sandIamRoot = dirname(__DIR__, 3);
 $repositoryRoot = dirname(__DIR__, 4);
 $sandAiConfig = $repositoryRoot . '/sand-ai/config.json';

@@ -9,7 +9,7 @@ use Webman\Config;
 function t11DcrFail(string $message): never { fwrite(STDERR, "IAM-T11 DCR validation test failed: {$message}\n"); exit(1); }
 function t11DcrExpect(callable $callback, string $code, string $case = ''): void { try { $callback(); } catch (ApiException $exception) { if (str_contains($exception->getMessage(), $code)) return; } t11DcrFail("expected {$code}" . ($case === '' ? '' : " for {$case}")); }
 
-$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_plugins/sandadmin-demo-host/server';
+$hostRoot = getenv('SAND_IAM_T01_HOST_ROOT') ?: '/Users/code/project/sand_demo/server';
 $root = dirname(__DIR__, 3);
 if (!is_file($hostRoot . '/vendor/autoload.php')) t11DcrFail('SandAdmin host dependencies are unavailable');
 chdir($hostRoot); require $hostRoot . '/vendor/autoload.php'; require $root . '/plugin/sand-iam/app/functions.php';
