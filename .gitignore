@@ -11,3 +11,8 @@ tmp/
 .cursor/autopilot/watch.log
 .cursor/autopilot/wake.signal
 .cursor/autopilot/_fp_*
+
+# agent tool state — never commit
+.codex/
+.cursor/autopilot/
+.claude/
