@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+  <head>
+    <title>SandAdmin</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="SandAdmin - A modern admin dashboard system built with Vue 3, Element Plus, and Webman."
+    />
+    <link rel="icon" type="image/png" href="/sandadmin-mark.png?v=20260816-v2" />
+
+    <style>
+      /* 防止页面刷新时白屏的初始样式 */
+      html {
+        background-color: #fafbfc;
+      }
+
+      html.dark {
+        background-color: #070707;
+      }
+    </style>
+
+    <script>
+      // 初始化 html class 主题属性
+      ;(function () {
+        try {
+          if (typeof Storage === 'undefined' || !window.localStorage) {
+            return
+          }
+
+          const themeType = localStorage.getItem('sys-theme')
+        if (themeType === 'dark') {
+          document.documentElement.classList.add('dark')
+        }
+
+      } catch (e) {
+          console.warn('Failed to apply initial theme:', e)
+        }
+      })()
+    </script>
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <script>
+      // 白屏兜底看门狗
+      //
+      // main.ts 自身解析/求值失败（目录交换、chunk 404、语法错误）时，
+      // 模块内的 try/catch 根本不会执行，用户只会看到纯白页面。
+      // 这段内联脚本不属于模块图，任何模块失败都影响不到它。
+      ;(function () {
+        var BOOT_TIMEOUT = 10000
+        var lastResourceError = ''
+
+        window.addEventListener(
+          'error',
+          function (event) {
+            var target = event && event.target
+            if (target && (target.tagName === 'SCRIPT' || target.tagName === 'LINK')) {
+              lastResourceError = target.src || target.href || ''
+            }
+          },
+          true
+        )
+
+        function renderBootFallback() {
+          var root = document.getElementById('app')
+          if (!root || root.childNodes.length > 0) return
+          if (document.getElementById('app-boot-fallback')) return
+
+          var detail = lastResourceError
+            ? '加载失败的资源：' + lastResourceError
+            : '未捕获到具体的资源错误，请查看浏览器控制台。'
+
+          var html =
+            '<div id="app-boot-fallback" style="box-sizing:border-box;min-height:100vh;padding:48px 24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#fafbfc;color:#303133;font-size:14px;line-height:1.7;font-family:system-ui,-apple-system,\'Segoe UI\',\'Microsoft YaHei\',sans-serif">' +
+            '<h1 style="margin:0;font-size:20px;font-weight:600">页面未能加载</h1>' +
+            '<p style="margin:0;max-width:720px;text-align:center;color:#606266">前端资源加载或启动超时。可先尝试刷新；若反复失败，请重置本地状态后重新登录，并联系管理员检查前端部署是否完整。</p>' +
+            '<p style="margin:0;max-width:960px;text-align:center;color:#909399;word-break:break-all">' +
+            detail +
+            '</p>' +
+            '<div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center">' +
+            '<button type="button" id="app-boot-fallback-reload" style="padding:8px 20px;border:none;border-radius:6px;background:#409eff;color:#fff;cursor:pointer;font-size:14px">重新加载</button>' +
+            '<button type="button" id="app-boot-fallback-reset" style="padding:8px 20px;border:1px solid #dcdfe6;border-radius:6px;background:#fff;color:#606266;cursor:pointer;font-size:14px">重置本地状态</button>' +
+            '</div></div>'
+
+          root.innerHTML = html
+          document.getElementById('app-boot-fallback-reload').onclick = function () {
+            window.location.reload()
+          }
+          document.getElementById('app-boot-fallback-reset').onclick = function () {
+            try {
+              localStorage.clear()
+              sessionStorage.clear()
+            } catch (e) {
+              console.warn('Failed to reset local state:', e)
+            }
+            window.location.reload()
+          }
+        }
+
+        setTimeout(renderBootFallback, BOOT_TIMEOUT)
+      })()
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
