@@ -16,6 +16,7 @@
 - 插件表 `sand_<domain>_*`；身份/应用/凭证/服务授权/审计归 SandIAM。
 - 业务拒绝用 `plugin\sandadmin\exception\ApiException`，显式传 `400`/`401`。
 - 不跨改对方独占目录；未冻结字段不得猜测实现。
+- 依赖插件工件一律构建期外部注入，不提交进源码仓；`config.json` 的 `plugin_dependencies` 只声明工件身份（version/sha256）。
 
 ## 插件宿主兼容范围
 
