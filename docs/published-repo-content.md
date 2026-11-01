@@ -17,6 +17,12 @@
 
 失败即不得推送。回归测试：`/usr/bin/python3 scripts/check_published_repo_content_test.py`。
 
+## 目录约定
+
+- `app/` 是全插件统一的"非后台应用面"顶层目录（SandAI 的 `app/`、SandIAM 的终端门户同一语义）。插件对外用户面一律用 `app/`，不得另造 `portal/` 等别名；产品名仍可叫"门户/portal"，但目录名固定 `app/`。
+- `plugin/<app>/`（后端+载荷）、`sandadmin-artd/`（管理端源码）、`sdk/`、`examples/`、`release/`（发布机器收编位）、`docs/user-guide` 为其余标准顶层。
+- `plugin/<app>/docs/` 是随包契约文档，属用户面；只有仓根级 `docs/development|product|internal` 才算开发内容。
+
 ## 已记录的判定
 
 - `sand-iam/CONTRIBUTING.md` 保留：仓内 `check-package-integrity` 与 `check-release-payload` 将其作为发布治理机制（DCO/CLA 必选其一）的硬性输入。若要移除须先改发布契约，不是删文件能解决。
