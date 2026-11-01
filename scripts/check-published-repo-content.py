@@ -31,7 +31,7 @@ DEV_PATH = re.compile(
     r"|(?:^|/)(?:commitlint\.config|eslint\.config)\.[^/]+$"
     r"|(?:^|/)\.(?:prettier|stylelint)[^/]*$"
     r"|(?:^|/)phpunit\.xml$"
-    r"|(?:^|/)docs/(?:development|product|internal)(?:/|$)"
+    r"|^docs/(?:development|product|internal)(?:/|$)"
     r"|(?:^|/)AGENTS\.md$|(?:^|/)CLAUDE\.md$"
     r"|(?:^|/)\.env(?:\.(?!.*example)[^/]*)?$",
     re.IGNORECASE,
