@@ -2,6 +2,24 @@
 /** Independent native-PHP updater. No framework/vendor autoload is permitted here. */
 declare(strict_types=1);
 
+// Plugin config files (e.g. plugin/sandadmin/config/app.php) may call the
+// framework's env() helper; this process has no framework bootstrap, so a
+// faithful minimal polyfill keeps `require config/app.php` readable.
+if (!function_exists('env')) {
+    function env(string $key, $default = null)
+    {
+        $value = getenv($key);
+        if ($value === false) return $default;
+        return match (strtolower(trim($value, '()'))) {
+            'true' => true,
+            'false' => false,
+            'null' => null,
+            'empty' => '',
+            default => $value,
+        };
+    }
+}
+
 final class SandSystemUpdateRuntime
 {
     public const PACKAGES = ['supdger/sand-core' => 'sandadmin', 'supdger/sand-package' => 'sandpackage'];
