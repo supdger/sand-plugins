@@ -2,160 +2,78 @@
 
 declare(strict_types=1);
 
-const SAND_CORE_MANIFEST = '.sand-core-source-manifest.json';
+/**
+ * sand:publish 幂等入口：手工或 `composer run-script sand:publish` 触发。
+ *
+ * 全部发布语义委托 SandAdmin\Core\FrontendPublisher / SandAdmin\Package\FrontendPublisher，
+ * 不再保留第三套实现；重复执行对已一致的目标为 no-op。
+ *
+ * 目标目录：argv[1] 优先；否则读取宿主 composer.json 的
+ * extra.sandadmin.frontend-path（相对该文件所在目录）。
+ */
 
 function fail(string $message): never
 {
-    fwrite(STDERR, $message . PHP_EOL);
+    fwrite(STDERR, '[sandadmin] ' . $message . PHP_EOL);
     exit(1);
 }
 
-function packageVersion(string $package): string
-{
-    if (!class_exists(\Composer\InstalledVersions::class, false)) {
-        $autoload = dirname(__DIR__, 3) . '/autoload.php';
-        if (is_file($autoload)) {
-            require_once $autoload;
-        }
-    }
-
-    return class_exists(\Composer\InstalledVersions::class)
-        ? (\Composer\InstalledVersions::getPrettyVersion($package) ?? 'dev-main')
-        : 'dev-main';
+// —— 加载 autoload：宿主 vendor/ 或包内直接 require ——
+$autoload = dirname(__DIR__, 3) . '/autoload.php';
+if (is_file($autoload)) {
+    require_once $autoload;
 }
-
-function normalizePath(string $path): string
-{
-    $normalized = str_replace('\\', '/', $path);
-    return rtrim($normalized, '/');
-}
-
-/** @return array<string, string> */
-function sourceManifest(string $root): array
-{
-    $files = [];
-    $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS)
-    );
-    foreach ($iterator as $file) {
-        if (!$file->isFile() || $file->isLink()) {
-            continue;
+if (!class_exists(\SandAdmin\Core\FrontendPublisher::class)) {
+    $server = dirname(__DIR__) . '/server';
+    foreach (['PublishExclusions.php', 'FrontendPublisher.php'] as $file) {
+        if (!is_file($server . '/' . $file)) {
+            fail("找不到 Sand Core 前端发布实现：{$server}/{$file}");
         }
-        $relative = ltrim(substr(normalizePath($file->getPathname()), strlen(normalizePath($root))), '/');
-        if (str_starts_with($relative, 'node_modules/')
-            || str_starts_with($relative, 'dist/')
-            || $relative === '.DS_Store'
-            || preg_match('#(^|/)\.(idea|vscode)(/|$)#', $relative)
-        ) {
-            continue;
-        }
-        $files[$relative] = hash_file('sha256', $file->getPathname());
-    }
-    ksort($files);
-    return $files;
-}
-
-/** @return array{version:string,files:array<string,string>}|null */
-function readInstalledManifest(string $target): ?array
-{
-    $path = $target . '/' . SAND_CORE_MANIFEST;
-    if (!is_file($path)) {
-        return null;
-    }
-    $decoded = json_decode((string) file_get_contents($path), true);
-    if (!is_array($decoded) || !is_string($decoded['version'] ?? null) || !is_array($decoded['files'] ?? null)) {
-        fail("目标发布清单无效：{$path}");
-    }
-    return $decoded;
-}
-
-/** @param array<string,string> $files */
-function assertUnmodified(string $target, array $files): void
-{
-    foreach ($files as $relative => $hash) {
-        $path = $target . '/' . $relative;
-        if (!is_file($path) || !hash_equals($hash, hash_file('sha256', $path))) {
-            fail("拒绝覆盖已修改的前端源码：{$relative}");
-        }
+        require_once $server . '/' . $file;
     }
 }
 
-function copyTree(string $source, string $target): void
-{
-    $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS),
-        RecursiveIteratorIterator::SELF_FIRST
-    );
-    foreach ($iterator as $item) {
-        $relative = ltrim(substr(normalizePath($item->getPathname()), strlen(normalizePath($source))), '/');
-        if (str_starts_with($relative, 'node_modules/')
-            || str_starts_with($relative, 'dist/')
-            || $relative === '.DS_Store'
-            || preg_match('#(^|/)\.(idea|vscode)(/|$)#', $relative)
-        ) {
-            continue;
-        }
-        $destination = $target . '/' . $relative;
-        if ($item->isDir()) {
-            if (!is_dir($destination) && !mkdir($destination, 0777, true) && !is_dir($destination)) {
-                fail("无法创建目录：{$destination}");
-            }
-            continue;
-        }
-        $parent = dirname($destination);
-        if (!is_dir($parent) && !mkdir($parent, 0777, true) && !is_dir($parent)) {
-            fail("无法创建目录：{$parent}");
-        }
-        if (!copy($item->getPathname(), $destination)) {
-            fail("无法发布文件：{$relative}");
-        }
+// —— 解析目标目录 ——
+$target = $argv[1] ?? '';
+if ($target === '') {
+    // 宿主内运行时：server 目录 = vendor 的父目录
+    $serverRoot = dirname(__DIR__, 4);
+    $composer = $serverRoot . '/composer.json';
+    $decoded = is_file($composer) ? json_decode((string) file_get_contents($composer), true) : null;
+    $configured = $decoded['extra']['sandadmin']['frontend-path'] ?? null;
+    if (is_string($configured) && $configured !== '') {
+        $target = $serverRoot . '/' . $configured;
+    } elseif (is_dir($serverRoot . '/../sandadmin-artd')) {
+        $target = $serverRoot . '/../sandadmin-artd';
+    }
+}
+if ($target === '') {
+    fail('用法：php tools/publish-frontend.php [目标目录]；未给参数时读取宿主 composer.json extra.sandadmin.frontend-path');
+}
+
+// —— 发布：core 先行，package 存在则跟随；失败不互相连累 ——
+$failed = 0;
+foreach ([\SandAdmin\Core\FrontendPublisher::class, \SandAdmin\Package\FrontendPublisher::class] as $publisher) {
+    if (!class_exists($publisher)) {
+        continue;
+    }
+    try {
+        $report = $publisher::publish($target);
+        fwrite(STDOUT, sprintf(
+            "[sandadmin] %s: %s（target=%s files=%d published=%d removed=%d skipped=%d retained=%d）\n",
+            $publisher,
+            (string) ($report['status'] ?? 'done'),
+            (string) ($report['target'] ?? $target),
+            (int) ($report['files'] ?? 0),
+            (int) ($report['published'] ?? 0),
+            (int) ($report['removed'] ?? 0),
+            count((array) ($report['skipped'] ?? [])),
+            count((array) ($report['retained'] ?? []))
+        ));
+    } catch (\Throwable $e) {
+        $failed = 1;
+        fwrite(STDERR, "[sandadmin] {$publisher} 发布失败：{$e->getMessage()}" . PHP_EOL);
     }
 }
 
-$targetArgument = $argv[1] ?? '';
-if ($targetArgument === '') {
-    fail('用法：php tools/publish-frontend.php <目标目录>');
-}
-
-$source = realpath(__DIR__ . '/../sandadmin-artd');
-if ($source === false || !is_dir($source)) {
-    fail('sandadmin-artd 源码目录不存在');
-}
-
-$target = normalizePath($targetArgument);
-if ($target === '' || $target === '/' || $target === normalizePath(__DIR__ . '/../sandadmin-artd')) {
-    fail('目标目录无效');
-}
-
-if (!is_dir($target) && !mkdir($target, 0777, true) && !is_dir($target)) {
-    fail("无法创建目标目录：{$target}");
-}
-
-$installed = readInstalledManifest($target);
-$entries = array_values(array_diff(scandir($target) ?: [], ['.', '..']));
-if ($installed === null && $entries !== []) {
-    fail('目标目录非空且没有 Sand Core 发布清单，拒绝覆盖');
-}
-if ($installed !== null) {
-    assertUnmodified($target, $installed['files']);
-}
-
-$files = sourceManifest($source);
-copyTree($source, $target);
-$version = packageVersion('supdger/sand-core');
-$manifest = [
-    'schema' => 1,
-    'package' => 'supdger/sand-core',
-    'version' => $version,
-    'files' => $files,
-];
-$manifestPath = $target . '/' . SAND_CORE_MANIFEST;
-if (file_put_contents(
-    $manifestPath,
-    json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL,
-    LOCK_EX
-) === false) {
-    fail("无法写入发布清单：{$manifestPath}");
-}
-
-fwrite(STDOUT, "SandAdmin 前端源码已发布到 {$target}（" . count($files) . " 个文件）" . PHP_EOL);
+exit($failed);

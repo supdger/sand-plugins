@@ -38,12 +38,32 @@
   },
   "archive": {
     "exclude": [
-      "/sandadmin-artd/node_modules",
-      "/sandadmin-artd/dist",
-      "/sandadmin-artd/.env*",
       "/**/.DS_Store",
+      "/**/._*",
+      "/**/.git",
+      "/**/.gitattributes",
+      "/**/.github",
+      "/**/.husky",
       "/**/.idea",
-      "/**/.vscode"
+      "/**/.vscode",
+      "/**/Thumbs.db",
+      "/**/composer.lock",
+      "/**/desktop.ini",
+      "/**/dist",
+      "/**/node_modules",
+      "/**/tests",
+      "/**/vendor",
+      "/sandadmin-artd/.env",
+      "/sandadmin-artd/.env.development",
+      "/sandadmin-artd/.env.production"
     ]
+  },
+  "scripts": {
+    "sand:publish": [
+      "@php tools/publish-frontend.php"
+    ]
+  },
+  "scripts-descriptions": {
+    "sand:publish": "Publish or reconcile the sandadmin-artd frontend payload (idempotent)"
   }
 }

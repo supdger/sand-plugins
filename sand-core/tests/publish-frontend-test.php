@@ -48,14 +48,19 @@ try {
     }
     file_put_contents($modified . '/package.json', "\n", FILE_APPEND);
     [$code, $output] = runPublisher($publisher, $modified);
-    if ($code === 0 || !str_contains($output, '拒绝覆盖已修改的前端源码')) {
-        throw new RuntimeException("未知修改未被拒绝：{$output}");
+    if ($code !== 0 || !str_contains($output, 'skipped=1')
+        || !str_contains((string) file_get_contents($modified . '/package.json'), "\n\n")
+    ) {
+        throw new RuntimeException("已修改文件未被跳过并报告：{$output}");
     }
 
     $installedPackage = $installedRoot . '/vendor/supdger/sand-core';
     mkdir($installedPackage . '/tools', 0777, true);
+    mkdir($installedPackage . '/server', 0777, true);
     mkdir($installedPackage . '/sandadmin-artd', 0777, true);
     copy($publisher, $installedPackage . '/tools/publish-frontend.php');
+    copy($packageRoot . '/server/FrontendPublisher.php', $installedPackage . '/server/FrontendPublisher.php');
+    copy($packageRoot . '/server/PublishExclusions.php', $installedPackage . '/server/PublishExclusions.php');
     file_put_contents($installedPackage . '/sandadmin-artd/package.json', "{}\n");
     mkdir($installedRoot . '/vendor/composer', 0777, true);
     file_put_contents(
