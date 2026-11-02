@@ -1,10 +1,10 @@
 # HOST-202609-001: SandPackage failed-upgrade recovery needs a DB-committed continuation
 
 - Type: `HOST`
-- Status: `local draft / not sent`
+- Status: `sent to SandAdmin task 01a09082-723f-7990-8e41-a3c418800f34; awaiting host receipt/handling (not accepted or fixed)`
 - Scope: neutral SandPackage lifecycle contract. SandIAM is only the frozen demo consumer; this request does not assert a second plugin reproduction.
 - Frozen consumer host: `sandadmin-demo-host`, lock revision `558d92959947230ee562f29e015c62566be58c8e`.
-- Authorization: this evidence did not write a host, database, registry, service, lock file, or deployment. It does not authorize any of those actions, sync, commit, push, or external issue submission.
+- Authorization: this evidence did not write a host, database, registry, service, lock file, or deployment. It does not authorize any of those actions, sync, commit, or push; the request was sent for host receipt/handling only and is not evidence of acceptance or repair.
 
 ## Pre-reproduction fact versus historical artifacts
 

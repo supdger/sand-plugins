@@ -7,6 +7,7 @@ source_root="$repository_root/sand-iam"
 fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/sync-plugin-checksum.XXXXXX")"
 demo_root="$fixture_root/demo-host"
 target_root="$demo_root/plugins/sand-iam"
+fake_bin="$fixture_root/bin"
 
 cleanup() {
   rm -rf -- "$fixture_root"
@@ -30,7 +31,25 @@ descriptor_paths=(
 )
 
 [[ -x "$sync_script" && -d "$source_root" ]] || fail 'sync script or SandIAM source is unavailable'
-mkdir -p "$demo_root/server" "$demo_root/sandadmin-artd" "$target_root"
+mkdir -p "$demo_root/server" "$demo_root/sandadmin-artd" "$target_root" "$fake_bin"
+cat > "$fake_bin/git" <<'EOF'
+#!/bin/zsh
+if [[ "$1" == "--version" ]]; then
+  print 'git version fixture'
+  exit 0
+fi
+if [[ "${FAKE_GIT_STATUS_FAIL:-0}" == "1" ]]; then
+  print -u2 'fixture git status unavailable'
+  exit 69
+fi
+if [[ "$*" == *"status --porcelain"* ]]; then
+  print ' M sand-iam/fixture'
+  exit 0
+fi
+print -u2 "unexpected fixture git command: $*"
+exit 70
+EOF
+chmod 0700 "$fake_bin/git"
 rsync -a --checksum --delete-delay "${export_excludes[@]}" "$source_root/" "$target_root/"
 
 for descriptor_path in "${descriptor_paths[@]}"; do
@@ -53,14 +72,21 @@ for descriptor_path in "${descriptor_paths[@]}"; do
     || fail "legacy size+mtime comparison unexpectedly found $descriptor_path"
 done
 
-checksum_differences="$(SANDADMIN_DEMO_ROOT="$demo_root" "$sync_script" sand-iam --dry-run --allow-dirty)"
+checksum_differences="$(SAND_GIT_BIN="$fake_bin/git" SANDADMIN_DEMO_ROOT="$demo_root" "$sync_script" sand-iam --dry-run --allow-dirty)"
 for descriptor_path in "${descriptor_paths[@]}"; do
   [[ "$checksum_differences" == *"$descriptor_path"* ]] \
     || fail "checksum dry run missed $descriptor_path"
 done
 
+set +e
+git_failure_output="$(SAND_GIT_BIN="$fake_bin/git" FAKE_GIT_STATUS_FAIL=1 SANDADMIN_DEMO_ROOT="$demo_root" "$sync_script" sand-iam --dry-run --allow-dirty 2>&1)"
+git_failure_status=$?
+set -e
+[[ "$git_failure_status" == 6 && "$git_failure_output" == *'Cannot verify sand-iam source state; refusing export'* ]] \
+  || fail "Git status failure did not fail closed: status=$git_failure_status output=$git_failure_output"
+
 rsync -a --checksum --delete-delay "${export_excludes[@]}" "$source_root/" "$target_root/"
 normal_differences="$(rsync -anic --delete-delay --itemize-changes "${export_excludes[@]}" "$source_root/" "$target_root/")"
 [[ -z "$normal_differences" ]] || fail "checksum comparison found differences after fixture reset: $normal_differences"
 
-print 'sync-plugin checksum regression test passed: same-size/same-mtime drift detected; identical tree reports 0 differences.'
+print 'sync-plugin checksum regression test passed: drift detected, Git failure closed, identical tree reports 0 differences.'

@@ -1,0 +1,23 @@
+{
+  "schema": "sandiam.plugin-response-manifest/v1",
+  "generated_at": "2026-09-08T15:13:41Z",
+  "current_status": "HOST_COMPATIBLE / DEMO_SYNC_6_1_4_STATIC_PASS / FORMAL_GATE_A_PASS / RUNTIME_RECOVERY_NOT_AUTHORIZED",
+  "source": {"root": "/Users/code/project/sand_plugins/sand-iam", "repository_revision": "1a6f9ef190abebe89ae2a766dbfe8bbee1a6d14e", "working_tree_dirty": true},
+  "package": {"app": "sand-iam", "version": "0.7.0", "release_state": "candidate/dirty-not-release", "archive_sha256": "931b3c13bafb61e9349f5c80be35722638a3f38cbe2f9a966f0b00f68bc63ded"},
+  "recovery": {"descriptor_schema": "sandpackage.failed-upgrade-recovery/v2", "profile_schema": "sandpackage.failed-upgrade-recovery-profile/v2", "assertion_count": 101, "candidate_payload_sha256": "52e7c769e12693562c2cc6de2fb764ed6ddd156c9865525626e24ef102725f1c", "update_sql_sha256": "aff487972130f1bf0d9b2e20fc6651b9f7738bf6a30a78c8fa642bad6d3f8457"},
+  "verification": {
+    "package_integrity": {"passed": 23, "total": 23},
+    "descriptor_behavior": {"passed": 6, "total": 6},
+    "non_pg_contract_files": {"passed": 93, "total": 93},
+    "current_host_gate_a": {"status": "PASS", "replacement_id": "8ecc5cec83f03f19ea609b220e8f9e9f", "gate_a_rerun_executed_for_614": true, "database_verification_executed": true, "verdict": "retry_safe", "assertions": {"passed": 101, "total": 101, "failed_assertion_ids": []}, "audit_written": false, "evidence_fingerprint": "714894c6e1c285717a1f6fb6a75cc1f81bf5c8ae8edd66a7b806f6784da16ce6", "connection_reusable": true, "replace_executed": false, "retry_executed": false, "evidence": ".artifacts/sandiam-formal-gate-a-20260908.md"}
+  },
+  "host_binding": {
+    "host_revision": "a99af5dea0f22071939a9010a958e90829c675a3",
+    "host_parent_revision": "d29d6f390d89c6cbf3d3e1cb6ee77cde0ade0bde",
+    "host_file_manifest_sha256": "dbdec85c3558592f2af196a689a28fdaa89f9ce56e8e38ecfcf93e6f3de5f34f",
+    "sandpackage_version": "6.1.4",
+    "demo_sync": {"status": "DEMO_SYNC_6_1_4_STATIC_PASS", "evidence": ".artifacts/sandpackage-614-demo-sync-20260908T151341Z", "files_matching": 3, "files_total": 3, "preimage_existing": 3, "preimage_missing": 0, "outside_whitelist_unchanged": true, "static_gate": "lifecycle 10/10; lint 3/3; vue-tsc PASS; critical SHA 5/5", "p2_historical_terminal_runner_flake": "non-reproducible; failure frames absent; non-blocking"},
+    "formal_identity_bound_gate_a": "PASS; existing prepared replacement completed formal read-only Gate A with 101/101 assertions, no failures, no audit write, a non-empty fingerprint, and reusable rollback connection.",
+    "current_status": "HOST_COMPATIBLE / DEMO_SYNC_6_1_4_STATIC_PASS / FORMAL_GATE_A_PASS / RUNTIME_RECOVERY_NOT_AUTHORIZED"
+  }
+}

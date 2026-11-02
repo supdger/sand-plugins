@@ -13,7 +13,7 @@ plugin_id="$1"
 shift
 
 workspace_root="${0:A:h:h}"
-demo_root="${SANDADMIN_DEMO_ROOT:-${workspace_root}/sandadmin-demo-host}"
+demo_root="${SANDADMIN_DEMO_ROOT:-/Users/code/project/sand_demo}"
 apply=false
 allow_dirty=false
 
@@ -41,8 +41,38 @@ lock_root="${workspace_root}/demo-plugin-locks"
   print -u2 "Demo host is incomplete: $demo_root"; exit 2;
 }
 
+git_bin="${SAND_GIT_BIN:-}"
+if [[ -n "$git_bin" ]]; then
+  [[ "$git_bin" == /* && -x "$git_bin" ]] || {
+    print -u2 "SAND_GIT_BIN must be an absolute executable path: $git_bin"
+    exit 6
+  }
+  "$git_bin" --version >/dev/null 2>&1 || {
+    print -u2 "Configured Git executable is unavailable: $git_bin"
+    exit 6
+  }
+else
+  git_bin=''
+  for git_candidate in ${(f)"$(whence -a -p git 2>/dev/null)"}; do
+    [[ "$git_candidate" == /* && -x "$git_candidate" ]] || continue
+    if "$git_candidate" --version >/dev/null 2>&1; then
+      git_bin="$git_candidate"
+      break
+    fi
+  done
+  [[ -n "$git_bin" ]] || {
+    print -u2 "No working Git executable is available; refusing export."
+    exit 6
+  }
+fi
+
 source_state=clean
-if [[ -n "$(git -C "$workspace_root" status --porcelain -- "$plugin_id")" ]]; then
+if ! source_status="$("$git_bin" -C "$workspace_root" status --porcelain -- "$plugin_id" 2>&1)"; then
+  print -u2 "Cannot verify $plugin_id source state; refusing export:"
+  print -u2 "$source_status"
+  exit 6
+fi
+if [[ -n "$source_status" ]]; then
   source_state=dirty-local
   $allow_dirty || {
     print -u2 "$plugin_id source is dirty; commit the plugin candidate, or use --allow-dirty for non-acceptance exploration."
@@ -77,9 +107,13 @@ remaining="$(rsync -ani --checksum --delete-delay --itemize-changes "${export_ex
 }
 
 mkdir -p "$lock_root"
-source_revision="$(git -C "$workspace_root" log -1 --format=%H -- "$plugin_id")"
+if ! source_revision="$("$git_bin" -C "$workspace_root" log -1 --format=%H -- "$plugin_id" 2>&1)"; then
+  print -u2 "Cannot resolve source revision for $plugin_id:"
+  print -u2 "$source_revision"
+  exit 5
+fi
 [[ -n "$source_revision" ]] || { print -u2 "Cannot resolve source revision for $plugin_id"; exit 5; }
-source_ref="$(git -C "$workspace_root" describe --tags --exact-match "$source_revision" 2>/dev/null || print "commit:$source_revision")"
+source_ref="$("$git_bin" -C "$workspace_root" describe --tags --exact-match "$source_revision" 2>/dev/null || print "commit:$source_revision")"
 cat > "$lock_root/${plugin_id}.lock" <<EOF
 format=1
 plugin=$plugin_id
@@ -89,7 +123,7 @@ source_state=$source_state
 export_kind=source-tree
 formal_lifecycle=false
 synced_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-target=sandadmin-demo-host/plugins/$plugin_id
+target=/Users/code/project/sand_demo/plugins/$plugin_id
 EOF
 
 print "$plugin_id export synchronized at $source_revision ($source_state)."

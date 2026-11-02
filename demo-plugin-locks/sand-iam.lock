@@ -6,4 +6,4 @@ source_state=clean
 export_kind=source-tree
 formal_lifecycle=false
 synced_at_utc=2026-09-18T04:58:28Z
-target=sandadmin-demo-host/plugins/sand-iam
+target=/Users/code/project/sand_demo/plugins/sand-iam

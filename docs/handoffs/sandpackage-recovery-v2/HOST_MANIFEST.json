@@ -1,0 +1,28 @@
+{
+  "schema": "sandpackage.host-manifest/v1",
+  "generated_at": "2026-09-08T15:13:41Z",
+  "current_status": "HOST_COMPATIBLE / DEMO_SYNC_6_1_4_STATIC_PASS / FORMAL_GATE_A_PASS / RUNTIME_RECOVERY_NOT_AUTHORIZED",
+  "source": {"root": "/Users/code/project/sandadmin", "revision": "a99af5dea0f22071939a9010a958e90829c675a3", "parent_revision": "d29d6f390d89c6cbf3d3e1cb6ee77cde0ade0bde", "commit_change_set_files": 7, "synced_file_worktree_matches_revision": true},
+  "sandpackage": {"version": "6.1.4", "descriptor_schema": "sandpackage.failed-upgrade-recovery/v2", "profile_schema": "sandpackage.failed-upgrade-recovery-profile/v2"},
+  "file_manifest": {
+    "algorithm": "sha256 of C-sorted conventional sha256(two spaces)relative-path LF lines/v1",
+    "count": 3,
+    "digest": "dbdec85c3558592f2af196a689a28fdaa89f9ce56e8e38ecfcf93e6f3de5f34f",
+    "files": {
+      "server/plugin/sandpackage/app/logic/InstallLogic.php": "57d833d07a54ae29c4b9010629aa1f930cb42a4d7083289b56d6b91449d5970c",
+      "server/plugin/sandpackage/app/service/PostgresLifecycleSqlExecutor.php": "c02a8b039dc9246ac2d38b25e535631d5889a3f9b175ef14f702e4f6dfd5343a",
+      "server/plugin/sandpackage/config/app.php": "5271276a32111a6fca756a94ca1d78575626989ca7bac39e077b461362e22bd1"
+    },
+    "classification": {"production_runtime_increment": 3}
+  },
+  "verification": {
+    "source_commit_change_set": {"passed": 7, "total": 7},
+    "demo_614_production_delta": {"status": "DEMO_SYNC_6_1_4_STATIC_PASS", "passed": 3, "total": 3, "preimage_existing": 3, "preimage_missing": 0, "outside_whitelist_unchanged": true, "evidence": ".artifacts/sandpackage-614-demo-sync-20260908T151341Z", "static_gate": {"lifecycle": "10/10 PASS", "lint": "3/3 PASS", "vue_tsc": "PASS", "critical_sha": "5/5 PASS"}, "p2_historical_terminal_runner_flake": "one non-reproducible aggregate failure; harness did not retain frames; non-blocking"},
+    "php_lint": {"passed": 3, "total": 3},
+    "psr4_class_load": "PASS",
+    "demo_lifecycle_non_db_contract": {"status": "PASS", "passed": 10, "total": 10, "database_access": false},
+    "source_614_contract": {"status": "PASS", "all_sandpackage_contract_tests": {"passed": 7, "total": 7}, "neutral_payload": {"passed": 38, "total": 38}, "recovery_subphases": {"passed": 17, "total": 17}, "lifecycle": {"passed": 4, "total": 4}, "database_access": false},
+    "identity_bound_gate_a": {"status": "PASS", "replacement_id": "8ecc5cec83f03f19ea609b220e8f9e9f", "gate_a_rerun_executed_for_614": true, "database_verification_executed": true, "verdict": "retry_safe", "assertions": {"passed": 101, "total": 101, "failed_assertion_ids": []}, "audit_written": false, "evidence_fingerprint": "714894c6e1c285717a1f6fb6a75cc1f81bf5c8ae8edd66a7b806f6784da16ce6", "connection_reusable": true, "transaction": "BEGIN READ ONLY; SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY; ROLLBACK", "replace_executed": false, "retry_executed": false, "evidence": ".artifacts/sandiam-formal-gate-a-20260908.md"}
+  },
+  "limits": ["This proves exact three-file synchronization and formal read-only Gate A only.", "Formal Gate A is PASS; replacement and retry remain separately forbidden and unexecuted.", "No database write, active registry mutation, runtime recovery, service, browser, replace, retry, or SandIAM candidate-payload change was made."]
+}
