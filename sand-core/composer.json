@@ -47,15 +47,20 @@
       "/**/.idea",
       "/**/.vscode",
       "/**/Thumbs.db",
+      "/**/commitlint.config.cjs",
       "/**/composer.lock",
       "/**/desktop.ini",
       "/**/dist",
+      "/**/lint-staged.config.cjs",
+      "/**/lint-staged.config.js",
+      "/**/lint-staged.config.mjs",
       "/**/node_modules",
       "/**/tests",
       "/**/vendor",
       "/sandadmin-artd/.env",
       "/sandadmin-artd/.env.development",
-      "/sandadmin-artd/.env.production"
+      "/sandadmin-artd/.env.production",
+      "/sandadmin-artd/scripts/clean-dev.ts"
     ]
   },
   "scripts": {
