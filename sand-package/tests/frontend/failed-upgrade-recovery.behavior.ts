@@ -28,7 +28,7 @@ import {
   type FailedUpgradeRecoveryPhase,
   type FailedUpgradeRecoverySession,
   type SandpackageInstallRow
-} from './failed-upgrade-recovery'
+} from '../../sandadmin-artd/src/views/plugin/sandpackage/install/failed-upgrade-recovery'
 import {
   cleanupHttpCounts,
   configureCleanupSubmitFailureOnce,
