@@ -36,7 +36,29 @@ if [[ -f "$hook.before-sand-checks" ]]; then
   "$hook.before-sand-checks" "$@"
 fi
 /usr/bin/python3 "$root/scripts/check-staged-plugin-support.py"
+"$root/scripts/check-nested-git.sh"
+
 /usr/bin/python3 /Users/supdger/.codex/tools/scan_change_quality.py "$root" --repository-review check
 HOOK
 chmod 755 "$hook"
 echo "Repository pre-commit checks installed; preserved hook: $saved (if previously present)."
+
+prepush="$(git rev-parse --git-path hooks/pre-push)"
+case "$prepush" in /*) ;; *) prepush="$PWD/$prepush";; esac
+if [[ ! -e "$prepush" ]]; then
+cat >"$prepush" <<'PUSH'
+#!/bin/bash
+# sand-plugin-pre-push-v1
+branch="$(git rev-parse --abbrev-ref HEAD)"
+case "$branch" in
+  main|master)
+    echo "pre-push: refusing to push protected branch '$branch' without explicit ALLOW_PROTECTED_PUSH=1" >&2
+    exit 1 ;;
+  feat/*|fix/*|chore/*|docs/*|refactor/*|test/*|codex/*|hotfix/*) ;;
+  *) echo "pre-push: branch '$branch' does not match conventional prefixes" >&2 ;;
+esac
+echo "pre-push: pushing branch '$branch'" >&2
+exit 0
+PUSH
+chmod +x "$prepush"
+fi

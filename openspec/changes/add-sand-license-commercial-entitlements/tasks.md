@@ -173,7 +173,7 @@
 
 - [x] 8.1 核已验候选与当前公共provider基线，独立仓actual index审查/pre-commit和独立Release gate，feature PR正常合并，从clean committed revision构包并发布v0.1.1，匿名TLS重新下载和字节/摘要核验。
 - [x] 8.2 新公共SandAdmin基线只追加License0.1.1目录版本，保留旧版及其他条目/锁；actual index审查/hook和独立gate，正常PR合并并fresh公开目录/Release及真实RepositoryLogic推荐检查。
-- [ ] 8.3 Windows执行者固定原测试宿主版本和现有数据库，按标准流程消费公开0.1.1升级/菜单迁移/必要重载；验证实际安装版本、九菜单、角色/API和页面，不建库。
+- [ ] `[device-gate]` 8.3 Windows执行者固定原测试宿主版本和现有数据库，按标准流程消费公开0.1.1升级/菜单迁移/必要重载；验证实际安装版本、九菜单、角色/API和页面，不建库。
 
 ### 0.1.1 Provider 发布链当前事实
 

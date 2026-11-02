@@ -5,13 +5,13 @@
 
 ## 2. 消费端集成
 
-- [ ] 2.1 修订 sand_ai 的 unify-sandai-product 6.1 为 SandAI 消费既有 Workflow 公共能力，核对规格与权威交付源码一致。
-- [ ] 2.2 实现并验证消费端明确请求 start/detail、可信 context 与不自动触发业务动作的边界；另按 6.1 验证流程调用已发布 AI 服务、原幂等键恢复、当前授权读取和来源费用追溯，未验证不得以 start/detail 适配存在代替完整集成。
+- [ ] `[impl]` 2.1 修订 sand_ai 的 unify-sandai-product 6.1 为 SandAI 消费既有 Workflow 公共能力，核对规格与权威交付源码一致。
+- [ ] `[auth-gate]` 2.2 实现并验证消费端明确请求 start/detail、可信 context 与不自动触发业务动作的边界；另按 6.1 验证流程调用已发布 AI 服务、原幂等键恢复、当前授权读取和来源费用追溯，未验证不得以 start/detail 适配存在代替完整集成。
 
 ## 3. 规则与验收
 
 - [x] 3.1 在隔离候选准备 sand_plugins 规则及 SandAdmin 入口，验证正常消费、通用性、必要性、证据缺失及回滚例外边界，经独立审查后精确应用并比对。
-- [ ] 3.2 对恢复与消费端结果做独立验收，记录源码检查与真实宿主验证的区别，未验证项不得勾选为完成；运行 OpenSpec strict validation。
+- [ ] `[device-gate]` 3.2 对恢复与消费端结果做独立验收，记录源码检查与真实宿主验证的区别，未验证项不得勾选为完成；运行 OpenSpec strict validation。
 
 ## 验证范围（2026-09-28）
 

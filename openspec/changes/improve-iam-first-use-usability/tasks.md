@@ -80,14 +80,14 @@
 - [x] 5.3 零插件 Worker 初始→SIGUSR1→新 Worker 的 disable/prefer/require 三组通过；disable 只 connect/disconnect 2/2，无 SQL，其余只核对值。
 - [x] 5.4 appender 的私密备份、拒绝裸/quoted/export 显式值、重复拒绝和不输出凭据 fixture 通过；不自行应用实际宿主。
 - [x] 5.5 不同上下文 Astra 复核通过：配置边界、真实重载证据、quoted key 必修后 appender 与私密备份通过，Wiki 已收窄为重载配置回归。新目标发布权限与真实宿主配置批准仍由主控管理，不在本子任务执行。
-- [ ] 5.6 获授权后完成真实持久配置、原账号登录与升级/完整启动后登录验收；连接和源码结果不能替代。
+- [ ] `[device-gate]` 5.6 获授权后完成真实持久配置、原账号登录与升级/完整启动后登录验收；连接和源码结果不能替代。
 
 ## 6. SandAI 既有 schema 接入声明跟进（SandIAM #5）
 
 - [x] 6.1 将根 existing-schema 声明绑定当前 0.7.6 SQL 与已发布073的43条账本；保留 embedded073 的42条基线供核对，不修改生命周期SQL。
 - [x] 6.2 将声明纳入统一payload政策，添加版本/SQL/账本/结构正反例与打包入口检查。
 - [x] 6.3 在现有sandai数据库只读事务中确认身份及42条账本、86表和旧指纹匹配；记录它尚不满足076接入，不执行bridge或升级。
-- [ ] 6.4 正式SandPackage/宿主接入基线可用后，备份并受控接入已冻结embedded073工件，明确授权执行现有bridge，再核对43条账本并升级076；本轮未执行。
+- [ ] `[auth-gate]` 6.4 正式SandPackage/宿主接入基线可用后，备份并受控接入已冻结embedded073工件，明确授权执行现有bridge，再核对43条账本并升级076；本轮未执行。
 
 定向契约7/7及payload hygiene16/16通过；完整旧checker的5项预存失败已用修改前快照复跑确认（21/26→本轮新增通过后22/27），不作为正式发行通过。候选仍为dirty工作树审查快照，不提交、推送或改变公开preview工件。
 
@@ -99,7 +99,7 @@ Current076 lifecycle generation now exactly matches all3 frozen SQL files; legac
 
 - [x] 7.1 固定公开 Core 与宿主本地补丁差异，以真实路由链中立复现并经独立 Astra 提供方通用性审查通过，详见 design。
 - [x] 7.2 独立 Core 候选落实两文件修复，补真实注册链回归、类型检查、独立验收与物理 Windows 同代码回归。
-- [ ] 7.3 获明确授权后提交/合并 Core、发布及备份后宿主消费更新，核对清单与浏览器原入口；不把离线通过当真实插件安装通过。
+- [ ] `[auth-gate]` 7.3 获明确授权后提交/合并 Core、发布及备份后宿主消费更新，核对清单与浏览器原入口；不把离线通过当真实插件安装通过。
 
 7.2 证据（2026-10-03）：独立 Core 候选 `/private/tmp/sand-core-root-recovery-20261003` 基于公开 main e903c1b；macOS 和物理 Windows Node 20.14.0 均 7/7，未参与实现的 Astra 固定候选复验 7/7。完整 vue-tsc --noEmit 在复用同依赖生成声明后通过，差异检查和 OpenSpec strict 通过；未宣称 Vite 构建通过。四文件固定摘要与 patch 在 `/private/tmp/sand-root-route-diagnostic-20261003/`。Windows 是源码/memoryHistory 验证，不是 HTTP/浏览器/插件安装。Core 尚未提交、发布、同步宿主，7.3 保持未完成。
 
@@ -110,7 +110,7 @@ Current076 lifecycle generation now exactly matches all3 frozen SQL files; legac
 - [x] 8.1 按已知授权与可见应用缩小范围；六目标拆分，复用对象和第二目标。
 - [x] 8.2 当前步骤说明输入来源、责任方、结果、恢复和下一步；跨页恢复，无权不可操作。
 - [x] 8.3 helpers、适用类型与构建通过；固定候选提供隔离浏览器入口。
-- [ ] 8.4 独立冷读浏览器验收及缺陷复验，记录真实业务与宿主未验范围。
+- [ ] `[device-gate]` 8.4 独立冷读浏览器验收及缺陷复验，记录真实业务与宿主未验范围。
 
 7.3 发布与消费进展（2026-10-03，用户已明确确认本轮完整范围）：Core 源码 ae7c66f 经 PR https://github.com/supdger/sand-core/pull/8 正常合并，公开 main 与 tag 0.1.9 均指向 b2353810d8c634c9c47f2636f8719f68ea17c02f；正式 Release https://github.com/supdger/sand-core/releases/tag/0.1.9 与 Packagist 版本/ref 已回读一致。ttt 宿主备份于 `/private/tmp/sand-core-host-backup-20261003-0.1.9`，Composer 精确只更新 Core 0.1.7→0.1.9；lock、installed、前端清单一致，399 个前端文件和 Core 后端对 vendor 校验通过，IAM/Package/环境保持摘要不变。无 SQL、无服务重启。主控在原已登录页面验证 `/#/` 到工作台、刷新和 IAM 管理总览，warn/error 为空；截图及更新日志在 `/private/tmp/sand-root-route-diagnostic-20261003/`。实际退出重登等待用户完成，真实 IAM 重新安装未执行，7.3 暂不勾选。已清理本任务 Composer 缓存及候选依赖链接目录；保留源码、构建产物、证据和私密回滚备份。
 

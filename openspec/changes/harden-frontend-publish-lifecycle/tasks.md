@@ -28,24 +28,24 @@
 
 - [x] 4.1 sand-core 提供幂等 `sand:publish` CLI 入口（重复执行 no-op），可被 `composer run-script` 调用。（已做：幂等入口 tools/publish-frontend.php+sand-core composer.json scripts.sand:publish（no-op 已验证））
 - [x] 4.2 宿主 `sandadmin/server/composer.json`：`scripts` 增加 `sand:publish` 并挂 `post-install-cmd`/`post-update-cmd`；`extra.sandadmin.frontend-path` 显式声明 `../sandadmin-artd`。（已做：宿主 server/composer.json extra.sandadmin.frontend-path+sand:publish+post-install/update 挂点（宿主仓改动待提交））
-- [ ] 4.3 宿主 `composer.lock` 升至新 sand-core/sand-package 版本，回归 fresh clone 全路径（install → `/core/install` 200）。
+- [ ] `[impl]` 4.3 宿主 `composer.lock` 升至新 sand-core/sand-package 版本，回归 fresh clone 全路径（install → `/core/install` 200）。
 
 ## 5. 发布面收敛与载荷瘦身
 
 - [x] 5.1 `PublishExclusions` 单一规则源；写一致性断言（publisher / `SandSystemUpdateReleaseTools` / `.gitattributes` / `archive.exclude` 四口径比对，不一致即失败）。（已实现：PublishExclusions 单一源+assert-publish-exclusions 四口径断言 consistent）
-- [ ] 5.2 sand-core 载荷剥离：`.husky/`、`commitlint.config.cjs`、lint-staged、`"prepare": "husky"`、`"commit": "git-cz"`、`.vscode/`、`scripts/clean-dev.ts`、空 `src/mock/`、死 `fastEnter` 配置与 `artd.pro` 外链（`links.ts` 换 SandAdmin 自有地址）。
-- [ ] 5.3 sand-package：`failed-upgrade-recovery.*` 10 个夹具移出 `sandadmin-artd/`（入包根 `tests/`）；core `tsconfig.json` 删跨包夹具引用。
+- [ ] `[impl]` 5.2 sand-core 载荷剥离：`.husky/`、`commitlint.config.cjs`、lint-staged、`"prepare": "husky"`、`"commit": "git-cz"`、`.vscode/`、`scripts/clean-dev.ts`、空 `src/mock/`、死 `fastEnter` 配置与 `artd.pro` 外链（`links.ts` 换 SandAdmin 自有地址）。
+- [ ] `[impl]` 5.3 sand-package：`failed-upgrade-recovery.*` 10 个夹具移出 `sandadmin-artd/`（入包根 `tests/`）；core `tsconfig.json` 删跨包夹具引用。
 - [x] 5.4 `.env.example` 的 `VITE_LOCK_ENCRYPT_KEY = change-me` 改为发布/安装时随机生成；`VITE_VERSION` 从包版本注入。（已实现：environmentLine VITE_LOCK_ENCRYPT_KEY 随机生成+VITE_VERSION 包版本注入）
-- [ ] 5.5 宿主仓清理残留：`sandadmin-artd/` 内不受清单管理的 10 个夹具文件删除（宿主侧单独提交）。
+- [ ] `[impl]` 5.5 宿主仓清理残留：`sandadmin-artd/` 内不受清单管理的 10 个夹具文件删除（宿主侧单独提交）。
 
 ## 6. 门禁与回归
 
-- [ ] 6.1 `tools/assert-frontend-parity.php`：包载荷 ↔ 宿主仓前端清单比对（sand-package 覆盖层白名单），接 pre-commit 与 release 步骤 0。
-- [ ] 6.2 publisher 测试补齐：非空无清单收养/拒绝、中断重入（pending）、跨版本增删、前端失败不阻塞后端、`extra` 目标路径与越界拒绝、`SAND_FRONTEND_PUBLISH` 两档。
-- [ ] 6.3 验收矩阵：干净 clone 安装、已提交前端 clone 安装、消费者改文件后 update、钩子失败后重跑 install、卸载保留未知文件，逐项留证据。
+- [ ] `[impl]` 6.1 `tools/assert-frontend-parity.php`：包载荷 ↔ 宿主仓前端清单比对（sand-package 覆盖层白名单），接 pre-commit 与 release 步骤 0。
+- [ ] `[impl]` 6.2 publisher 测试补齐：非空无清单收养/拒绝、中断重入（pending）、跨版本增删、前端失败不阻塞后端、`extra` 目标路径与越界拒绝、`SAND_FRONTEND_PUBLISH` 两档。
+- [ ] `[impl]` 6.3 验收矩阵：干净 clone 安装、已提交前端 clone 安装、消费者改文件后 update、钩子失败后重跑 install、卸载保留未知文件，逐项留证据。
 
 ## 7. 发版与交付
 
-- [ ] 7.1 sand-core、sand-package CHANGELOG + 次版本发版（注意先发 core 再发 package）。
-- [ ] 7.2 宿主仓升 lock + `docs/getting-started.md` 增补"钩子失败后 `composer run-script sand:publish` 恢复"与 `SAND_FRONTEND_PUBLISH` 说明。
-- [ ] 7.3 `test/sandadmin` 隔离宿主按新版 lock 重验一次（复用现有验证脚本）。
+- [ ] `[auth-gate]` 7.1 sand-core、sand-package CHANGELOG + 次版本发版（注意先发 core 再发 package）。
+- [ ] `[impl]` 7.2 宿主仓升 lock + `docs/getting-started.md` 增补"钩子失败后 `composer run-script sand:publish` 恢复"与 `SAND_FRONTEND_PUBLISH` 说明。
+- [ ] `[device-gate]` 7.3 `test/sandadmin` 隔离宿主按新版 lock 重验一次（复用现有验证脚本）。

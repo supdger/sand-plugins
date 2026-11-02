@@ -17,11 +17,11 @@
 ## 4. 实机集合范围审计修复
 
 - [x] 4.1 复现同请求集合 scope 审计唯一键冲突，保留原请求/动作，以不可变事件键区分不同可信检查并保证同事件重试幂等；通过生产调用链最小非PG回归
-- [ ] 4.2 完成 event_key 迁移、生命周期、结构指纹与升级契约同步，并通过对应静态回归
-- [ ] 4.3 独立审查后重建候选，真实标准宿主安装/升级并验证合法集合、部分越权403、重复幂等、原请求审计与实时停用
+- [x] 4.2 完成 event_key 迁移、生命周期、结构指纹与升级契约同步，并通过对应静态回归（迁移043根/包一致、install/update SQL 与 existing-schema.json 指纹匹配、scope_audit_event/upgrade_082_build/existing_schema_declaration 非PG回归全过）
+- [ ] `[device-gate]` 4.3 独立审查后重建候选，真实标准宿主安装/升级并验证合法集合、部分越权403、重复幂等、原请求审计与实时停用
 
 ## 5. 关联实机验收缺陷：SAML HTTP ACS 环境适配
 
 - [x] 5.1 核对可信配置→联合身份事务 ACS 来源及 OneLogin 官方 URL 能力，在官方同步校验作用域提供精确 ACS URL 环境并逐键恢复；保持签名、Recipient、Destination、Audience、时效和服务端 replay 边界
 - [x] 5.2 真实 OneLogin 双签名非PG回归覆盖缺失 CGI、恶意转发头、多租户/端口/path、严格负例、异常恢复、既存 Utils 静态冲突和 Fiber 无挂起
-- [ ] 5.3 Astra 独立安全审查通过后，在新版安装候选进行真实 TLS HTTP ACS 成功、拒绝和 replay 复测
+- [ ] `[device-gate]` 5.3 Astra 独立安全审查通过后，在新版安装候选进行真实 TLS HTTP ACS 成功、拒绝和 replay 复测
