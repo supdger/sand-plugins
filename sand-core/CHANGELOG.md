@@ -1,6 +1,6 @@
 # 更新记录
 
-## Unreleased
+## 0.2.5（2026-10-31）
 
 - 管理端白屏兜底：新增纯 HTML 静态错误边界（App.vue/main.ts/index.html 三层），渲染失败呈现可诊断错误页（重试/重载/重置本地状态）而非白屏；布局组件静态 import + 全局注册（`layout-components.ts`），目录被宿主升级/恢复 rename 交换后不再依赖 unplugin 内存映射；加载遮罩 20 秒看门狗；chunk 加载与 `vite:preloadError` 提供一键重载；`routeInitFailed` 可经"重试"清除、异常页按钮先重置初始化状态；动态路由兜底重定向可见化；持久化状态迁移做形状/版本校验、腐坏检测接入真实登录态；关键 env 缺失启动即报错；`ArtPageContent` 刷新/过渡闩锁以 finally/看门狗释放；`.gitignore` 与 sand-package 恢复指纹生成物清单注明同步维护。配套 SandPackage 变更见 `openspec/changes/archive/2026-10-31-harden-system-update-recovery/`。
 

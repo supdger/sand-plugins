@@ -5,9 +5,13 @@ SandAdmin 的 Composer 核心包，包含：
 - `server/plugin/sandadmin/`：Webman 后台核心后端源码；
 - `sandadmin-artd/`：与后端同版本的管理端前端源码。
 
+## 源码与安装
+
+本仓提供 SandAdmin 核心后端及匹配的管理端源码。已有宿主通过 Composer 安装本包；[开发源码](https://github.com/supdger/sand-core/tree/main)与 GitHub 的 Source code 压缩包供开发使用，不是 SandPackage 业务插件安装包。
+
 ## 版本更新
 
-[版本更新与升级影响（Wiki）](https://github.com/supdger/sandadmin/wiki/plugin-updates)按组件说明功能变化、修复和升级注意事项；[完整更新日志](CHANGELOG.md)保留历史记录。公开发行与下载见 [GitHub Releases](https://github.com/supdger/sand-core/releases)。
+[版本更新与升级影响（Wiki）](https://github.com/supdger/sandadmin/wiki/plugin-updates)按组件说明功能变化、修复和升级注意事项；[完整更新日志](CHANGELOG.md)保留历史记录。下载见 [最新稳定版](https://github.com/supdger/sand-core/releases/latest)；预发布及全部版本见 [公开发行](https://github.com/supdger/sand-core/releases)。
 
 ## 安装前提
 
@@ -18,34 +22,32 @@ SandAdmin 的 Composer 核心包，包含：
 安装后端：
 
 ```bash
-composer config repositories.sand-core vcs https://github.com/supdger/sand-core
 composer require supdger/sand-core:^0.2.4
 ```
 
-公开 0.2.4 安装或更新时，Webman 的 Composer 插件钩子会将匹配版本的前端源码自动发布到宿主同级的 `sandadmin-artd/` 目录，不需要额外执行工具脚本，并拒绝覆盖未知修改。前端依赖安装、构建和部署仍需单独完成。
+Composer 安装或更新时，Webman 插件安装钩子会将匹配版本的前端源码自动发布到
+宿主的 `sandadmin-artd/`。它不会安装 Node.js 依赖或执行编译，也不会静默覆盖未知修改。
 
 发布成功后，宿主应有 `server/plugin/sandadmin/`，前端目录应有 `.sand-core-source-manifest.json`。这只确认源码发布，不代表数据库初始化或登录通过。
 
-升级至 0.2.4 后，确认已发布匹配的管理端源码，再重新构建并使用更新后的管理端。该版本修复插件安装后页面恢复但全屏加载遮罩不退出的问题，保留初始化暂态恢复；配套 SandPackage 0.2.4 可获得仓库读取的暂态恢复；只更新后端不会更新已部署的前端构建。
+任何版本升级后，先确认 Composer 钩子已发布匹配的管理端源码，再重新构建并使用更新后的管理端；只更新后端不会更新已部署的前端构建。各版本的具体修复见 [CHANGELOG](CHANGELOG.md)。
 
-运行管理端还需要 Node.js 和 pnpm：前端声明下限为 Node.js 20.19.0、pnpm 8.8.0；当前 v9 锁文件应使用 pnpm 9，推荐按上述指南使用 Node.js 22（≥22.12.0）和 pnpm 9.15.9。环境文件、依赖安装、服务启动及首次登录步骤沿用该指南，以前端启动地址、登录后菜单和用户信息正常加载作为运行结果。
+### 管理端运行环境
 
-## 接入已存在的 PostgreSQL SandAdmin 数据库
+运行管理端推荐已验证的 Node.js 22（≥22.12.0）和 pnpm 11.19.0；`packageManager` 固定为 `pnpm@11.19.0`，pnpm 工具链下限对齐已验证版本，Node.js 保留原有 `>=20.19.0` 声明。Windows 已验证的安装与启动组合为 Node.js 22.23.3、pnpm 11.19.0；pnpm 9.15.9 对当前工作区配置报错，请使用固定工具链。环境文件、依赖安装、服务启动及首次登录步骤沿用上述指南，以前端启动地址、登录后菜单和用户信息正常加载作为运行结果。
 
-只在**尚无 `server/.env`** 的宿主中，从宿主 `server/` 执行随包的独立 CLI。CLI 根据自身所在的 `server/plugin/sandadmin/tools/` 布局确定宿主绝对路径，不接受指定其他宿主路径的参数；隔离预检可使用独立的同构目录，至少包含 `server/config/database.php`、`server/config/think-orm.php`、`server/runtime/`、`server/plugin/sandadmin/db/sandadmin-6.0.pgsql` 和 `server/plugin/sandadmin/tools/attach-existing.php`。指定实际的 `--host`、`--port`、`--database`、`--user`；不提供默认数据库，也不从当前宿主配置猜测目标。当前 SandAI 测试宿主只能显式指定现有的 `sandai` 库。密码通过 `SAND_ATTACH_DB_PASSWORD` 环境变量提供，不写入参数或日志。
+### 安装页的静态资源检查
 
-1. `preflight` 用只读事务检查本机配置、22 张核心表及列/主键/identity、ORM 辅助对象与权限、管理员与权限菜单，输出 SHA-256 指纹；此阶段不创建 `.env`。
-2. 确认目标和指纹后，在同一宿主路径使用相同连接参数运行 `confirm`，并额外指定 `--fingerprint=<预检指纹> --confirm=ATTACH`。确认阶段在安装锁内重新检查；指纹变化则拒绝。成功时只原子创建 `server/.env`，不执行初始化 SQL、迁移、菜单写入、密码重置或服务重载。预检指纹不保证外部 DDL 在预检后保持不变；确认重检之后的数据库变更仍需另行协调。
+数据库安装完成后，安装页先检查管理端专属静态资源；未启动时保留完成页并提供前端启动命令，启动后点击“重新检查”，通过后再进入登录。开发端口被占用会明确报错，不再自动换到其他端口。重新访问 `/core/install` 可继续检查和恢复，不重复显示初始密码或初始化数据库。检查只证明静态资源响应，实际登录仍需正常完成；旧构建缺少标记文件时，请发布并重新构建匹配的前端源码。
 
-命令格式：
+### 前端地址与独立域名部署
 
-```text
-php plugin/sandadmin/tools/attach-existing.php preflight --host=HOST --port=PORT --database=DB --user=USER
-php plugin/sandadmin/tools/attach-existing.php confirm --host=HOST --port=PORT --database=DB --user=USER --fingerprint=SHA256 --confirm=ATTACH
-```
+独立域名或子路径部署可在服务端环境配置 `SANDADMIN_FRONTEND_URL`（如 `https://admin.example.com/` 或 `/admin/`），并让后端进程重新加载环境；该地址优先于开发端口。未配置时使用当前访问主机及前端环境文件的 `VITE_PORT`、`VITE_BASE_URL`。安装页支持临时更正地址。HTTPS、浏览器网络策略或站点 `img-src` 策略阻止检查时，不会宣称后台已可用；可核对部署后重试，或主动使用明确标记的手工核验入口，保持现有安全策略。
 
-为避免密码进入 shell 历史，可在当前终端使用 `read -rs SAND_ATTACH_DB_PASSWORD` 后 `export SAND_ATTACH_DB_PASSWORD`；结束后 `unset SAND_ATTACH_DB_PASSWORD`。该 CLI 不代替新库安装；现有 Web 安装入口仍拒绝已存在的核心表。CLI 结构兼容检查不等于真实登录或业务验收。
+## 配套的 SandPackage
 
-若本机现有数据库角色确实使用空密码，须显式导出空值 `export SAND_ATTACH_DB_PASSWORD=''`，并在**预检和确认两次命令**都加 `--allow-empty-password=local`。此模式只接受字面 `127.0.0.1` 或 `::1`，还会核对 PostgreSQL 报告的客户端和服务端地址均为回环地址；Unix 环境下把 libpq 密码文件设为 `/dev/null`，且拒绝已有的 `PGPASSWORD`、`PGPASSFILE`、`PGSERVICE`、`PGSERVICEFILE` 和连接目标覆盖变量。连接认证失败时不会读取 `~/.pgpass` 或切换其他凭据；无法禁用密码文件的平台会拒绝此模式。成功写入的 `.env` 中密码为 `DB_PASSWORD = ''`。
+后台「系统更新」和插件安装器由 [SandPackage](https://github.com/supdger/sand-package) 提供：0.2.0 起提供后台系统更新，0.2.4 起提供仓库读取的暂态恢复。两个包按版本配套发行，应同时升级；具体的配套版本要求以各自 CHANGELOG 中对应版本的说明为准。更新契约与发行提交绑定，实际支持范围见对应版本说明。
 
-后台核心更新由配套的 [SandPackage 0.2.1](https://github.com/supdger/sand-package) 提供，初次启用按其配置示例准备执行环境。0.2.0 不变更数据库结构或宿主骨架；更新契约与发行提交绑定，实际支持范围见对应版本说明。
+## 许可与反馈
+
+本包以 [MIT License](LICENSE) 发行。问题与建议请提交到 [Issues](https://github.com/supdger/sand-core/issues)。

@@ -41,17 +41,77 @@ class InstallController extends OpenController
         $env = base_path() . DIRECTORY_SEPARATOR . '.env';
 
         clearstatcache();
-        if (is_file($env)) {
-            $data['error'] = '程序已经安装';
-            return view('install/error', $data);
-        }
+        $data['installed'] = is_file($env);
 
-        if (!is_writable(base_path() . DIRECTORY_SEPARATOR . 'config')) {
+        if (!$data['installed'] && !is_writable(base_path() . DIRECTORY_SEPARATOR . 'config')) {
             $data['error'] = '权限认证失败';
             return view('install/error', $data);
         }
 
-        return view('install/index', $data);
+        return view('install/index', array_merge($data, $this->frontendEntrySettings()));
+    }
+
+    /**
+     * Read the same development env precedence as Vite. Public deployments may
+     * select their own browser-facing URL; no server-side connection is made.
+     */
+    protected function frontendEntrySettings(): array
+    {
+        $frontendRoot = \SandAdmin\Core\Install::frontendTarget();
+        $configuredUrl = (string) config('plugin.sandadmin.app.frontend_url', '');
+        $data = [
+            'frontendPort' => 3006,
+            'frontendBase' => '/',
+            'frontendUrl' => '',
+            'frontendConfigured' => $configuredUrl !== '',
+            'frontendError' => '',
+        ];
+        if ($configuredUrl !== '') {
+            if ($this->validFrontendUrl($configuredUrl)) {
+                $data['frontendUrl'] = $configuredUrl;
+            } else {
+                // Never render the rejected value: it may contain a password.
+                $data['frontendError'] = 'SANDADMIN_FRONTEND_URL 配置无效。请填写不含用户名、密码或控制字符的 HTTP(S) 地址或同源路径。';
+            }
+        }
+        foreach (['.env', '.env.local', '.env.development', '.env.development.local'] as $name) {
+            $frontendEnv = $frontendRoot . DIRECTORY_SEPARATOR . $name;
+            if (is_file($frontendEnv)) {
+                foreach (file($frontendEnv, FILE_IGNORE_NEW_LINES) ?: [] as $line) {
+                    if (preg_match("/^\s*VITE_PORT\s*=\s*(?:\"(\d+)\"|'(\d+)'|(\d+))\s*(?:#.*)?$/", $line, $match)) {
+                        $port = (int) (($match[1] ?? '') ?: (($match[2] ?? '') ?: ($match[3] ?? '')));
+                        if ($port >= 1 && $port <= 65535) {
+                            $data['frontendPort'] = $port;
+                        }
+                    }
+                    if (preg_match('/^\s*VITE_BASE_URL\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s#]+))\s*(?:#.*)?$/', $line, $match)) {
+                        $base = ($match[1] ?? '') ?: (($match[2] ?? '') ?: ($match[3] ?? ''));
+                        if (str_starts_with($base, '/') && !str_starts_with($base, '//')) {
+                            $data['frontendBase'] = $base;
+                        }
+                    }
+                }
+            }
+        }
+
+        return $data;
+    }
+
+    protected function validFrontendUrl(string $url): bool
+    {
+        if (preg_match('/[\x00-\x20\\\\]/', $url)) {
+            return false;
+        }
+        $parts = parse_url($url);
+        if ($parts === false || array_key_exists('user', $parts) || array_key_exists('pass', $parts)) {
+            return false;
+        }
+        if (str_starts_with($url, '/') && !str_starts_with($url, '//')) {
+            return !isset($parts['scheme']) && !isset($parts['host']);
+        }
+        return in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true)
+            && ($parts['host'] ?? '') !== ''
+            && (!isset($parts['port']) || $parts['port'] >= 1);
     }
 
     /**
@@ -60,11 +120,6 @@ class InstallController extends OpenController
     public function install(Request $request)
     {
         $env = base_path() . DIRECTORY_SEPARATOR . '.env';
-        $lock = @fopen(base_path() . '/runtime/sandadmin-install.lock', 'c');
-        if ($lock === false || !flock($lock, LOCK_EX)) {
-            return $this->fail('无法取得安装互斥锁');
-        }
-        try {
 
         clearstatcache();
         if (is_file($env)) {
@@ -178,10 +233,6 @@ EOF;
                 'notice' => '请在首次登录后立即修改默认密码。',
             ],
         ], '安装成功');
-        } finally {
-            flock($lock, LOCK_UN);
-            fclose($lock);
-        }
     }
 
     /**
@@ -399,7 +450,12 @@ EOF;
         $state = $error instanceof \PDOException
             ? (string) ($error->errorInfo[0] ?? $error->getCode())
             : '';
-        $message = strtolower($error->getMessage());
+        $message = $error->getMessage();
+        // Windows libpq 的本地化诊断可能采用 CP936/GBK，转换仅用于分类。
+        if (preg_match('//u', $message) !== 1) {
+            $message = function_exists('iconv') ? (@iconv('GB18030', 'UTF-8', $message) ?: '') : '';
+        }
+        $message = strtolower($message);
 
         if ($state === '3D000') {
             return '数据库不存在，请检查数据库名，并先创建 PostgreSQL 数据库后再安装';
@@ -413,13 +469,13 @@ EOF;
         if (str_contains($message, 'no pg_hba.conf entry')) {
             return '数据库拒绝此连接，请检查 pg_hba.conf 是否允许当前主机、用户和数据库，以及 SSL 配置是否匹配';
         }
-        if (preg_match('/database "[^"]*" does not exist/', $message)) {
+        if (preg_match('/(?:database|数据库)\s*["“][^"”]*["”]\s*(?:does not exist|不存在)/u', $message)) {
             return '数据库不存在，请检查数据库名，并先创建 PostgreSQL 数据库后再安装';
         }
-        if (preg_match('/role "[^"]*" does not exist/', $message)) {
+        if (preg_match('/(?:role|角色)\s*["“][^"”]*["”]\s*(?:does not exist|不存在)/u', $message)) {
             return '数据库用户不存在，请检查用户名';
         }
-        if (str_contains($message, 'password authentication failed') || str_contains($message, 'no password supplied')) {
+        if (preg_match('/(?:password|密码)\s*(?:authentication|认证|验证)\s*(?:failed|失败)/u', $message) || str_contains($message, 'no password supplied')) {
             return '数据库身份认证失败，请检查用户名和密码';
         }
         if (str_contains($message, 'permission denied')) {

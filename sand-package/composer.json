@@ -1,0 +1,46 @@
+{
+  "name": "supdger/sand-package",
+  "description": "SandAdmin plugin package manager for PostgreSQL hosts.",
+  "type": "library",
+  "license": "MIT",
+  "require": {
+    "php": ">=8.2",
+    "supdger/sand-core": "^0.2.4",
+    "nelexa/zip": "^4.0",
+    "tinywan/jwt": "^1.11",
+    "webman/console": "^2.1",
+    "workerman/webman-framework": "^2.1"
+  },
+  "autoload": {
+    "psr-4": {
+      "SandAdmin\\Package\\": "server/",
+      "plugin\\sandpackage\\": "server/plugin/sandpackage/",
+      "Saithink\\Saipackage\\": "server/compat/Saithink/Saipackage/"
+    }
+  },
+  "archive": {
+    "exclude": [
+      "/sandadmin-artd/node_modules",
+      "/sandadmin-artd/dist",
+      "/sandadmin-artd/.env*",
+      "/**/.DS_Store",
+      "/**/.idea",
+      "/**/.vscode",
+      "/vendor",
+      "/composer.lock",
+      "/.github",
+      "/.gitattributes",
+      "/tests",
+      "/server/tests",
+      "/server/plugin/sandpackage/tests",
+      "/sandadmin-artd/**/failed-upgrade-recovery.behavior*",
+      "/sandadmin-artd/**/failed-upgrade-recovery.directives-mock.ts",
+      "/sandadmin-artd/**/failed-upgrade-recovery.http-mock.ts",
+      "/sandadmin-artd/**/failed-upgrade-recovery.index-mount.ts",
+      "/sandadmin-artd/**/failed-upgrade-recovery.index-viewport-entry.ts",
+      "/sandadmin-artd/**/failed-upgrade-recovery.tsconfig.json",
+      "/sandadmin-artd/**/failed-upgrade-recovery.viewport.html",
+      "/sandadmin-artd/**/failed-upgrade-recovery.vite.config.mts"
+    ]
+  }
+}

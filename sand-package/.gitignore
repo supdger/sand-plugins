@@ -1,0 +1,10 @@
+/.idea/
+/.vscode/
+/**/.DS_Store
+/sandadmin-artd/node_modules/
+/sandadmin-artd/dist/
+/server/vendor/
+/server/runtime/
+
+/vendor/
+/composer.lock
