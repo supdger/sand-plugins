@@ -193,7 +193,7 @@ $passed = sandIamWithIsolatedFixture($root, static function (string $fixtureRoot
         return false;
     }
     $committedVendorMismatch = $changedVendorStatus !== 0
-        && str_contains($changedVendorOutput, 'release build contract does not match Git-blob stage payload: plugin/sand-iam/vendor');
+        && str_contains($changedVendorOutput, 'Frozen dependency bytes differ: plugin/sand-iam/vendor');
 
     $unsupportedLink = $fixtureRoot . '/docs/user-guide/unsupported-git-mode.md';
     if (!symlink('../README.md', $unsupportedLink)

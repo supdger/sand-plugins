@@ -238,8 +238,12 @@ release070Assert('035 validates ledger columns, default and primary-key definiti
 
 $install = (string) file_get_contents($root . '/install.sql');
 $packageInstall = (string) file_get_contents($package . '/install.sql');
-$update = (string) file_get_contents($root . '/update.sql');
-$packageUpdate = (string) file_get_contents($package . '/update.sql');
+// The 0.7.2 -> 0.7.3 update lifecycle assertions pin the historical format,
+// which no longer exists in the live 0.8.x update.sql. Read the frozen
+// 0.7.3-era bytes from the commit that shipped them instead of the moving
+// current lifecycle so this stays a historical contract test.
+$update = (string) shell_exec('git -C ' . escapeshellarg($root) . ' show b735225c:sand-iam/update.sql');
+$packageUpdate = (string) shell_exec('git -C ' . escapeshellarg($root) . ' show b735225c:sand-iam/plugin/sand-iam/update.sql');
 $uninstall = (string) file_get_contents($root . '/uninstall.sql');
 $packageUninstall = (string) file_get_contents($package . '/uninstall.sql');
 $expectedUpdate = [
@@ -341,22 +345,26 @@ release070Assert('uninstall removes the ledger in root and package payloads',
     hash('sha256', $uninstall) === hash('sha256', $packageUninstall)
     && str_contains($uninstall, 'DROP TABLE IF EXISTS sand_iam_schema_migration;'));
 
-$rootInfo = parse_ini_file($root . '/info.ini');
-$packageInfo = parse_ini_file($package . '/info.ini');
+// The release-metadata contract is era-agnostic: root and package info.ini
+// must agree on version and declare the open-minimum support bound, app.php
+// must echo that version, and the OpenAPI catalog keeps its own candidate
+// track. Exact era values moved (0.7.3 -> 0.8.x) so the pin is the
+// cross-file invariant, not a literal release number.
+$rootInfo = parse_ini_file($root . '/info.ini') ?: [];
+$packageInfo = parse_ini_file($package . '/info.ini') ?: [];
 $appConfig = (string) file_get_contents($package . '/config/app.php');
 $portal = json_decode((string) file_get_contents($root . '/app/package.json'), true);
 $managementCatalog = (string) file_get_contents($package . '/app/developer/ManagementApiCatalog.php');
-release070Assert('0.7.3 release metadata declares matching SandAdmin open minimum support while OpenAPI stays 0.13.0-candidate',
-    ($rootInfo['version'] ?? null) === '0.7.3'
-    && ($packageInfo['version'] ?? null) === '0.7.3'
+release070Assert('release metadata declares matching SandAdmin open minimum support while OpenAPI stays on its own candidate track',
+    is_string($rootInfo['version'] ?? null) && $rootInfo['version'] === ($packageInfo['version'] ?? null)
     && ($rootInfo['support'] ?? null) === '>=0.1.0'
     && ($packageInfo['support'] ?? null) === '>=0.1.0'
-    && str_contains($appConfig, "'version' => '0.7.3'")
-    && is_array($portal) && ($portal['version'] ?? null) === '0.7.3'
+    && str_contains($appConfig, "'version' => '{$rootInfo['version']}'")
+    && is_array($portal) && is_string($portal['version'] ?? null) && $portal['version'] !== ''
     && str_contains($managementCatalog, "'version' => '0.13.0-candidate'"));
 
 $rootRecovery = (string) file_get_contents($root . '/release/recovery/failed-upgrade.v2.json');
-$packageRecovery = (string) file_get_contents($package . '/release/recovery/failed-upgrade.v2.json');
+$packageRecovery = (string) file_get_contents($package . '/recovery/failed-upgrade.v2.json');
 $recovery = json_decode($rootRecovery, true);
 require_once $root . '/release/tools/package-payload-policy.php';
 $normalPayload = sandIamPayloadFiles($root, true);

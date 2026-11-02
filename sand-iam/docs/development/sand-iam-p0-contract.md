@@ -7,7 +7,7 @@
 ## 1. 权威边界与交付面
 
 - 包标识固定为 `sand-iam`，PHP 命名空间 `plugin\\SandIam`，路由段 `sand-iam`，PostgreSQL 表前缀、配置与权限码干 `sand_iam`。只使用 PostgreSQL。
-- 本仓 `sand-iam/` 是源码；插件安装、演示与功能验收在专用 SandAdmin 演示宿主进行（服务端为其 `server/` 子目录）。纯净通用 SandAdmin 宿主不用于插件演示。演示宿主的后台账号只管理插件，绝不作为业务应用的人类用户账号。
+- 本仓 `sand-iam/` 是源码；`/Users/code/project/sand_demo` 是插件安装、演示与功能验收宿主（服务端为其 `server/` 子目录）。`/Users/code/project/sandadmin` 是纯净通用 SandAdmin 宿主，不用于插件演示。演示宿主的后台账号只管理插件，绝不作为业务应用的人类用户账号。
 - SandIAM 是 organization、application、environment、workload client、credential、service/action/grant、应用身份、用户类型、角色、策略、数据范围和访问审计的唯一权威。
 - SandAI 只拥有 provider、model、AI 路由、文件、任务、用量和 AI 执行审计；它只调用本契约的 Adapter，禁止跨库读 `sand_iam_*`，也不得继续维护 application、environment、credential 或 grant 的平行权威表。
 - 业务应用保留业务实体、文件和业务状态。它向 SandIAM 注册资源与策略，在每次操作提供业务属性事实并保留最终业务校验；不复制或迁移业务实体到 SandIAM。

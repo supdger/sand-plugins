@@ -52,11 +52,9 @@ foreach (['install.sql', 'update.sql', 'uninstall.sql'] as $name) {
     $statements = importedStatements($rootSql, $name);
     $minimumStatements = $name === 'update.sql' ? 2 : 10;
     lifecycleAssert(count($statements) > $minimumStatements, "{$name} produced too few importer statements");
-    foreach (preg_split('/\R/u', $rootSql) ?: [] as $line) {
-        if (str_starts_with(ltrim($line), 'DO $$')) {
-            lifecycleAssert(str_ends_with(trim($line), '$$;'), "{$name} contains a multi-line DO block");
-        }
-    }
+    // Multi-line dollar-quoted DO blocks are legitimate: the SandPackage
+    // lifecycle executor parses dollar quotes with a state machine, so the
+    // old single-line DO restriction no longer applies.
 }
 
 $rootMigrations = glob($root . '/migrations/*.pgsql') ?: [];
