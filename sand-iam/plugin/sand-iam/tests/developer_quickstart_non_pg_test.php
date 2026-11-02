@@ -21,7 +21,7 @@ $route = (string) file_get_contents($example . '/config/route.php');
 foreach (['ApplicationAuthorizationMiddleware', "'entity_scope'", "'resolver'", "'collection'", 'resolvedWorkItem', 'findManyOrFail'] as $needle) quickstartAssert(str_contains($route, $needle), "Webman entity guard example missing {$needle}");
 $repository = (string) file_get_contents($example . '/app/WorkItemRepository.php');
 foreach (['SELECT id, organization_id, owner_identity_id', 'business_work_item', 'prepare('] as $needle) quickstartAssert(str_contains($repository, $needle), "repository is not loading database-owned entity fields: {$needle}");
-$c05Provider = $root . '/tools/fixtures/c05-webman-route-provider';
+$c05Provider = $root . '/release/tools/fixtures/c05-webman-route-provider';
 foreach ([
     'config/autoload.php',
     'config/route.php',

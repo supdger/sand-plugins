@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__, 3);
-$tool = $root . '/tools/run-endurance-acceptance.php';
-$verifier = $root . '/tools/verify-endurance-evidence.php';
+$tool = $root . '/release/tools/run-endurance-acceptance.php';
+$verifier = $root . '/release/tools/verify-endurance-evidence.php';
 $seed = tempnam('/private/tmp', 'sand-iam-endurance-plan-');
 if ($seed === false) throw new RuntimeException('cannot create endurance plan fixture');
 

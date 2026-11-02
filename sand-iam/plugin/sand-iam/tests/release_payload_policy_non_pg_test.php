@@ -5,13 +5,13 @@ declare(strict_types=1);
 // behavior-test-gate: static-rule
 
 $root = dirname(__DIR__, 3);
-require_once $root . '/tools/package-payload-policy.php';
+require_once $root . '/release/tools/package-payload-policy.php';
 require_once __DIR__ . '/isolated_sandiam_fixture.php';
 
 /** @return array{0:int,1:string} */
 $runHygiene = static function (string $fixtureRoot): array {
     $output = [];
-    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($fixtureRoot . '/tools/check-release-payload.php') . ' 2>&1', $output, $status);
+    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($fixtureRoot . '/release/tools/check-release-payload.php') . ' 2>&1', $output, $status);
     return [$status, implode("\n", $output)];
 };
 
@@ -99,7 +99,7 @@ $checks = [
     })(),
     'development task board is excluded' => !in_array('docs/development/sand-iam-task-board.md', $payload, true),
     'release hygiene checker scans paths, internal markers, and credentials' => (static function () use ($root): bool {
-        $source = file_get_contents($root . '/tools/check-release-payload.php');
+        $source = file_get_contents($root . '/release/tools/check-release-payload.php');
         return is_string($source)
             && str_contains($source, 'payload has no developer-machine absolute paths')
             && str_contains($source, 'payload has no internal task-system references')

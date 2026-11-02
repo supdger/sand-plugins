@@ -6,10 +6,10 @@ declare(strict_types=1);
 
 /** The seven-chain runner must remain usable without a host, service or database. */
 $root = dirname(__DIR__, 3);
-$runner = $root . '/tools/run-terminal-acceptance.php';
-$manifest = $root . '/tools/terminal-acceptance-manifest.php';
-$liveDriver = $root . '/tools/terminal-acceptance-live-driver.php';
-$simulator = $root . '/tools/terminal-acceptance-local-simulator.php';
+$runner = $root . '/release/tools/run-terminal-acceptance.php';
+$manifest = $root . '/release/tools/terminal-acceptance-manifest.php';
+$liveDriver = $root . '/release/tools/terminal-acceptance-live-driver.php';
+$simulator = $root . '/release/tools/terminal-acceptance-local-simulator.php';
 $acceptanceFixtureStore = $root . '/plugin/sand-iam/app/acceptance/AcceptanceFixtureStore.php';
 $acceptanceFixtureService = $root . '/plugin/sand-iam/app/acceptance/AcceptanceFixtureService.php';
 $acceptanceFixtureDatabaseStoreTest = $root . '/plugin/sand-iam/tests/acceptance_fixture_database_store_non_pg_test.php';
@@ -146,7 +146,7 @@ try {
         || ($cleanedWebhookFixtures['ok'] ?? false) !== true) {
         terminalAcceptanceFail('Chain7 protocol does not prove every created endpoint and delivery was cleaned with zero residual');
     }
-    $exampleSource = (string) file_get_contents($root . '/tools/fixtures/terminal-acceptance-live-plan.example.json');
+    $exampleSource = (string) file_get_contents($root . '/release/tools/fixtures/terminal-acceptance-live-plan.example.json');
     $examplePlan = json_decode($exampleSource, true);
     if (!is_array($examplePlan) || ($examplePlan['format'] ?? null) !== 'sand-iam.acceptance-live-plan/v2' || count($examplePlan['chains'] ?? []) !== 7 || !is_array($examplePlan['targets'] ?? null) || !str_contains($exampleSource, '__REQUIRED_')) terminalAcceptanceFail('live plan example is not safely incomplete');
     foreach ($examplePlan['chains'] as $id => $chain) {
@@ -564,7 +564,7 @@ try {
     if ($simulatorResult['code'] !== 0 || !str_contains($simulatorResult['stdout'], 'self-test passed')) terminalAcceptanceFail('local simulator self-test failed');
     $databaseStoreResult = terminalAcceptanceScript($acceptanceFixtureDatabaseStoreTest);
     if ($databaseStoreResult['code'] !== 0 || !str_contains($databaseStoreResult['stdout'], 'database store non-PG tests passed')) terminalAcceptanceFail('database acceptance store non-PG test failed');
-    foreach (['SAND_IAM_ACCEPTANCE_LIVE=1', 'SAND_IAM_ACCEPTANCE_ALLOW_DATABASE_WRITES=1', 'SAND_IAM_ACCEPTANCE_CONFIRM=I_UNDERSTAND_THIS_WRITES_TEST_FIXTURES', 'SAND_IAM_ACCEPTANCE_FIXTURE_PREFIX=sand_iam_acceptance_0123456789abcdef_', 'SAND_IAM_ACCEPTANCE_HOST_URL=https://approved-host.example', 'SAND_IAM_ACCEPTANCE_LIVE_PLAN=' . $root . '/tools/fixtures/terminal-acceptance-live-plan.example.json'] as $gate) putenv($gate);
+    foreach (['SAND_IAM_ACCEPTANCE_LIVE=1', 'SAND_IAM_ACCEPTANCE_ALLOW_DATABASE_WRITES=1', 'SAND_IAM_ACCEPTANCE_CONFIRM=I_UNDERSTAND_THIS_WRITES_TEST_FIXTURES', 'SAND_IAM_ACCEPTANCE_FIXTURE_PREFIX=sand_iam_acceptance_0123456789abcdef_', 'SAND_IAM_ACCEPTANCE_HOST_URL=https://approved-host.example', 'SAND_IAM_ACCEPTANCE_LIVE_PLAN=' . $root . '/release/tools/fixtures/terminal-acceptance-live-plan.example.json'] as $gate) putenv($gate);
     $missingHost = terminalAcceptanceScript($liveDriver, ['--chain=event-webhook-delivery']);
     foreach (['SAND_IAM_ACCEPTANCE_LIVE', 'SAND_IAM_ACCEPTANCE_ALLOW_DATABASE_WRITES', 'SAND_IAM_ACCEPTANCE_CONFIRM', 'SAND_IAM_ACCEPTANCE_FIXTURE_PREFIX', 'SAND_IAM_ACCEPTANCE_HOST_URL', 'SAND_IAM_ACCEPTANCE_LIVE_PLAN'] as $gate) putenv($gate);
     if ($missingHost['code'] !== 2 || !str_contains($missingHost['stderr'], '__REQUIRED_*')) terminalAcceptanceFail('live driver did not block an incomplete plan before loading credentials or making a host request');

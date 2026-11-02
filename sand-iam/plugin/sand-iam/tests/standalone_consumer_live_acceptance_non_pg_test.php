@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__, 3);
-$tool = file_get_contents($root . '/tools/standalone-consumer-live-acceptance.php');
+$tool = file_get_contents($root . '/release/tools/standalone-consumer-live-acceptance.php');
 $schema = file_get_contents($root . '/examples/webman-business-app/standalone/schema.pgsql');
 $config = file_get_contents($root . '/examples/webman-business-app/standalone/src/Config.php');
 $repository = file_get_contents($root . '/examples/webman-business-app/standalone/src/PgsqlRepository.php');

@@ -56,7 +56,7 @@ $packageMigration = $plugin . '/migrations/031_oidc_signing_key_rotation.pgsql';
 oidcRotationAssert(is_file($migration) && hash_file('sha256', $migration) === hash_file('sha256', $packageMigration), '031 root/plugin migration mirrors differ');
 $migrationSource = (string) file_get_contents($migration);
 foreach (['encrypted_private_key', 'encryption_version', 'uk_sand_iam_oidc_signing_key_one_active', "WHERE state = 'active'", "algorithm = 'RS256'"] as $needle) oidcRotationAssert(str_contains($migrationSource, $needle), "031 migration lacks {$needle}");
-oidcRotationAssert(str_contains((string) file_get_contents($root . '/tools/build-lifecycle.php'), '031_oidc_signing_key_rotation.pgsql'), 'lifecycle builder omits 031');
+oidcRotationAssert(str_contains((string) file_get_contents($root . '/release/tools/build-lifecycle.php'), '031_oidc_signing_key_rotation.pgsql'), 'lifecycle builder omits 031');
 $freshSchema = (string) file_get_contents($root . '/migrations/005_oauth_oidc.pgsql');
 foreach (['encrypted_private_key text NULL', 'encryption_version varchar(32) NULL', "algorithm varchar(16) NOT NULL DEFAULT 'RS256'", 'Write-only versioned private-key envelope'] as $needle) {
     oidcRotationAssert(str_contains($freshSchema, $needle), "fresh OIDC signing-key schema lacks {$needle}");

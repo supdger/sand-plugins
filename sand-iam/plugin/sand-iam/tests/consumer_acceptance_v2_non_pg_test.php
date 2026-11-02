@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 // behavior-test-gate: static-rule
 
-require_once dirname(__DIR__, 3) . '/tools/consumer-acceptance-v2/LiveContract.php';
+require_once dirname(__DIR__, 3) . '/release/tools/consumer-acceptance-v2/LiveContract.php';
 
 $pass = 0;
 $assert = static function (bool $ok, string $message) use (&$pass): void { if (!$ok) throw new RuntimeException($message); ++$pass; };
@@ -48,7 +48,7 @@ try {
     $assert(ConsumerAcceptanceV2ReceiptVerifier::readLocalJson($observedFile)['plan_sha256'] === $observed['plan_sha256'], 'safe local read permits current-user file beneath sticky temporary ancestor');
     $reject(static fn () => ConsumerAcceptanceV2ReceiptVerifier::readLocalJson('//' . ltrim($observedFile, '/')), 'leading repeated slash blocks before source-tree boundary checks');
     $reject(static fn () => ConsumerAcceptanceV2ReceiptVerifier::readLocalJson(dirname($observedFile) . '//observed.json'), 'parent repeated slash blocks before filesystem traversal');
-    $validator = dirname(__DIR__, 3) . '/tools/validate-consumer-acceptance-v2-capability.php';
+    $validator = dirname(__DIR__, 3) . '/release/tools/validate-consumer-acceptance-v2-capability.php';
     $runObserved = static function (string $file) use ($validator, $trustedKey, $plan): int {
         exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($validator) . ' --observed-capability-file=' . escapeshellarg($file) . ' --trusted-key-file=' . escapeshellarg($trustedKey) . ' --host-revision-sha256=' . escapeshellarg($plan['candidate']['host_sha256']) . ' --scope-sha256=' . escapeshellarg($plan['scope_cleanup']['scope_sha256']) . ' --now=2026-09-13T10:00:00Z', $unused, $exit);
         return $exit;
@@ -59,7 +59,7 @@ try {
     $hardlinkedObserved = $temporary . '/observed-hardlink.json'; link($observedFile, $hardlinkedObserved); $reject(static fn () => ConsumerAcceptanceV2ReceiptVerifier::readLocalJson($hardlinkedObserved), 'hardlinked observed file preflight blocks'); unlink($hardlinkedObserved);
     $unsafeParent = $temporary . '/unsafe-parent'; mkdir($unsafeParent, 0700); chmod($unsafeParent, 0777); $unsafeObserved = $unsafeParent . '/observed.json'; copy($observedFile, $unsafeObserved); $reject(static fn () => ConsumerAcceptanceV2ReceiptVerifier::readLocalJson($unsafeObserved), 'non-sticky world-writable parent preflight blocks'); chmod($unsafeParent, 0700); unlink($unsafeObserved); rmdir($unsafeParent);
     $safeParent = $temporary . '/safe-parent'; mkdir($safeParent, 0700); copy($observedFile, $safeParent . '/observed.json'); symlink($safeParent, $temporary . '/parent-link'); $reject(static fn () => ConsumerAcceptanceV2ReceiptVerifier::readLocalJson($temporary . '/parent-link/observed.json'), 'symlink parent preflight blocks'); unlink($temporary . '/parent-link'); unlink($safeParent . '/observed.json'); rmdir($safeParent);
-    $sourceObserved = dirname(__DIR__, 3) . '/tools/consumer-acceptance-v2/LiveContract.php'; $reject(static fn () => ConsumerAcceptanceV2ReceiptVerifier::readLocalJson($sourceObserved), 'source-tree observed file blocks'); $assert($runObserved($sourceObserved) === 2, 'source-tree observed file preflight blocks');
+    $sourceObserved = dirname(__DIR__, 3) . '/release/tools/consumer-acceptance-v2/LiveContract.php'; $reject(static fn () => ConsumerAcceptanceV2ReceiptVerifier::readLocalJson($sourceObserved), 'source-tree observed file blocks'); $assert($runObserved($sourceObserved) === 2, 'source-tree observed file preflight blocks');
     $reject(static fn () => ConsumerAcceptanceV2ReceiptVerifier::readLocalJson('data://text/plain,{}'), 'observed wrapper blocks'); $assert($runObserved('data://text/plain,{}') === 2, 'observed wrapper preflight blocks');
     $signatureTamper = $copy($receipts[0]); $signatureTamper['authorizer'] = 'other_authorizer';
     $reject(static fn () => ConsumerAcceptanceV2ReceiptVerifier::verify($signatureTamper, $trustedKey, $now), 'signature covers receipt authorizer');
@@ -111,7 +111,7 @@ try {
     $assert($wrongKeyReport['status'] === 'preflight_blocked' && $wrongKeyReport['before_first_write'] === true, 'wrong capability trusted key blocks before first write');
     $blockedReport = ConsumerAcceptanceV2LiveContract::authorize($plan, [], $trustedKey, $now);
     $assert($blockedReport['status'] === 'preflight_blocked' && $blockedReport['before_first_write'] === true && $blockedReport['transport_initialized'] === false && $blockedReport['database_factory_initialized'] === false, 'missing cleanup capability blocks before first write');
-    $source = (string) file_get_contents(dirname(__DIR__, 3) . '/tools/consumer-acceptance-v2/LiveContract.php') . (string) file_get_contents(dirname(__DIR__, 3) . '/tools/consumer-acceptance-v2/ReceiptVerifier.php');
+    $source = (string) file_get_contents(dirname(__DIR__, 3) . '/release/tools/consumer-acceptance-v2/LiveContract.php') . (string) file_get_contents(dirname(__DIR__, 3) . '/release/tools/consumer-acceptance-v2/ReceiptVerifier.php');
     $assert(!str_contains($source, 'curl_init(') && !str_contains($source, 'new PDO') && !str_contains($source, 'DatabaseFactory'), 'v2 offline layer cannot initialize transport or DB factory');
     $routes = (string) file_get_contents(dirname(__DIR__, 3) . '/plugin/sand-iam/config/route.php');
     $sdk = (string) file_get_contents(dirname(__DIR__, 3) . '/sdk/php/src/SandIamClient.php') . (string) file_get_contents(dirname(__DIR__, 3) . '/sdk/php/src/SandIamManagementClient.php');

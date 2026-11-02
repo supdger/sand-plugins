@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__, 3);
-$validator = $root . '/tools/validate-casdoor-comparison.php';
+$validator = $root . '/release/tools/validate-casdoor-comparison.php';
 
 /** @return array{0:int,1:string} */
 $run = static function (string $report) use ($validator): array {

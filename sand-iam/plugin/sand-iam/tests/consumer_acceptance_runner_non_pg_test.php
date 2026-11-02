@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 // behavior-test-gate: static-rule
 
-require_once dirname(__DIR__, 3) . '/tools/consumer-acceptance/Runtime.php';
+require_once dirname(__DIR__, 3) . '/release/tools/consumer-acceptance/Runtime.php';
 
 $root = dirname(__DIR__, 3);
-$fixturePath = $root . '/tools/fixtures/consumer-acceptance-plan.example.json';
+$fixturePath = $root . '/release/tools/fixtures/consumer-acceptance-plan.example.json';
 $fixture = json_decode((string) file_get_contents($fixturePath), true, 512, JSON_THROW_ON_ERROR);
 $passed = 0;
 $assert = static function (bool $condition, string $message) use (&$passed): void { if (!$condition) throw new RuntimeException($message); ++$passed; };
@@ -72,7 +72,7 @@ try {
     $assert($live['status'] === 'unsupported' && $live['business_attempted'] === false && $live['cleanup_boundary']['state'] === 'not_started', 'unsupported live skeleton stops business before cleanup');
 
     $planFile = $temporary . '/plan.json'; $reportFile = $temporary . '/report.json'; file_put_contents($planFile, json_encode($fixture, JSON_THROW_ON_ERROR));
-    $runner = $root . '/tools/run-consumer-acceptance.php';
+    $runner = $root . '/release/tools/run-consumer-acceptance.php';
     $run = static function (string $plan, string $report) use ($runner): int {
         exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($runner) . ' --mode=validate --plan=' . escapeshellarg($plan) . ' --report=' . escapeshellarg($report), $unused, $exit);
         return $exit;
@@ -86,11 +86,11 @@ try {
     $assert($run($planLink, $temporary . '/linked-report.json') !== 0, 'CLI rejects plan symlink');
     $parentLink = $temporary . '-link'; symlink($temporary, $parentLink);
     $assert($run($parentLink . '/plan.json', $temporary . '/parent-link-report.json') !== 0, 'CLI rejects parent path symlink');
-    $planSchema = json_decode((string) file_get_contents($root . '/tools/schemas/consumer-acceptance-plan.schema.json'), true, 512, JSON_THROW_ON_ERROR);
-    $reportSchema = json_decode((string) file_get_contents($root . '/tools/schemas/consumer-acceptance-report.schema.json'), true, 512, JSON_THROW_ON_ERROR);
+    $planSchema = json_decode((string) file_get_contents($root . '/release/tools/schemas/consumer-acceptance-plan.schema.json'), true, 512, JSON_THROW_ON_ERROR);
+    $reportSchema = json_decode((string) file_get_contents($root . '/release/tools/schemas/consumer-acceptance-report.schema.json'), true, 512, JSON_THROW_ON_ERROR);
     $assert(array_keys($planSchema['properties']['gate_receipts']['properties']) === ['authorization_gate', 'fixture_ownership_gate', 'cleanup_gate'], 'plan schema has exact three gates');
     $assert(array_column($reportSchema['properties']['steps']['prefixItems'], '$ref') === ['#/$defs/preflight', '#/$defs/allow', '#/$defs/deny', '#/$defs/revoke', '#/$defs/audit', '#/$defs/cleanup'], 'report schema freezes each step position');
-    $source = (string) file_get_contents($root . '/tools/consumer-acceptance/Runtime.php');
+    $source = (string) file_get_contents($root . '/release/tools/consumer-acceptance/Runtime.php');
     $assert(!str_contains($source, 'curl_init(') && !str_contains($source, 'new PDO'), 'validate runtime contains no transport or PDO initialization');
 } finally {
     foreach (glob($temporary . '/*') ?: [] as $file) unlink($file);

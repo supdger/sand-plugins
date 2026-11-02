@@ -6,7 +6,7 @@ declare(strict_types=1);
 
 $root = dirname(__DIR__, 3);
 require_once __DIR__ . '/isolated_sandiam_fixture.php';
-require_once $root . '/tools/release-bundle-attestation.php';
+require_once $root . '/release/tools/release-bundle-attestation.php';
 
 /** @return array{0:int,1:string} */
 $run = static function (string $tool, array $arguments): array {
@@ -63,8 +63,8 @@ $passed = sandIamWithIsolatedFixture($root, static function (string $fixtureRoot
     }
     $eol = (string) shell_exec('git -C ' . escapeshellarg($workspace) . ' ls-files --eol -- ' . escapeshellarg('sand-iam/' . $crlfRelative));
     $cleanCrlfWorktree = str_contains($eol, 'i/lf') && str_contains($eol, 'w/crlf');
-    $integrity = $fixtureRoot . '/tools/check-package-integrity.php';
-    $builder = $fixtureRoot . '/tools/build-review-candidate.php';
+    $integrity = $fixtureRoot . '/release/tools/check-package-integrity.php';
+    $builder = $fixtureRoot . '/release/tools/build-review-candidate.php';
     [$baselineStatus, $baselineOutput] = $run($integrity, []);
     if ($baselineStatus !== 0 || !str_contains($baselineOutput, '[PASS] eligible release payload is clean, tracked, and matches HEAD Git blobs')) {
         fwrite(STDERR, "release provenance setup failed: clean fixture baseline\n{$baselineOutput}\n");

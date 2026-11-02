@@ -19,7 +19,7 @@ namespace {
         'routes' => $package . '/config/route.php',
         'migration' => $root . '/migrations/033_identity_group_role.pgsql',
         'plugin migration' => $package . '/migrations/033_identity_group_role.pgsql',
-        'generator' => $root . '/tools/build-lifecycle.php',
+        'generator' => $root . '/release/tools/build-lifecycle.php',
         'remove lifecycle' => $root . '/lifecycle/remove.pgsql',
         'management contract' => $root . '/docs/development/sand-iam-management-api-v0.1.md',
         'authorization contract' => $root . '/docs/development/sand-iam-authorization-contract.md',

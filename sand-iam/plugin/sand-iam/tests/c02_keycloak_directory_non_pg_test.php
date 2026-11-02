@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 // behavior-test-gate: unit
 
-require dirname(__DIR__, 3) . '/tools/fixtures/c02-keycloak-directory/C02KeycloakDirectory.php';
+require dirname(__DIR__, 3) . '/release/tools/fixtures/c02-keycloak-directory/C02KeycloakDirectory.php';
 
 function c02DirectoryFail(string $message): never
 {

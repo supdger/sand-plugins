@@ -6,9 +6,9 @@ declare(strict_types=1);
 
 $root = dirname(__DIR__, 3);
 $guide = (string) file_get_contents($root . '/docs/development/sand-iam-endurance-acceptance.md');
-$generator = (string) file_get_contents($root . '/tools/prepare-external-acceptance.php');
-$runner = (string) file_get_contents($root . '/tools/run-endurance-acceptance.php');
-$verifier = (string) file_get_contents($root . '/tools/verify-endurance-evidence.php');
+$generator = (string) file_get_contents($root . '/release/tools/prepare-external-acceptance.php');
+$runner = (string) file_get_contents($root . '/release/tools/run-endurance-acceptance.php');
+$verifier = (string) file_get_contents($root . '/release/tools/verify-endurance-evidence.php');
 
 function enduranceMetricDefinitionAssert(bool $condition, string $message): void
 {

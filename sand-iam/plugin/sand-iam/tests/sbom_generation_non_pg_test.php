@@ -10,7 +10,7 @@ $root = dirname(__DIR__, 3);
 
 /** @return array{int,string} */
 $run = static function (string $fixtureRoot, array $arguments): array {
-    $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($fixtureRoot . '/tools/generate-sbom.php');
+    $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($fixtureRoot . '/release/tools/generate-sbom.php');
     foreach ($arguments as $argument) $command .= ' ' . escapeshellarg($argument);
     $output = [];
     exec($command . ' 2>&1', $output, $status);

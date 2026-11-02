@@ -36,7 +36,7 @@
 Dart 锁文件当前共有 49 个组件：47 个为 BSD-3-Clause，`node_preamble 2.0.2` 为
 `BSD-3-Clause AND MIT`，`yaml 3.1.3` 为 MIT。npm 锁文件合并去重后为 28 个组件：
 TypeScript 为 Apache-2.0，esbuild 及其 26 个
-平台包为 MIT。`tools/dependency-license-policy.php` 以精确 `name@version` 坐标固定这些结论，
+平台包为 MIT。`release/tools/dependency-license-policy.php` 以精确 `name@version` 坐标固定这些结论，
 SBOM 为全部 79 个组件写入 SPDX 标识和逐组件许可证证据 URL；锁文件出现未审计坐标时生成器
 关闭失败。发布前仍必须从最终 lock 重算，不能把本表当成永久清单。
 

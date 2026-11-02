@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 // behavior-test-gate: unit
 
-require dirname(__DIR__, 3) . '/tools/fixtures/c07-webhook-receiver/C07WebhookReceiver.php';
+require dirname(__DIR__, 3) . '/release/tools/fixtures/c07-webhook-receiver/C07WebhookReceiver.php';
 
 function c07ReceiverFail(string $message): never
 {

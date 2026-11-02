@@ -5,8 +5,8 @@ declare(strict_types=1);
 // behavior-test-gate: static-rule
 // Build/declaration checks only. Real PostgreSQL acceptance is a separate gate.
 $root = dirname(__DIR__, 3);
-require_once $root . '/tools/build-upgrade-082.php';
-require_once $root . '/tools/package-payload-policy.php';
+require_once $root . '/release/tools/build-upgrade-082.php';
+require_once $root . '/release/tools/package-payload-policy.php';
 $sql = sandIamBuild082Update($root);
 if ($sql !== file_get_contents($root . '/update.sql')
     || $sql !== file_get_contents($root . '/plugin/sand-iam/update.sql')) {
@@ -46,7 +46,7 @@ if (is_string($executorFile) && $executorFile !== '') {
     }
     echo "[PASS] actual EXECUTE string contains executable LOCK, guarded ALTER, ledger INSERT and closure DO under the public lexer\n";
 }
-$fixture = json_decode((string) file_get_contents($root . '/tools/resources/schema-043-catalog.json'), true, 32, JSON_THROW_ON_ERROR);
+$fixture = json_decode((string) file_get_contents($root . '/release/tools/resources/schema-043-catalog.json'), true, 32, JSON_THROW_ON_ERROR);
 foreach ($fixture as $group => $rows) {
     $tag = '$iam082_' . $group . '$';
     $start = strpos($sql, $tag);
@@ -57,7 +57,7 @@ foreach ($fixture as $group => $rows) {
     }
     echo "[PASS] complete {$group} capture retains array order, boolean, number, string and null types\n";
 }
-if (in_array('tools/resources/schema-043-catalog.json', sandIamPayloadFiles($root, true), true)) {
+if (in_array('release/tools/resources/schema-043-catalog.json', sandIamPayloadFiles($root, true), true)) {
     throw new RuntimeException('Build-only catalog fixture was shipped as runtime payload');
 }
 echo "[PASS] catalog capture is a build-only input, absent from runtime payload\n";
@@ -72,7 +72,7 @@ if ($branchStart === false || $branchEnd === false
 }
 echo "[PASS] only the 43 branch contains prior admission and original043 execution; complete44 compares all ledger rows and catalog groups\n";
 $temp = sys_get_temp_dir() . '/iam082-build-contract-' . bin2hex(random_bytes(5));
-$files = ['tools/resources/schema-043-catalog.json',
+$files = ['release/tools/resources/schema-043-catalog.json',
     'lifecycle/update-073-or-075-or-076-to-080-preflight.pgsql',
     'migrations/043_scope_audit_event_key.pgsql'];
 $restore = [];
@@ -106,7 +106,7 @@ try {
     }
 } finally {
     foreach ($files as $relative) if (is_file($temp . '/' . $relative)) unlink($temp . '/' . $relative);
-    foreach (['tools/resources', 'tools', 'lifecycle', 'migrations', ''] as $directory) {
+    foreach (['release/tools/resources', 'tools', 'lifecycle', 'migrations', ''] as $directory) {
         if (is_dir($temp . ($directory === '' ? '' : '/' . $directory))) rmdir($temp . ($directory === '' ? '' : '/' . $directory));
     }
 }

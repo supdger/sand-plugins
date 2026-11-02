@@ -5,9 +5,9 @@ declare(strict_types=1);
 // behavior-test-gate: static-rule
 
 $root = dirname(__DIR__, 3);
-$signer = $root . '/tools/sign-release-bundle.php';
-$verifier = $root . '/tools/verify-release-bundle.php';
-require_once $root . '/tools/release-bundle-attestation.php';
+$signer = $root . '/release/tools/sign-release-bundle.php';
+$verifier = $root . '/release/tools/verify-release-bundle.php';
+require_once $root . '/release/tools/release-bundle-attestation.php';
 
 /** @return array{0:int,1:string} */
 $run = static function (string $tool, array $arguments): array {

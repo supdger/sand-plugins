@@ -72,7 +72,7 @@ $byName = static function (array $files): array {
 };
 lifecycleAssert($byName($rootMigrations) === $byName($packageMigrations), 'root and package migration inventories differ');
 
-$runner = file_get_contents($root . '/tools/run-sandpackage-lifecycle.php');
+$runner = file_get_contents($root . '/release/tools/run-sandpackage-lifecycle.php');
 lifecycleAssert(is_string($runner) && $runner !== '', 'guarded SandPackage lifecycle runner is missing');
 foreach ([
     "^sand_iam_acceptance_[a-z0-9_]{1,48}$",

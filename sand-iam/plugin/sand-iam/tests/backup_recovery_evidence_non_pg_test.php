@@ -3,8 +3,8 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__, 3);
-require_once $root . '/tools/release-bundle-attestation.php';
-$validator = $root . '/tools/validate-backup-recovery.php';
+require_once $root . '/release/tools/release-bundle-attestation.php';
+$validator = $root . '/release/tools/validate-backup-recovery.php';
 $dir = sys_get_temp_dir() . '/sand-iam-recovery-v3-' . bin2hex(random_bytes(6));
 if (!mkdir($dir, 0700)) throw new RuntimeException('cannot create fixture');
 $run = static function (array $args): array { exec(implode(' ', array_map('escapeshellarg', $args)) . ' 2>&1', $out, $status); return [$status, implode("\n", $out)]; };

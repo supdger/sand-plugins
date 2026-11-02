@@ -29,7 +29,7 @@ jobs:
       - name: Verify public download, documented commands, Git blobs and native paths
         shell: pwsh
         run: |
-          ./tools/test-cross-platform-release.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'iam076-release-evidence')
+          ./release/tools/test-cross-platform-release.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'iam076-release-evidence')
       - name: Execute actual macOS download verification commands
         if: runner.os == 'macOS'
         shell: bash
@@ -44,7 +44,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          ./tools/test-cross-platform-upgrade.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'iam076-sql-evidence')
+          ./release/tools/test-cross-platform-upgrade.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'iam076-sql-evidence')
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -12,7 +12,7 @@ declare(strict_types=1);
  */
 function sandIamWithIsolatedFixture(string $authorityRoot, callable $callback): mixed
 {
-    require_once $authorityRoot . '/tools/package-payload-policy.php';
+    require_once $authorityRoot . '/release/tools/package-payload-policy.php';
     $seed = tempnam(sys_get_temp_dir(), 'sand-iam-test-fixture-');
     if ($seed === false || !unlink($seed) || !mkdir($seed, 0700)) {
         throw new RuntimeException('cannot create isolated SandIAM test fixture');
@@ -75,7 +75,7 @@ function sandIamWithIsolatedFixture(string $authorityRoot, callable $callback): 
 /** @return array<string,string> */
 function sandIamAuthorityPayloadSnapshot(string $authorityRoot): array
 {
-    require_once $authorityRoot . '/tools/package-payload-policy.php';
+    require_once $authorityRoot . '/release/tools/package-payload-policy.php';
     $snapshot = [];
     foreach (sandIamPayloadFilePaths($authorityRoot, true) as $relative => $path) {
         $hash = hash_file('sha256', $path);

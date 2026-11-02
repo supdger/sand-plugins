@@ -7,15 +7,15 @@ declare(strict_types=1);
 $root = dirname(__DIR__, 3);
 require_once __DIR__ . '/isolated_sandiam_fixture.php';
 $authoritySnapshot = sandIamAuthorityPayloadSnapshot($root);
-$tool = $root . '/tools/check-package-integrity.php';
-$payloadPolicy = $root . '/tools/package-payload-policy.php';
+$tool = $root . '/release/tools/check-package-integrity.php';
+$payloadPolicy = $root . '/release/tools/package-payload-policy.php';
 $app = $root . '/plugin/sand-iam/config/app.php';
 $process = $root . '/plugin/sand-iam/config/process.php';
 $recoveryDescriptorContract = $root . '/plugin/sand-iam/tests/failed_upgrade_recovery_descriptor_non_pg_test.php';
 
 /** @return array{0:int,1:string} */
 $runToolAt = static function (string $fixtureRoot, array $arguments): array {
-    $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($fixtureRoot . '/tools/check-package-integrity.php');
+    $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($fixtureRoot . '/release/tools/check-package-integrity.php');
     foreach ($arguments as $argument) {
         $command .= ' ' . escapeshellarg($argument);
     }
@@ -203,7 +203,7 @@ $checks = [
             }
             $environment['PATH'] = $fixture . '/no-git-executable';
             $stdout = tmpfile(); $stderr = tmpfile();
-            $process = proc_open([PHP_BINARY, $fixture . '/tools/check-package-integrity.php'],
+            $process = proc_open([PHP_BINARY, $fixture . '/release/tools/check-package-integrity.php'],
                 [0 => ['pipe', 'r'], 1 => $stdout, 2 => $stderr], $pipes, null, $environment, ['bypass_shell' => true]);
             if (!is_resource($process)) return false;
             fclose($pipes[0]);
@@ -306,7 +306,7 @@ $checks = [
                 [$status] = $run(['git', '-C', $fixture, 'commit', '-qm', 'support fixture']);
                 if ($status !== 0) return false;
                 $outputDirectory = dirname($fixture) . '/must-not-create-artifacts';
-                [$status, $output] = $run([PHP_BINARY, $fixture . '/tools/build-independent-release.php', $outputDirectory]);
+                [$status, $output] = $run([PHP_BINARY, $fixture . '/release/tools/build-independent-release.php', $outputDirectory]);
                 if ($status === 0 || file_exists($outputDirectory)) return false;
                 if ($accepted && (!str_contains($output, '[PASS] committed host support')
                     || !str_contains($output, 'Required committed payload missing: README.md'))) return false;

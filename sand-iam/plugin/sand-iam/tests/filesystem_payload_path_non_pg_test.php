@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 // behavior-test-gate: static-rule
 $root = dirname(__DIR__, 3);
-require_once $root . '/tools/package-payload-policy.php';
+require_once $root . '/release/tools/package-payload-policy.php';
 require_once __DIR__ . '/isolated_sandiam_fixture.php';
 
 foreach (['../file', 'a/../file', 'a/./file', '/absolute', 'C:/absolute', "a/\0file"] as $path) {

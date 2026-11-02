@@ -169,7 +169,7 @@ SELECT
 最终 unsigned release candidate 生成后，先从其包外 manifest 生成候选绑定模板：
 
 ```bash
-php sand-iam/tools/prepare-external-acceptance.php \
+php sand-iam/release/tools/prepare-external-acceptance.php \
   --kind=endurance \
   --artifact-manifest=/controlled/candidate/manifest.json \
   --output=/controlled/endurance/plan.json
@@ -179,7 +179,7 @@ php sand-iam/tools/prepare-external-acceptance.php \
 候选的计划复制给新候选。补齐等价负载下冻结的阈值和七个真实 endpoint 后，先只读校验计划：
 
 ```bash
-php sand-iam/tools/run-endurance-acceptance.php \
+php sand-iam/release/tools/run-endurance-acceptance.php \
   --plan=/controlled/endurance/plan.json \
   --validate-only
 ```
@@ -190,7 +190,7 @@ php sand-iam/tools/run-endurance-acceptance.php \
 SAND_IAM_ENDURANCE_ALLOW_WRITES=1 \
 SAND_IAM_ENDURANCE_ADMIN='Bearer ...' \
 SAND_IAM_ENDURANCE_USER='Bearer ...' \
-php sand-iam/tools/run-endurance-acceptance.php \
+php sand-iam/release/tools/run-endurance-acceptance.php \
   --plan=/controlled/endurance/plan.json \
   --output=/controlled/endurance/samples.jsonl
 ```
@@ -203,7 +203,7 @@ JSONL 摘要、最终记录摘要、候选身份、p50/p95/p99、采样间隔、
 完成后必须由另一进程重新计算原始证据，而不是只相信 summary 的 `passed`：
 
 ```bash
-php sand-iam/tools/verify-endurance-evidence.php \
+php sand-iam/release/tools/verify-endurance-evidence.php \
   --plan=/controlled/endurance/plan.json \
   --evidence=/controlled/endurance/samples.jsonl \
   --summary=/controlled/endurance/samples.jsonl.summary.json \

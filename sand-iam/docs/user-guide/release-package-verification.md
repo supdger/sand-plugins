@@ -78,7 +78,7 @@ ZIP 根目录应包含 `info.ini`、`config.json`、`install.sql`、`update.sql`
 macOS：
 
 ```sh
-php tools/build-independent-release.php /absolute/path/to/new-artifacts
+php release/tools/build-independent-release.php /absolute/path/to/new-artifacts
 ```
 
 Windows PowerShell（使用已存在的系统临时目录作为父目录）：

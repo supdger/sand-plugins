@@ -7,9 +7,9 @@ declare(strict_types=1);
 // it never invokes a host recovery, service, or database.
 
 $root = dirname(__DIR__, 3);
-require_once $root . '/tools/package-payload-policy.php';
+require_once $root . '/release/tools/package-payload-policy.php';
 
-$rootDescriptor = $root . '/recovery/failed-upgrade.v2.json';
+$rootDescriptor = $root . '/release/recovery/failed-upgrade.v2.json';
 $packageDescriptor = $root . '/plugin/sand-iam/recovery/failed-upgrade.v2.json';
 $rootBytes = is_file($rootDescriptor) ? file_get_contents($rootDescriptor) : false;
 $packageBytes = is_file($packageDescriptor) ? file_get_contents($packageDescriptor) : false;
@@ -45,7 +45,7 @@ $checks = [
         && ($descriptor['to_version'] ?? null) === '0.7.0'
         && ($profile['state'] ?? null) === 'prefix_033_034'
         && in_array('ledger_absent', $assertionTypes, true),
-    'normal payload policy excludes both historical descriptor mirrors' => !in_array('recovery/failed-upgrade.v2.json', $payload, true)
+    'normal payload policy excludes both historical descriptor mirrors' => !in_array('release/recovery/failed-upgrade.v2.json', $payload, true)
         && !in_array('plugin/sand-iam/recovery/failed-upgrade.v2.json', $payload, true),
     'normal payload policy preserves normal package roots after recovery exclusion' => in_array('info.ini', $payload, true)
         && in_array('update.sql', $payload, true)

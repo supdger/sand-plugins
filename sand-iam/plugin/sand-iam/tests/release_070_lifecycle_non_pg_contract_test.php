@@ -355,10 +355,10 @@ release070Assert('0.7.3 release metadata declares matching SandAdmin open minimu
     && is_array($portal) && ($portal['version'] ?? null) === '0.7.3'
     && str_contains($managementCatalog, "'version' => '0.13.0-candidate'"));
 
-$rootRecovery = (string) file_get_contents($root . '/recovery/failed-upgrade.v2.json');
-$packageRecovery = (string) file_get_contents($package . '/recovery/failed-upgrade.v2.json');
+$rootRecovery = (string) file_get_contents($root . '/release/recovery/failed-upgrade.v2.json');
+$packageRecovery = (string) file_get_contents($package . '/release/recovery/failed-upgrade.v2.json');
 $recovery = json_decode($rootRecovery, true);
-require_once $root . '/tools/package-payload-policy.php';
+require_once $root . '/release/tools/package-payload-policy.php';
 $normalPayload = sandIamPayloadFiles($root, true);
 release070Assert('historical 0.7.0 recovery descriptor remains root/plugin-identical but is excluded from normal 0.7.3 payloads',
     $rootRecovery !== ''
@@ -370,7 +370,7 @@ release070Assert('historical 0.7.0 recovery descriptor remains root/plugin-ident
     && ($recovery['profile']['schema'] ?? null) === 'sandpackage.failed-upgrade-recovery-profile/v2'
     && ($recovery['profile']['state'] ?? null) === 'prefix_033_034'
     && in_array('ledger_absent', array_column($recovery['profile']['assertions'] ?? [], 'type'), true)
-    && !in_array('recovery/failed-upgrade.v2.json', $normalPayload, true)
+    && !in_array('release/recovery/failed-upgrade.v2.json', $normalPayload, true)
     && !in_array('plugin/sand-iam/recovery/failed-upgrade.v2.json', $normalPayload, true));
 
 release070Assert('0.7.3 schema source retains exactly 86 SandIAM tables including editable initialization drafts',

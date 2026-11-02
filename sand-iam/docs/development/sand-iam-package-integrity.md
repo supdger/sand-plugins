@@ -1,11 +1,11 @@
 # SandIAM 包完整性与发布来源门禁
 
-`tools/check-package-integrity.php` 只读检查权威源码包，不访问宿主或数据库。它把“候选包内自洽”和“可发布来源”分成两道门，前者绝不等同于后者。
+`release/tools/check-package-integrity.php` 只读检查权威源码包，不访问宿主或数据库。它把“候选包内自洽”和“可发布来源”分成两道门，前者绝不等同于后者。
 
 ## 候选包内自洽
 
 ```bash
-php sand-iam/tools/check-package-integrity.php
+php sand-iam/release/tools/check-package-integrity.php
 ```
 
 默认检查迁移与根/插件生命周期、Composer/SAML 类解析、后端/路由/配置、管理端载荷、SDK 文档、PostgreSQL 方言及版本一致性。输出的 `passed/total` 只说明当前工作树中的包内文件相互匹配。
@@ -17,7 +17,7 @@ php sand-iam/tools/check-package-integrity.php
 需要交给人工或 CI 审核时，生成只读候选清单：
 
 ```bash
-php sand-iam/tools/check-package-integrity.php --print-candidate-manifest > /tmp/sand-iam-candidate.json
+php sand-iam/release/tools/check-package-integrity.php --print-candidate-manifest > /tmp/sand-iam-candidate.json
 ```
 
 候选清单的 schema 是 `sand-iam.candidate-manifest/v1`，含版本、迁移文件清单/数量、关键文件哈希和可复现包哈希。它的 `kind` 固定为 `candidate-review-only`，不能直接作为可信发布清单。
@@ -34,7 +34,7 @@ php sand-iam/tools/check-package-integrity.php --print-candidate-manifest > /tmp
 发布检查必须同时给出位于 `sand-iam/` 包根**之外**、由受控 CI 或人工发布流程保存的可信来源清单：
 
 ```bash
-php sand-iam/tools/check-package-integrity.php \
+php sand-iam/release/tools/check-package-integrity.php \
   --release \
   --trusted-manifest=/controlled/release-attestations/sand-iam-0.7.0.json \
   --trusted-public-key=/controlled/release-keys/sand-iam-ed25519.pub
@@ -76,17 +76,17 @@ TypeScript、ZIP/libzip 版本，Composer/pnpm lock 摘要、离线安装参数�
 然后一并审查生成物与契约。
 
 独立审核者使用位于包根之外、权限为 `0600` 的 Ed25519 私钥运行
-`tools/sign-release-bundle.php`。签名的 canonical JSON 同时绑定 ZIP 名称、SHA-256、字节数、
+`release/tools/sign-release-bundle.php`。签名的 canonical JSON 同时绑定 ZIP 名称、SHA-256、字节数、
 条目数、artifact manifest SHA-256、源码快照、`update.sql` 与审核来源。
-`tools/verify-release-bundle.php` 使用包外可信公钥验签，并重新打开 ZIP 校验 manifest 中的每个
+`release/tools/verify-release-bundle.php` 使用包外可信公钥验签，并重新打开 ZIP 校验 manifest 中的每个
 条目、路径安全、必需许可材料和测试排除。任何 dirty/review manifest、重打包、追加字节、
 条目变化、manifest 变化或签名不匹配都关闭失败。
 
 ## 本地 review-only 候选包
 
-权威源码中的 `tools/build-review-candidate.php` 是本地候选包入口。它先将
+权威源码中的 `release/tools/build-review-candidate.php` 是本地候选包入口。它先将
 完整受控 payload 冻结到 artifact 内的不可变临时快照，再从该快照构建；不从
-时间戳 artifact 私有脚本反向构建。`tools/package-payload-policy.php` 是 builder、
+时间戳 artifact 私有脚本反向构建。`release/tools/package-payload-policy.php` 是 builder、
 checker 共用的唯一载荷清单：包含完整插件 backend（含已提交 vendor）、
 根/插件 lifecycle 与元数据镜像、管理端运行源码、账户门户及 public assets、公共 SDK、
 用户说明和公开协议示例；排除开发文档/任务板、测试、artifact、缓存、秘密、builder/
@@ -100,9 +100,9 @@ TypeScript SDK 的 `sdk/typescript/dist/**` 是唯一可进入候选包的 `dist
 均会拒绝。SDK 构建物必须由锁定的本地 TypeScript 工具链从 `src/` 重建，禁止手改。
 
 ```bash
-php sand-iam/tools/build-review-candidate.php
+php sand-iam/release/tools/build-review-candidate.php
 ```
 
 该命令仅生成 `candidate/dirty-not-release` 的本地审核物证，绝不注册、上传、同步、
 安装或部署。每次候选及同快照的重复构建均须由 artifact 自带 manifest、provenance、
-validation/rebuild 证据复核；详见 [`tools/README.md`](../../tools/README.md)。
+validation/rebuild 证据复核；详见 [`release/tools/README.md`](../../release/tools/README.md)。

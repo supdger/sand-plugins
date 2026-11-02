@@ -10,7 +10,7 @@ $assert = static function (bool $ok, string $message) use (&$passed): void {
     ++$passed;
 };
 $root = dirname(__DIR__, 3);
-require_once $root . '/tools/consumer-acceptance-v2/LiveContract.php';
+require_once $root . '/release/tools/consumer-acceptance-v2/LiveContract.php';
 $readJson = static function (string $path): array {
     $decoded = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
     if (!is_array($decoded)) throw new RuntimeException('JSON object expected: ' . $path);
@@ -90,14 +90,14 @@ $inspect = static function (array $schema, array $rootSchema) use (&$inspect, $a
 };
 
 $schemas = [
-    'plan' => $readJson($root . '/tools/schemas/consumer-acceptance-v2-plan.schema.json'),
-    'receipt' => $readJson($root . '/tools/schemas/consumer-acceptance-v2-receipt.schema.json'),
-    'report' => $readJson($root . '/tools/schemas/consumer-acceptance-v2-report.schema.json'),
+    'plan' => $readJson($root . '/release/tools/schemas/consumer-acceptance-v2-plan.schema.json'),
+    'receipt' => $readJson($root . '/release/tools/schemas/consumer-acceptance-v2-receipt.schema.json'),
+    'report' => $readJson($root . '/release/tools/schemas/consumer-acceptance-v2-report.schema.json'),
 ];
 $fixtures = [
-    'plan' => $readJson($root . '/tools/fixtures/consumer-acceptance-v2-plan.template.json'),
-    'receipt' => $readJson($root . '/tools/fixtures/consumer-acceptance-v2-receipt.template.json'),
-    'report' => $readJson($root . '/tools/fixtures/consumer-acceptance-v2-report.fixture.json'),
+    'plan' => $readJson($root . '/release/tools/fixtures/consumer-acceptance-v2-plan.template.json'),
+    'receipt' => $readJson($root . '/release/tools/fixtures/consumer-acceptance-v2-receipt.template.json'),
+    'report' => $readJson($root . '/release/tools/fixtures/consumer-acceptance-v2-report.fixture.json'),
 ];
 foreach ($schemas as $name => $schema) {
     $assert(is_array($schema['$defs'] ?? null) && $schema['$defs'] !== [], $name . ' exposes definitions');

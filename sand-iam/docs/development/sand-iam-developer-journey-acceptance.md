@@ -157,7 +157,7 @@ Casdoor 没有与 SandIAM 完全相同的 Sand 原生 `service → action → en
 最终 unsigned release candidate 生成后，先创建绑定其 ZIP 与 manifest 摘要的包外模板：
 
 ```bash
-php sand-iam/tools/prepare-external-acceptance.php \
+php sand-iam/release/tools/prepare-external-acceptance.php \
   --kind=casdoor \
   --artifact-manifest=/controlled/candidate/manifest.json \
   --output=/controlled/evidence/casdoor-comparison.json
@@ -168,7 +168,7 @@ php sand-iam/tools/prepare-external-acceptance.php \
 同一候选、独立开发者、同环境指纹、双方各两轮指标和逐轮原始证据摘要填入该 JSON，并运行：
 
 ```bash
-php sand-iam/tools/validate-casdoor-comparison.php --report=/controlled/evidence/casdoor-comparison.json
+php sand-iam/release/tools/validate-casdoor-comparison.php --report=/controlled/evidence/casdoor-comparison.json
 ```
 
 每轮证据必须是报告目录内不重复的相对路径并携带 SHA-256。校验器要求总计 12 轮均完成业务

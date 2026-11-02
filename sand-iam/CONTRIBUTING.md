@@ -45,9 +45,9 @@ git commit -s -m "your change summary"
 不连接数据库的基础检查：
 
 ```sh
-php tools/check-package-integrity.php
-php tools/check-release-payload.php
-php tools/generate-sbom.php --check
+php release/tools/check-package-integrity.php
+php release/tools/check-release-payload.php
+php release/tools/generate-sbom.php --check
 ```
 
 PHP 文件应通过 `php -l`，TypeScript 和 Dart SDK 应使用各自锁定依赖完成类型检查与测试。

@@ -12,7 +12,7 @@ function lifecycleIdempotencyAssert(bool $condition, string $message): void
     if (!$condition) { fwrite(STDERR, $message . PHP_EOL); exit(1); }
 }
 
-$generator = file_get_contents($root . '/tools/build-lifecycle.php');
+$generator = file_get_contents($root . '/release/tools/build-lifecycle.php');
 $sourceMigration = $root . '/migrations/027_security_operation_idempotency.pgsql';
 $packageMigration = $package . '/migrations/027_security_operation_idempotency.pgsql';
 lifecycleIdempotencyAssert(is_string($generator) && str_contains($generator, "'027_security_operation_idempotency.pgsql'"), 'lifecycle generator does not include migration 027');

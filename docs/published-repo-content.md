@@ -25,8 +25,11 @@
 
 ## 已记录的判定
 
+- `release/` 是发布机器收编位（2026-11-01 收编落地）：sand-iam 的 `tools/` 与 `recovery/`、sandworkflow 的 `tools/` 已迁入 `release/tools|`recovery`。`migrations/` 与 `lifecycle/` 属安装 ZIP 载荷路径（SandPackage 升级预检与安装器按包根消费），不属发布机器，保持包根不动。公开仓发布 `release/` 中的用户验签/完整性子集，不发布构建与验收机器。
 - `sand-iam/CONTRIBUTING.md` 保留：仓内 `check-package-integrity` 与 `check-release-payload` 将其作为发布治理机制（DCO/CLA 必选其一）的硬性输入。若要移除须先改发布契约，不是删文件能解决。
-- `plugin/sand-iam/vendor/` 内部上游 dev 文件（casbin/php-saml/xmlseclibs 的 `phpunit.xml`、`.github/`）为已知残留：vendor 树被 `release-build-contract.json` 树摘要钉死，手工改动会断证明链；下次重灌依赖时以 `--no-dev`/裁剪清掉并重新生成契约摘要。
+- `plugin/sand-iam/vendor/` 上游 dev 残留已于 2026-11-01 裁剪：移除 casbin/php-saml/xmlseclibs 的 3 个 `phpunit.xml` 与 3 个 `.github/`（共 8 文件），`release-build-contract.json` 摘要已按裁剪后树重新生成（389→381 文件）。后续重灌依赖按同一口径裁剪并再生摘要。
+- `sand-iam/docs/development|product` 为协作者单一权威正文，不进公开仓与安装包（与 gate 一致）；公开仓曾短暂发过的薄契约子集已随清理移除，不恢复随包副本，杜绝薄索引与正文漂移。
+- `sandworkflow/tools/` 三脚本裁为维护者工具（2026-11-01）：`check-sandadmin-host.sh` 含开发机硬编码路径、`convert-install-sql.php` 为一次性 MySQL→PostgreSQL 转换器、`check-package-integrity.sh` 校验源码根与载荷一致性而非签名验签；三者均不进公开仓，公开仓 Wiki "随维护者源码树提供" 口径保持不变。
 - `examples/` 内的测试保留：示例是给用户复制运行的接入样板，自带测试即用户验证手段。
 - `sdk/typescript/dist/` 保留：包以原生 ESM 经 git 路径消费，`package.json` 指向 dist，属消费面产物；其余 `dist/` 一律视为开发产物。
 - 开发母仓 `sand-plugins` 保留全部测试/文档/工具；发布仓是其白名单子集，回潮即违规。

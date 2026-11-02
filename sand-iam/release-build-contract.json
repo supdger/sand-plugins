@@ -57,8 +57,8 @@
     },
     "generated_payloads": {
         "plugin/sand-iam/vendor": {
-            "file_count": 389,
-            "tree_sha256": "7de785f85bdb85ded498260c1094d0ec9d8ac21ac7c9d9bfafa56b44c923af86"
+            "file_count": 381,
+            "tree_sha256": "1fbf345c62a49330f560e337d3cf117c39d8b0d902f308bccfb4850e8945010c"
         },
         "sdk/typescript/dist": {
             "file_count": 6,

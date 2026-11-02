@@ -50,7 +50,7 @@ if (count($testsWithHostFallback) !== 40) {
     demoHostPathFail('unexpected host-fallback test count: ' . count($testsWithHostFallback));
 }
 
-$lifecycleVerifier = $sandIamRoot . '/tools/verify-human-auth-lifecycle.sh';
+$lifecycleVerifier = $sandIamRoot . '/release/tools/verify-human-auth-lifecycle.sh';
 $lifecycleSource = file_get_contents($lifecycleVerifier);
 if ($lifecycleSource === false
     || !str_contains($lifecycleSource, $hostRootVariable)

@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__, 3);
-$tool = (string) file_get_contents($root . '/tools/admin-notification-live-acceptance.php');
+$tool = (string) file_get_contents($root . '/release/tools/admin-notification-live-acceptance.php');
 
 $required = [
     "const L01_CONFIRM = 'I_CONFIRM_L01_EXISTING_DATABASE_FIXTURES_AND_CLEANUP'",

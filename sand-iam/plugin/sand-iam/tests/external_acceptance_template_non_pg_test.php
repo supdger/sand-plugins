@@ -5,13 +5,13 @@ declare(strict_types=1);
 // behavior-test-gate: static-rule
 
 $root = dirname(__DIR__, 3);
-$generator = $root . '/tools/prepare-external-acceptance.php';
-$enduranceValidator = $root . '/tools/run-endurance-acceptance.php';
-$casdoorValidator = $root . '/tools/validate-casdoor-comparison.php';
-$interopValidator = $root . '/tools/validate-protocol-interop.php';
-$recoveryValidator = $root . '/tools/validate-backup-recovery.php';
-$independentValidator = $root . '/tools/validate-independent-delivery.php';
-require_once $root . '/tools/release-bundle-attestation.php';
+$generator = $root . '/release/tools/prepare-external-acceptance.php';
+$enduranceValidator = $root . '/release/tools/run-endurance-acceptance.php';
+$casdoorValidator = $root . '/release/tools/validate-casdoor-comparison.php';
+$interopValidator = $root . '/release/tools/validate-protocol-interop.php';
+$recoveryValidator = $root . '/release/tools/validate-backup-recovery.php';
+$independentValidator = $root . '/release/tools/validate-independent-delivery.php';
+require_once $root . '/release/tools/release-bundle-attestation.php';
 $seed = tempnam('/private/tmp', 'sand-iam-external-template-');
 if ($seed === false || !unlink($seed) || !mkdir($seed, 0700)) throw new RuntimeException('cannot create external template fixture');
 

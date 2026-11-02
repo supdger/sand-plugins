@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 // behavior-test-gate: static-rule
 $root = dirname(__DIR__, 3);
-require_once $root . '/tools/check-existing-schema.php';
-require_once $root . '/tools/package-payload-policy.php';
+require_once $root . '/release/tools/check-existing-schema.php';
+require_once $root . '/release/tools/package-payload-policy.php';
 sandIamCheckExistingSchema($root);
 echo "[PASS] current declaration matches package and exact published ledger\n";
 if (!in_array('existing-schema.json', sandIamPayloadFiles($root, true), true)) {

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-$source = (string) file_get_contents(dirname(__DIR__, 3) . '/tools/machine-service-live-acceptance.php');
+$source = (string) file_get_contents(dirname(__DIR__, 3) . '/release/tools/machine-service-live-acceptance.php');
 $provider = dirname(__DIR__, 3) . '/examples/machine-service-client/provider';
 $assertions = [
     'runner refuses database creation' => !preg_match('/CREATE\\s+DATABASE|createdb/i', $source),
