@@ -72,3 +72,72 @@
 - 原生 Windows 的中文/空格/`%`/`!` 路径、二进制、CRLF、BOM 与数据标点保真，错误目标路径、盘符相对路径、当前驱动器根路径、仓库内目标和 dirty source 均拒绝。公开 SandPackage `0.1.9` 执行器在真实 PostgreSQL 中执行原 LF/CRLF 076 SQL，两者均为 `READ ONLY`，108 张表、43 条账本及结构/数据/序列摘要前后相同；BOM `42601`、缺失/冲突账本 `P0001`、只读写入 `25006` 按预期拒绝，SQL 字面量中的 `; : / \` 保留。临时夹具与 PostgreSQL 实例已清理。
 - macOS 本机真实 PHP 的最小正反例、中文路径和字节保真通过，完整修复候选的 706 项双构建通过；SQL 专用 Docker PostgreSQL 18 回归通过。当前同轮 macOS CI 仍在准备环境，不能据此报告 CI 已通过。Windows 用户实机、UNC 网络共享、管理器 HTTP/界面、完整业务链和生产部署不属于已验证结果。
 - 原始证据：`/private/tmp/iam076-windows-native-evidence/iam076-sql-evidence/sql-summary.json`、`/private/tmp/iam076-windows-native-evidence/iam076-release-evidence/rebuilt-manifest.json`、`/private/tmp/iam076-windows-third-job.log`、`/private/tmp/iam076-cross-platform-localbuild/manifest.json`、`/private/tmp/iam076-cross-platform-sql/local-summary.json`。公开 `v0.7.6-preview` ZIP 与 tag 保持原值，此源码/文档修复尚未随新 Release 或 Wiki 交付。
+
+## 5. 升级后登录/GSS 故障跟进
+
+- [x] 5.1 固定版本及升级重载链，核对官方 libpq 与发布差异；保留默认两组 PASS 的因果限制，不把规避成功当完整 native 根因。
+- [x] 5.2 在公开 SandAdmin main 隔离候选补注释化 .env、最小 README/Wiki 草稿与实际重载回归，不新增空 helper 或全平台默认。
+- [x] 5.3 零插件 Worker 初始→SIGUSR1→新 Worker 的 disable/prefer/require 三组通过；disable 只 connect/disconnect 2/2，无 SQL，其余只核对值。
+- [x] 5.4 appender 的私密备份、拒绝裸/quoted/export 显式值、重复拒绝和不输出凭据 fixture 通过；不自行应用实际宿主。
+- [x] 5.5 不同上下文 Astra 复核通过：配置边界、真实重载证据、quoted key 必修后 appender 与私密备份通过，Wiki 已收窄为重载配置回归。新目标发布权限与真实宿主配置批准仍由主控管理，不在本子任务执行。
+- [ ] 5.6 获授权后完成真实持久配置、原账号登录与升级/完整启动后登录验收；连接和源码结果不能替代。
+
+## 6. SandAI 既有 schema 接入声明跟进（SandIAM #5）
+
+- [x] 6.1 将根 existing-schema 声明绑定当前 0.7.6 SQL 与已发布073的43条账本；保留 embedded073 的42条基线供核对，不修改生命周期SQL。
+- [x] 6.2 将声明纳入统一payload政策，添加版本/SQL/账本/结构正反例与打包入口检查。
+- [x] 6.3 在现有sandai数据库只读事务中确认身份及42条账本、86表和旧指纹匹配；记录它尚不满足076接入，不执行bridge或升级。
+- [ ] 6.4 正式SandPackage/宿主接入基线可用后，备份并受控接入已冻结embedded073工件，明确授权执行现有bridge，再核对43条账本并升级076；本轮未执行。
+
+定向契约7/7及payload hygiene16/16通过；完整旧checker的5项预存失败已用修改前快照复跑确认（21/26→本轮新增通过后22/27），不作为正式发行通过。候选仍为dirty工作树审查快照，不提交、推送或改变公开preview工件。
+
+### Issue5 packaging-tool follow-up
+
+Current076 lifecycle generation now exactly matches all3 frozen SQL files; legacy embedded073 generates the same3 digests as the untouched historical builder in an isolated fixture. Current checker distinguishes076 read-only upgrade and043 baseline from historical072→073, validates042 self-checksum, current dependency root version and declared host-support syntax. Frozen dependency bytes remain locked; explicit rebuild-toolchain mode still rejects this machine's differing PHP/zip versions. Clean tracked HEAD remains a required, unmet source-provenance gate in this mixed working tree. No lifecycle SQL, vendor or SDK bytes were changed.
+
+## 7. 安装后根路由 404 的 Core 修复
+
+- [x] 7.1 固定公开 Core 与宿主本地补丁差异，以真实路由链中立复现并经独立 Astra 提供方通用性审查通过，详见 design。
+- [x] 7.2 独立 Core 候选落实两文件修复，补真实注册链回归、类型检查、独立验收与物理 Windows 同代码回归。
+- [ ] 7.3 获明确授权后提交/合并 Core、发布及备份后宿主消费更新，核对清单与浏览器原入口；不把离线通过当真实插件安装通过。
+
+7.2 证据（2026-10-03）：独立 Core 候选 `/private/tmp/sand-core-root-recovery-20261003` 基于公开 main e903c1b；macOS 和物理 Windows Node 20.14.0 均 7/7，未参与实现的 Astra 固定候选复验 7/7。完整 vue-tsc --noEmit 在复用同依赖生成声明后通过，差异检查和 OpenSpec strict 通过；未宣称 Vite 构建通过。四文件固定摘要与 patch 在 `/private/tmp/sand-root-route-diagnostic-20261003/`。Windows 是源码/memoryHistory 验证，不是 HTTP/浏览器/插件安装。Core 尚未提交、发布、同步宿主，7.3 保持未完成。
+
+7.2 构建补验（2026-10-03）：将候选 node_modules 的缓存目录隔离到本任务临时目录，正式 Vite 配置和冻结四文件均未改；Vite 7.1.7 production build exit 0，2976 模块，16.58 秒，338 个产物。随后使用该构建自行生成的声明执行完整 vue-tsc --noEmit，exit 0。构建仅使用官方 example 环境副本且已精确删除副本，未写宿主依赖或缓存、未启停服务。产物摘要清单 `/private/tmp/sand-root-route-diagnostic-20261003/build-dist-sha256.json`，SHA-256 `99c4b562ffaad2fea0c7d373e3da8a849ffe82c2646398f8ddf0a0dd08437db6`。此前构建缺口已补齐，发布与宿主消费仍未执行。
+
+## 8. 0.8.0 目标引导
+
+- [x] 8.1 按已知授权与可见应用缩小范围；六目标拆分，复用对象和第二目标。
+- [x] 8.2 当前步骤说明输入来源、责任方、结果、恢复和下一步；跨页恢复，无权不可操作。
+- [x] 8.3 helpers、适用类型与构建通过；固定候选提供隔离浏览器入口。
+- [ ] 8.4 独立冷读浏览器验收及缺陷复验，记录真实业务与宿主未验范围。
+
+7.3 发布与消费进展（2026-10-03，用户已明确确认本轮完整范围）：Core 源码 ae7c66f 经 PR https://github.com/supdger/sand-core/pull/8 正常合并，公开 main 与 tag 0.1.9 均指向 b2353810d8c634c9c47f2636f8719f68ea17c02f；正式 Release https://github.com/supdger/sand-core/releases/tag/0.1.9 与 Packagist 版本/ref 已回读一致。ttt 宿主备份于 `/private/tmp/sand-core-host-backup-20261003-0.1.9`，Composer 精确只更新 Core 0.1.7→0.1.9；lock、installed、前端清单一致，399 个前端文件和 Core 后端对 vendor 校验通过，IAM/Package/环境保持摘要不变。无 SQL、无服务重启。主控在原已登录页面验证 `/#/` 到工作台、刷新和 IAM 管理总览，warn/error 为空；截图及更新日志在 `/private/tmp/sand-root-route-diagnostic-20261003/`。实际退出重登等待用户完成，真实 IAM 重新安装未执行，7.3 暂不勾选。已清理本任务 Composer 缓存及候选依赖链接目录；保留源码、构建产物、证据和私密回滚备份。
+
+8.1–8.3 证据（2026-10-03）：V3 管理端149项固定源码清单 `/private/tmp/iam080-guidance-20261003/harness-v3/candidate-v3-manifest.json`（SHA256 `f5e68c346856f2130cc9c8fb5994bb35770260e47737cf4449be64b50861adcb`），完整 vue-tsc、Vite 7.1.7 production build 3171模块/22.12秒、既有UX helper与新增goal分支/无权/环境/受众行为case通过；同源及build逐项对账通过。独立浏览器V1已发现重复选择调用身份/受众，V3修正后待复验；8.4未勾选。fixture不连接真实后端，developer文档由真实静态目录生成器导出，stub只覆盖界面响应形状。首次client受众在现有service/action目录中无发布字段，仍由提供方交付；grant受众从已读client带入，不凭名称猜测。
+
+8.4 信息边界：实现者曾向独立验收上下文提供V1已知缺口及V2修复摘要，因此受该提示影响的后续检查必须记为独立复验，不追认成无提示首次冷读。原始首次路径、失败与提示时间由主控的验收记录保留。
+
+8.4 真实宿主第三处阻断返工（2026-10-03）：app20 权限目标遗漏动作声明，策略手填 `inspect` 后真实保存返回 HTTP409 `SAND_IAM_APPLICATION_ACTION_UNDECLARED`，表单与通用 toast 原因冲突。已补权限目标动作前置、接口目标资源前置，并将策略/接口动作改为当前应用真实目录选择；停用/未声明旧值可见但不可提交，缺失时保留草稿打开应用动作目录后刷新。已有动作复用，机器目录缺失说明对应提供方职责。表单创建/编辑精确错误统一在弹窗内呈现。
+
+本轮定向 helper、目标分支/导航、动作选择应用隔离/迟到响应/停用旧值/分页/关闭、编辑器准确代码与无效阻断、ResourceList 409 恢复检查通过；完整 vue-tsc 通过，Vite 7.1.7 构建 3175 模块/14.91 秒通过。默认 helper 脚本引用的旧 sandadmin-demo 依赖目录不存在，实际通过已安装的 `/private/tmp/iam080-live-frontend-20261003/new-application-typecheck/node_modules/tsx/dist/loader.mjs` 运行同一测试入口，未安装新依赖。冻结清单及增量 patch 在 `/private/tmp/iam081-prerequisite-fix/`，叠加前两处既有修复。未改 PHP、SQL、宿主、数据库或服务，未提交/发布；新版标准包安装后的独立实际复验待主控继续，8.4 不勾选。
+
+8.4 Windows 实际内置门户第四处阻断返工（2026-10-03）：标准 0.8.1 安装的独立 UI 验收证实，应用认证策略与部署注册开关配置后，缺少启用登录外观仍返回 `EXPERIENCE_NOT_FOUND`；手工登记既有体验页面后才实际注册登录。源码已在内置邀请/注册目标的认证策略后补必要“内置门户登录外观”步骤，以 status=1 核对当前应用，优先复用已有配置；自有登录页面分支改走公开开发接入及原页面验证，不要求内置外观或重复开户。
+
+局部门户错误仅在密码登录请求尚未完成且 HTTP401/`SAND_IAM_AUTHENTICATION_FAILED` 时显示“登录未成功”，不改变其他会话或接口的 401 语义。相关 goal 分支/权限/应用筛选/导航与既有 helper 通过；门户完整 TypeScript 与既有生产代码行为测试通过，新增错误密码实际提交及 token-expired/其他操作反例断言通过；管理端完整 vue-tsc 及 Vite 3175 模块/15.86 秒构建通过。生成的 account.js 从隔离冻结源码运行现有 build.mjs 得到，差异仅本轮错误提示与请求阶段区分，index.html 未变。清单/增量补丁及门户测试日志位于 `/private/tmp/iam081-login-experience-fix/`。未修改后端、数据库、权限引擎、默认配置、安装宿主或 immutable 0.8.1 包，未提交发布；不同上下文源码审查及新候选真实 UI 复验待继续，8.4 保持未勾选。
+
+8.4 策略状态误导第五处返工（2026-10-03）：Windows 实际业务先保存 state=published/status=1 后仍 POLICY_DENIED、历史0；执行正常发布后历史1且本人允许/范围外拒绝实测通过，隔离了“保存≠发布”的前置。仅策略页面已移除手填 state，列表依据现有 API 发布指针显示尚未发布/已发布启用/已发布暂停/未知；保存与发布反馈分开，并指向现有版本历史确认。共享列表只增加可选列格式化和成功文案，默认其他页面行为不变；不改任何发布或授权后端语义。
+
+新增 helper 覆盖 null/0/正整数/数字字符串/缺失异常/停用与未知状态；既有编辑器行为证实创建、修改 payload 不带隐藏 state，既有列表行为证实编辑保存不自动发布、不替换运行指针，正常发布请求及单独反馈保留。上述定向回归、完整 vue-tsc 通过；Vite 3176 模块/15.85 秒构建通过。单独 9 文件增量与最终 OpenSpec 摘要在 `/private/tmp/iam081-policy-publication-fix/`；上一批登录外观/门户 12 文件中的非 OpenSpec 字节全部保留。未改后端/数据库/宿主/原 immutable081 包，未提交发布；仍待不同上下文审查与实际安装 UI 复验，8.4 未勾选。
+
+8.4 空条件往返第六处返工（2026-10-03）：Windows 已安装 0.8.2 的真实策略留空创建、发布及四项业务允许/拒绝通过后，API 返回 `condition: []`，再次编辑被前端误判无法读取且无 HTTP。条件/范围共用解析现只接受合法空数组作为空约束，提交规范为 `{}`；普通对象解析、非空数组和未知/畸形规则保持严格阻断。
+
+实际 ConditionEditor 与 ResourceEditor 脚本联动回归覆盖空创建→模拟已观察到的 `[]` 回读→修改范围/优先级→submit，以及两字段的非法规则不发 submit、不清空原值；同一新增回归在冻结旧解析器上复现失败，在修复后通过。既有 helper、完整 vue-tsc、Vite 3176 模块/15.76 秒构建及 OpenSpec strict 校验通过。此组件与 helper 回归不代替真实 HTTP/UI 验收。产物冻结于 `/private/tmp/iam083-empty-condition-fix/`，仅前端解析器、相关测试及本 OpenSpec；后端、SQL、元数据和 immutable 0.8.2 包未改，独立源码审查及 0.8.3 标准安装后的原生 UI 复验待继续。
+
+## 9. 新克隆的默认 Core 消费入口
+
+- [x] 9.1 核实 SandAdmin 公开 main 5d9cb4e 仍锁 Core 0.1.8；独立候选将最低约束改为 ^0.1.9、锁定 Core 0.1.9@b235381，其余包记录不变。
+- [x] 9.2 在无 vendor、无 server/.env 的独立 fresh 副本执行 README 的 composer install，保留全部标准脚本；macOS 102 包安装 exit 0，399 个前端及两修复文件摘要、安装版本/ref 一致，独立 Astra 只读复核通过。无数据库/服务操作，不宣称业务登录或真实插件安装通过。
+- [x] 9.3 用户确认后，SandAdmin 两文件修复经 PR #33 正常合并；公开 main bdc8f8e6a1ff4165b04331d795be5338f942ccb8 的两文件摘要等于冻结。再次从公开 main 新克隆按 README 执行 composer install，102 包及标准 hooks 全部成功，Core 0.1.9@b235381、399 前端文件与两修复摘要一致。物理 Windows 的同一冻结候选 fresh 安装由独立子任务验证通过；未把安装验收写成业务登录验收。
+
+本轮候选 `/private/tmp/sandadmin-core-minimum-20261003`，fresh 副本 `/private/tmp/sandadmin-core-fresh-install-20261003`，证据 `/private/tmp/sandadmin-core-minimum-evidence-20261003`。只修改 server/composer.json 和 server/composer.lock；README/Wiki 现有默认命令未改变，无额外文档改写或 Wiki 发布。Composer validate --strict --no-check-publish 通过。源码提交 d6b22eb6225d31e7cc10dd9d7e334f58301019c6，公开 PR https://github.com/supdger/sandadmin/pull/33 已合并。最终公开 main 安装结果及原生日志分别为证据目录中的 public-main-install-result.json、public-main-composer-install.log；最终 fresh 副本为 /private/tmp/sandadmin-public-main-install-20261003。未执行数据库、服务或运行宿主操作，7.3 实际退出重登边界保持原记录。
