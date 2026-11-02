@@ -6,10 +6,6 @@
 .github/ export-ignore
 .husky/ export-ignore
 .idea/ export-ignore
-.prettierignore export-ignore
-.prettierrc export-ignore
-.stylelintignore export-ignore
-.stylelintrc.cjs export-ignore
 .vscode/ export-ignore
 /sandadmin-artd/.env export-ignore
 /sandadmin-artd/.env.development export-ignore
@@ -19,11 +15,9 @@ commitlint.config.cjs export-ignore
 composer.lock export-ignore
 desktop.ini export-ignore
 dist/ export-ignore
-eslint.config.mjs export-ignore
 lint-staged.config.cjs export-ignore
 lint-staged.config.js export-ignore
 lint-staged.config.mjs export-ignore
-mock/ export-ignore
 node_modules/ export-ignore
 tests/ export-ignore
 vendor/ export-ignore
