@@ -1,5 +1,5 @@
 -- ----------------------------
--- sandworkflow 工作流插件 安装脚本（SandAdmin 6.x）
+-- sandworkflow 工作流插件 安装脚本（SandAdmin 0.1.x）
 -- 配置表 int；运行时表 char(21) NanoID + ActorRef 作用域字段
 -- version: 1.0.7
 -- ----------------------------

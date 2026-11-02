@@ -1,7 +1,7 @@
 # SandWorkflow 工作流用户使用文档
 
 > 适用版本：`sandworkflow` 1.0.7
-> 适用平台：SandAdmin 6.x
+> 适用平台：SandAdmin 0.1.x
 
 SandWorkflow 工作流用于在 SandAdmin 中配置审批流程、发起审批、处理待办，并留存每一次流转的完整记录。
 

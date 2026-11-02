@@ -1,60 +1,34 @@
 # SandWorkflow
 
-SandWorkflow 是 SandAdmin 的 PostgreSQL 工作流插件，提供流程分组、可视化流程定义、发布、发起、待办、已办、抄送和流程数据管理。
+SandWorkflow 是 SandAdmin 的 PostgreSQL 工作流插件，提供流程设计、发布、发起、审批、待办、抄送和流程数据查询。流程管理员设计与发布流程，发起人提交申请，审批人处理待办。
 
-> **来源与边界**：这是面向 SandAdmin 的 PostgreSQL 适配包，不是 MySQL 到 PostgreSQL 的原地数据迁移工具。它依赖 SandAdmin 提供的用户、角色、部门、菜单和权限基础能力。它不应被描述为 SandAdmin 以外任何项目的官方发行包；单独分发时必须保留适用的上游、第三方和许可证声明。
+## 版本更新
 
-> **权威源码**：本目录是 `sand-plugins` 工作区中 SandWorkflow 的唯一权威源码单元。`/Users/code/project/sand_plugins/sandadmin-demo-host` 的安装副本只用于受控同步与真实验收，不能作为并行开发源。`/Users/code/project/sandadmin` 是纯净通用宿主，只用于零插件基线。同步规则和迁移记录见 [SOURCE_OF_TRUTH.md](SOURCE_OF_TRUTH.md)。
+[Wiki 版本更新](https://github.com/supdger/sand-workflow/wiki/Changelog)直接说明近期变化与升级影响；[完整更新日志](CHANGELOG.md)保留版本记录。当前公开下载为预览包，发布状态与安装资产见 [Releases](https://github.com/supdger/sand-workflow/releases)。
 
-## 许可证与上游
+## 源码与安装包
 
-SandWorkflow 包含基于
-[`zhangjinlibra/workflow-web`](https://github.com/zhangjinlibra/workflow-web)
-修改的流程设计器代码。上游及本衍生发行包均适用 GNU Affero General
-Public License version 3；完整条款见 [LICENSE](LICENSE)，来源和修改范围见
-[NOTICE](NOTICE)。保留这些材料不代表本插件是上游项目的官方发行版，也不授予其商标权。
+直接使用请下载 Release 附件中的完整插件 ZIP，并核对来源、宿主范围和校验材料。GitHub 的 `Source code (zip)` 是源码压缩包，不是插件安装包。
 
-## 兼容性
+本仓包含插件后端、管理端源码与生命周期 SQL；开发和构建见[开发指南](https://github.com/supdger/sand-workflow/wiki/SandWorkflow-Development)。
 
-| 项目 | 要求 |
-| --- | --- |
-| 插件版本 | 以 `info.ini` 的当前版本为准（当前为 `1.0.7`） |
-| 宿主 | SandAdmin 6.x |
-| 数据库 | PostgreSQL；默认连接名为 `pgsql` |
-| 前端依赖 | 见 `config.json` |
+## 安装与第一次流程
 
-安装前请确认目标宿主已完成初始化，并在隔离环境验证插件版本与宿主版本的组合。历史 MySQL 数据不能直接通过本包原地转换。
+需要已有的 SandAdmin PostgreSQL 宿主和 SandPackage，由宿主管理员安装插件并提供流程管理员、发起人、审批人账号及相应权限。兼容范围、包校验和安装步骤见[安装与升级](https://github.com/supdger/sand-workflow/wiki/SandWorkflow-Installation)。已有数据先备份，不能通过重装修复。
 
-## 安装、升级与卸载
+1. 通过宿主插件管理安装完整包，按安装指南构建、激活管理端，并授予流程相关权限。
+2. 流程管理员创建分组与流程定义，配置表单和一个审批节点，发布流程。
+3. 发起人提交一条申请；审批人在待办中通过，再查看实例详情与流转记录。
 
-1. 从与本 README 同一版本的发行包安装插件；安装器会使用包内 `install.sql`。
-2. 安装后刷新后台菜单，为需要的角色授予 SandWorkflow 菜单和按钮权限。
-3. 以有流程管理权限的账号登录，确认工作流菜单可见，并完成一条最小流程的发布、发起和审批验证。
-4. 升级仅使用同一发行包提供的升级生命周期实现；升级前备份业务数据，并在隔离 PostgreSQL 环境验证。
-5. 卸载会执行包内的卸载生命周期。卸载前必须明确数据保留要求并完成备份；不要把卸载当作恢复或迁移手段。
+第一条流程的可确认结果是：实例显示“已通过”，发起人、审批人和流程管理员能在各自授权入口查询本次记录。具体操作见[第一次完成流程](https://github.com/supdger/sand-workflow/wiki/SandWorkflow-First-Workflow)。
 
-发布包中的 `install.sql`、`update.sql`、`uninstall.sql` 与 `plugin/sandworkflow/` 内同名文件必须保持一致。
+## 使用文档
 
-## 使用说明
+- [Wiki 首页](https://github.com/supdger/sand-workflow/wiki)：安装、使用与维护入口。
+- [设计与发布](https://github.com/supdger/sand-workflow/wiki/SandWorkflow-Design-and-Publish)、[审批与查询](https://github.com/supdger/sand-workflow/wiki/SandWorkflow-Tasks-and-Data)：日常流程操作。
+- [角色与权限](https://github.com/supdger/sand-workflow/wiki/SandWorkflow-Permissions)、[排障](https://github.com/supdger/sand-workflow/wiki/SandWorkflow-Troubleshooting)：授权与故障处理。
+- [版本与验收范围](https://github.com/supdger/sand-workflow/wiki/SandWorkflow-Versions)：兼容条件和已知验证范围。
 
-- 完整的产品操作流程见[用户使用文档](USER_GUIDE.md)。
-- PostgreSQL 包约束和 SQL 再生成说明见[POSTGRESQL.md](POSTGRESQL.md)。
-- 版本变更与已验证范围见[RELEASE_NOTES.md](RELEASE_NOTES.md)。
-- 开发状态和验收门槛见[PROGRESS.md](PROGRESS.md)。
-- 构建或上传候选包前运行 `tools/check-package-integrity.sh`，确认根/后端元数据、运行版本和生命周期 SQL 一致。
-- 同步到默认演示验收宿主后，运行 `tools/check-sandadmin-host.sh`；该检查会同时核对菜单组件、发布包、后端和前端载荷，缺少任一部分都不得进入页面验收。
+## 许可与反馈
 
-## 发布者检查单
-
-- [ ] `info.ini`、README、发布说明和包版本一致。
-- [ ] 后端载荷、前端载荷、生命周期 SQL 和文档都包含在发布包中。
-- [ ] `LICENSE` 与 `NOTICE` 已包含在发布包中，且上游来源和 AGPL-3.0 声明未被删除。
-- [ ] 在干净 PostgreSQL 宿主完成安装、权限授予和核心流程验证。
-- [ ] 升级或卸载涉及数据时，已记录实际验证范围和备份策略。
-- [ ] 随包附带适用的许可证、NOTICE 和第三方声明；不得删除继承文件中的归属信息。
-
-## 已知限制
-
-- 本包不提供 MySQL 到 PostgreSQL 的原地数据迁移。
-- 公式仅支持数字、括号和四则运算，不执行任意 JavaScript。
-- 静态检查或构建通过不等于目标宿主的安装、登录或业务回归已经验收。
+流程设计器基于 [workflow-web](https://github.com/zhangjinlibra/workflow-web) 修改，适用 [GNU AGPL v3](LICENSE)；来源和修改说明见 [NOTICE](NOTICE)。问题与建议请提交到 [Issues](https://github.com/supdger/sand-workflow/issues)。

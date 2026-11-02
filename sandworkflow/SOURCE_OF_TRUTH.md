@@ -21,7 +21,7 @@ not copy changes from it into a release without review.
 Normal SandWorkflow demonstrations and acceptance use this configured host:
 
 ```text
-/Users/code/project/sand_plugins/sandadmin-demo-host
+/Users/code/project/sand_demo
 ```
 
 It may temporarily receive the exact version of this package as a deployment
