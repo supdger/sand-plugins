@@ -18,6 +18,17 @@ final class InstallGuard
     public const MIN_PASSWORD_LENGTH = 12;
     public const DEFAULT_ADMIN_USERNAME = 'admin';
 
+    /**
+     * 0.2.7 之前种子数据的全部去重默认口令哈希（均为弱默认口令的 bcrypt）。
+     * 与 db/update-0.2.7.pgsql 中 UPDATE 的 IN 列表保持一致，由测试校验。
+     */
+    public const LEGACY_PASSWORD_HASHES = [
+        '$2y$10$wnixh48uDnaW/6D9EygDd.OHJK0vQY/4nHaTjMKBCVDBP2NiTatqS',
+        '$2y$10$J3EkwRH8rNkveaanx1.j.ebRiBpnnVUGWa.i2MS3aNpb9ydAOolmm',
+        '$2y$10$H8d7riOjOiwPSopguEQ1fuKZz.fA0A54OvuzTqgJlbG1N3uOxEwM.',
+        '$2y$10$sY/4StKVV.N/8Ock8J8kdeIOK4jS4tAUoYjkzvB8Tzy0fLh.wA2KS',
+    ];
+
     private const TOKEN_PATTERN = '/^[0-9a-f]{64}$/D';
     private const USERNAME_PATTERN = '/^[A-Za-z0-9_.@-]{3,64}$/D';
     private const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#%^*-_=+';
@@ -179,6 +190,24 @@ final class InstallGuard
         }
 
         return null;
+    }
+
+    /**
+     * 初始管理员是否要求首次登录改密：随机生成的密码必须改；
+     * 操作者自行填写但命中旧默认口令（哈希等值匹配）同样必须改。
+     */
+    public static function requiresPasswordChange(bool $generated, string $password): bool
+    {
+        if ($generated) {
+            return true;
+        }
+        foreach (self::LEGACY_PASSWORD_HASHES as $hash) {
+            if (password_verify($password, $hash)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static function readToken(string $path): ?string

@@ -187,6 +187,7 @@ class InstallController extends OpenController
         if ($passwordGenerated) {
             $adminPassword = InstallGuard::generatePassword();
         }
+        $mustChangePassword = InstallGuard::requiresPasswordChange($passwordGenerated, $adminPassword);
 
         try {
             $db = $this->getPdo($driver, $host, $user, $password, $port, $database);
@@ -222,7 +223,7 @@ class InstallController extends OpenController
             }
             $db->exec((string) file_get_contents($platformMenuSql));
             $this->installPgsqlOrmMetadata($db);
-            $this->provisionAdmin($db, $adminUsername, password_hash($adminPassword, PASSWORD_DEFAULT));
+            $this->provisionAdmin($db, $adminUsername, password_hash($adminPassword, PASSWORD_DEFAULT), $mustChangePassword);
             $db->commit();
         } catch (\Throwable $e) {
             if ($db->inTransaction()) {
@@ -279,10 +280,12 @@ class InstallController extends OpenController
                 // 仅随机生成时回显一次；操作者自行填写的密码不回显。
                 'password' => $passwordGenerated ? $adminPassword : null,
                 'password_generated' => $passwordGenerated,
-                'must_change_password' => true,
+                'must_change_password' => $mustChangePassword,
                 'notice' => $passwordGenerated
-                    ? '该密码只显示这一次，请立即保存。首次登录后必须先修改密码。'
-                    : '请使用安装时填写的管理员密码登录；首次登录后必须先修改密码。',
+                    ? '已生成随机密码且首次登录必须修改密码。该密码只显示这一次，请立即保存。'
+                    : ($mustChangePassword
+                        ? '所填写密码命中已知旧默认口令，首次登录后必须先修改密码。'
+                        : '请使用安装时填写的管理员密码登录。'),
             ],
         ], '安装成功');
     }
@@ -300,15 +303,16 @@ class InstallController extends OpenController
     }
 
     /**
-     * 写入初始管理员（种子中 id=1 的占位账号）：用户名、口令哈希、启用并要求首次登录改密。
+     * 写入初始管理员（种子中 id=1 的占位账号）：用户名、口令哈希、启用；$mustChangePassword
+     * 为真时要求首次登录改密（随机生成或命中旧默认口令时由调用方置真）。
      * 其余种子账号的占位口令统一替换为随机哈希，且保持禁用。
      */
-    protected function provisionAdmin(\PDO $db, string $username, string $passwordHash): void
+    protected function provisionAdmin(\PDO $db, string $username, string $passwordHash, bool $mustChangePassword): void
     {
         $statement = $db->prepare(
-            'UPDATE "sand_system_user" SET "username" = :username, "password" = :password, "status" = 1, "must_change_password" = 1 WHERE "id" = 1'
+            'UPDATE "sand_system_user" SET "username" = :username, "password" = :password, "status" = 1, "must_change_password" = :must_change WHERE "id" = 1'
         );
-        $statement->execute(['username' => $username, 'password' => $passwordHash]);
+        $statement->execute(['username' => $username, 'password' => $passwordHash, 'must_change' => $mustChangePassword ? 1 : 0]);
         if ($statement->rowCount() !== 1) {
             throw new \RuntimeException('初始管理员账号种子数据缺失，安装已回滚');
         }

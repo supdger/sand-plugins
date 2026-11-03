@@ -42,10 +42,10 @@ Composer 安装或更新时，Webman 插件安装钩子会将匹配版本的前�
 
 1. **安装令牌**：服务启动（或首次打开安装页）时，服务器生成一次性令牌，输出到运行 SandAdmin 的控制台/日志，同时保存在仅属主可读的 `runtime/install-token`。安装页必须填写该令牌；缺失或错误时在连接数据库之前即被拒绝。安装成功后令牌文件自动删除并写入 `runtime/install.lock`。令牌不会出现在任何网页中。
 2. **管理员账号**：安装页填写管理员用户名和密码（至少 12 位，需确认）；密码留空则随机生成强密码，只在安装成功页显示一次。仓库种子数据不含任何默认口令；选择“附带演示数据”时，演示账号保持禁用。数据库须已存在，库名由安装页填写，没有默认库名；`DB_PASSWORD` 也没有默认值。
-3. **强制改密**：初始管理员首次登录后必须先修改密码（至少 12 位且不同于原密码），修改前后端拒绝除“修改本人密码”“获取用户信息”之外的所有接口，管理端自动跳转 `/auth/change-password`。升级已有部署时先执行 `server/plugin/sandadmin/db/update-0.2.7.pgsql` 增加 `must_change_password` 字段。
+3. **强制改密**：初始管理员在密码随机生成或命中旧默认口令时，首次登录后必须先修改密码（至少 12 位且不同于原密码）；操作者自行填写符合要求的密码则不强制。强制改密期间后端拒绝除“修改本人密码”“获取用户信息”之外的所有接口，管理端自动跳转 `/auth/change-password`。升级已有部署时先执行 `server/plugin/sandadmin/db/update-0.2.7.pgsql` 增加 `must_change_password` 字段，并将口令哈希仍命中旧种子默认哈希的账号标记为强制改密（幂等，不修改密码本身）。
 4. **JWT 密钥**：`config/plugin/tinywan/jwt/app.php` 中 `access_secret_key`、`refresh_secret_key` 不得为空、不得仍是 `__JWT_ACCESS_SECRET_KEY__` / `__JWT_REFRESH_SECRET_KEY__` 占位符，且至少 32 字节；否则服务拒绝启动、登录与鉴权请求被拒绝，并提示重新生成（例如 `php -r "echo bin2hex(random_bytes(32));"`）。`tinywan/jwt` 安装时配置文件不可写会静默保留占位符，请在安装后确认。
 5. 令牌文件、安装锁和 JWT 配置含运行时秘密，不得提交到 Git。
-6. SecurityBootstrap 在每个 worker 启动时校验 JWT 密钥，`php webman <cmd>` 等 CLI 命令同样会执行该校验；密钥无效时按报错信息重新生成即可。
+6. SecurityBootstrap 在每个 worker 启动时校验 JWT 密钥，`php webman <cmd>` 等 CLI 命令同样会执行该校验；密钥无效时 Workerman 主进程随之停止（不会陷入 worker 重启循环），按报错信息重新生成密钥后重新启动即可。
 7. 纯环境变量部署（无 `.env`、无锁文件）的宿主会一直被视为未安装，安装入口保持令牌门控；此类部署建议安装后手工创建 `server/runtime/install.lock`。
 
 ### 安装页的静态资源检查

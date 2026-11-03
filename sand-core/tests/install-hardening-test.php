@@ -175,8 +175,9 @@ namespace {
             if ($entry[0] === 'execute' && is_array($entry[1]) && isset($entry[1]['username'])) { $update = $entry[1]; }
         }
         check($update !== null && password_verify($admin['password'], $update['password']) && $update['username'] === 'admin', 'installer stores password_hash of the shown password');
+        check($update['must_change'] === 1, 'generated password stores must_change_password = 1');
         $statements = implode("\n", array_map(static fn(array $entry): string => $entry[0] === 'prepare' ? $entry[1] : '', $sqlLog));
-        check(str_contains($statements, '"must_change_password" = 1') && str_contains($statements, '"status" = 2'), 'initial admin flagged and demo placeholder accounts disabled');
+        check(str_contains($statements, '"must_change_password" = :must_change') && str_contains($statements, '"status" = 2'), 'initial admin flag bound as parameter and demo placeholder accounts disabled');
         check($controller->database->committed && $controller->reloads === 1, 'transaction committed and reload requested');
         check(is_file($root . '/.env') && is_file($root . '/runtime/install.lock'), '.env and install.lock written');
         check(!is_file(InstallGuard::tokenPath($root)), 'token file removed after successful install');
@@ -206,6 +207,31 @@ namespace {
         $response = $fresh->index();
         check(status($response) === 200 && $response->body === 'install/index', 'index renders while not installed');
         check(is_file(InstallGuard::tokenPath($root)), 'first visit creates the one-time token');
+
+        // ---- 自行填写密码：不强制改密 ----
+        $token2 = trim((string) file_get_contents(InstallGuard::tokenPath($root)));
+        $sqlLog = [];
+        $chosen = new TestInstallController();
+        $response = $chosen->install(new Request(payload(['installToken' => $token2])));
+        check(status($response) === 200, 'install succeeds with an operator-chosen password');
+        $admin = $response->data['data']['initial_admin'];
+        check($admin['password_generated'] === false && $admin['password'] === null && $admin['must_change_password'] === false, 'chosen password is not flagged for forced change and never echoed');
+        check(!str_contains((string) $admin['notice'], '必须修改密码'), 'chosen-password notice does not mention forced change');
+        $update = null;
+        foreach ($sqlLog as $entry) {
+            if ($entry[0] === 'execute' && is_array($entry[1]) && isset($entry[1]['must_change'])) { $update = $entry[1]; }
+        }
+        check($update !== null && $update['must_change'] === 0 && password_verify('correct horse battery', $update['password']), 'installer stores must_change_password = 0 for a chosen password');
+
+        // ---- 强制改密判定边界 ----
+        check(InstallGuard::requiresPasswordChange(true, 'correct horse battery') === true, 'generated password always requires change');
+        check(InstallGuard::requiresPasswordChange(false, 'correct horse battery') === false, 'chosen password does not require change');
+        check(InstallGuard::requiresPasswordChange(false, '123456') === true, 'chosen password matching a legacy default hash requires change');
+
+        // ---- 锁文件覆盖场景复用：清掉本次安装产物继续后续检查（令牌已被 markInstalled 删除） ----
+        unlink($root . '/.env');
+        unlink($root . '/runtime/install.lock');
+        check(!is_file(InstallGuard::tokenPath($root)), 'successful install removes the token file');
 
         // ---- 配置模板：库名/密码无回退 ----
         $generate = new class extends TestInstallController {
@@ -259,6 +285,10 @@ namespace {
         foreach ($scanned as $file) {
             $content = (string) file_get_contents($file);
             check(!str_contains($content, '123456'), basename($file) . ' contains no 123456');
+            // update-0.2.7.pgsql 有意包含旧默认口令哈希（UPDATE 等值匹配置标志），由专项断言与 git 基线校验
+            if (basename($file) === 'update-0.2.7.pgsql') {
+                continue;
+            }
             check(preg_match('/\$2[abxy]\$\d\d\$[.\/A-Za-z0-9]{53}/', $content) !== 1, basename($file) . ' contains no bcrypt hash');
         }
         foreach (['sandadmin-6.0', 'sandadmin-pure'] as $name) {
@@ -274,6 +304,12 @@ namespace {
         }
         $update = (string) file_get_contents($core . '/db/update-0.2.7.pgsql');
         check(str_contains($update, 'ADD COLUMN IF NOT EXISTS "must_change_password" smallint NOT NULL DEFAULT 0'), 'update SQL is idempotent and matches the install definition');
+        check(preg_match('/UPDATE "sand_system_user"\s+SET "must_change_password" = 1\s+WHERE "password" IN \(/s', $update) === 1, 'update SQL flags accounts whose password matches a known legacy hash');
+        check(preg_match('/SET\s+"password"\s*=/i', $update) !== 1, 'update SQL never rewrites the password column');
+        foreach (InstallGuard::LEGACY_PASSWORD_HASHES as $hash) {
+            check(str_contains($update, "'" . $hash . "'"), 'update SQL lists legacy hash ' . substr($hash, 7, 8));
+        }
+        check(substr_count($update, '$2y$10$') === count(InstallGuard::LEGACY_PASSWORD_HASHES), 'update SQL lists exactly the legacy hash set');
         check(!str_contains($update, '`') && stripos($update, 'AUTO_INCREMENT') === false, 'update SQL uses PostgreSQL syntax only');
 
         // ---- 页面包含令牌输入框与获取说明 ----

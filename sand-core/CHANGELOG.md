@@ -11,6 +11,10 @@
 - JWT 密钥自检：启动（`config/bootstrap.php` 注册的启动自检）以及登录、鉴权中间件都会校验 `tinywan/jwt` 的 access/refresh 密钥，为空、仍是 `__JWT_*__` 占位符或短于 32 字节即拒绝启动/请求并给出重新生成方法，不再静默放行。安装向导在密钥不安全时同样拒绝安装。`scripts/sync-sandadmin-demo.sh` 发现 demo 宿主 JWT 配置缺失、不可读或仍是占位符时改为非零退出。
 - 行为变化：安装完成后 `/core/install` 返回 404，不再展示“重新检查”完成页；管理端入口检查仍在安装向导完成页内进行，之后直接访问后台地址。
 - 升级须知：已有部署需执行 `db/update-0.2.7.pgsql`（幂等，增加 `must_change_password` 列；未执行前账号按“无需改密”处理，不会被锁定）；旧版 `.env` 已存在的宿主不受安装器影响。**仍使用旧默认口令 `admin/123456` 的部署应立即修改密码**，也可执行 `UPDATE sand_system_user SET must_change_password = 1 WHERE id = 1;` 强制其下次登录改密。宿主 `config/think-orm.php` 等由旧安装器生成的文件仍含旧默认值，建议改用新模板（缺少 `DB_NAME`/`DB_PASSWORD` 时报错）。需发布并构建匹配的管理端源码。
+- 旧部署默认口令处置：`db/update-0.2.7.pgsql` 在加列后追加幂等 `UPDATE`，把口令哈希精确命中 0.2.7 之前种子默认哈希集合（admin、martin、allen、mark、dowson、timi_boss、dev_wang、dev_li 等账号的全部去重哈希）的现有账号标记为 `must_change_password = 1`，强制其下次登录改密；语句只置标志、不修改密码本身，可安全重复执行。无自动应用升级 SQL 的入口，仍需按升级须知在目标库手动执行一次。
+- 自行填写密码不再强制改密：初始管理员仅当密码留空随机生成，或所填写密码哈希等值命中旧默认口令哈希集合时才置 `must_change_password = 1`；操作者自行填写符合强度要求的密码时置 0，首次登录不强制改密。安装接口返回的 `must_change_password`/`notice` 与安装页提示同步更新（哈希集合与 `update-0.2.7.pgsql` 共用 `InstallGuard::LEGACY_PASSWORD_HASHES`，测试校验一致）。
+- 启动自检真正“拒绝启动”：JWT 密钥不安全时，worker 内的启动自检在输出错误后同时向 Workerman 主进程发送停止信号（等价于 `php start.php stop`），服务整体退出；此前只是 worker 抛错退出并被主进程无限重启（实测约每秒 780 行日志的重启风暴，且始终不提供服务）。`php webman <cmd>` 等 CLI 场景没有 worker，只抛错、不发信号。
+- 文档修正：`docs/sandadmin-demo.md` 与现行为对齐——同步脚本发现 demo 宿主 JWT 配置缺失、不可读或仍是占位符时以退出码 4 拒绝继续（不再“同步仍可完成”），且应用启动、登录与鉴权均拒绝弱密钥或占位符密钥。
 
 ## 0.2.6（2026-11-02）
 
