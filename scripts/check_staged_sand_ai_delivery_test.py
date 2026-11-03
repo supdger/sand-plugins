@@ -12,6 +12,12 @@ GATE = Path(__file__).with_name("check-staged-sand-ai-delivery.py")
 INSTALLER = Path(__file__).with_name("install-pre-commit-checks.sh")
 MIRROR = "sand-ai/plugin/sand-ai"
 RECORD = "sand-ai/.delivery-source.json"
+# Delivered target tree -> its source subdir, as in deliver-sand-ai.sh.
+UNITS = {
+    MIRROR: "server/plugin/sand-ai",
+    "sand-ai/app": "server/app",
+    "sand-ai/config": "server/config",
+}
 
 
 class StagedSandAiDeliveryTest(unittest.TestCase):
@@ -41,24 +47,34 @@ class StagedSandAiDeliveryTest(unittest.TestCase):
     def payload(self, marker):
         self.write(f"{MIRROR}/info.ini", "app = sand-ai\n")
         self.write(f"{MIRROR}/app/admin/controller/Index.php", f"<?php // {marker}\n")
+        self.write("sand-ai/app/Api/Controller/ChatController.php", f"<?php // {marker}\n")
+        self.write("sand-ai/app/process/TaskWorker.php", f"<?php // {marker}\n")
+        self.write("sand-ai/config/sand_ai_task.php", f"<?php // {marker}\nreturn [];\n")
 
-    def digest(self):
-        result = subprocess.run([sys.executable, str(GATE), "--digest-tree", str(self.root / MIRROR)],
+    def digest(self, root):
+        result = subprocess.run([sys.executable, str(GATE), "--digest-tree", str(self.root / root)],
                                 check=True, text=True, capture_output=True)
         content_sha256, count = result.stdout.split()
         return content_sha256, int(count)
 
-    def record(self, content_sha256=None, file_count=None, **overrides):
-        actual_sha256, actual_count = self.digest()
+    def record(self, units=None, **overrides):
+        recorded = []
+        for root, source_subdir in UNITS.items():
+            content_sha256, count = self.digest(root)
+            unit = {
+                "source_subdir": source_subdir,
+                "target_subdir": root,
+                "file_count": count,
+                "content_sha256": content_sha256,
+            }
+            unit.update((units or {}).get(root, {}))
+            recorded.append(unit)
         payload = {
-            "format": 1,
+            "format": 2,
             "source_repo": "sand_ai",
             "source_commit": "0" * 40,
-            "source_subdir": "server/plugin/sand-ai",
-            "target_subdir": MIRROR,
             "generated_at_utc": "2026-01-01T00:00:00Z",
-            "file_count": actual_count if file_count is None else file_count,
-            "content_sha256": actual_sha256 if content_sha256 is None else content_sha256,
+            "units": recorded,
         }
         payload.update(overrides)
         self.write(RECORD, json.dumps(payload, indent=2) + "\n")
@@ -76,40 +92,52 @@ class StagedSandAiDeliveryTest(unittest.TestCase):
         self.assertIn("[PASS]", result.stdout)
 
     def test_hand_edited_payload_without_record_update_fails(self):
-        self.payload("hand edited")
-        self.git("add", MIRROR)
-        result = self.gate()
-        self.assertNotEqual(0, result.returncode)
-        self.assertIn("deliver-sand-ai.sh", result.stderr)
+        for root in UNITS:
+            with self.subTest(root=root):
+                self.payload(f"hand edited {root}")
+                self.git("add", root)
+                result = self.gate()
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("deliver-sand-ai.sh", result.stderr)
+                self.git("reset", "-q", "--mixed", "HEAD")
+                subprocess.run(["git", "checkout", "-q", "--", "."], cwd=self.root, check=True)
 
     def test_added_and_deleted_payload_files_fail(self):
-        self.write(f"{MIRROR}/app/admin/controller/Extra.php", "<?php\n")
-        self.git("add", MIRROR)
+        self.write("sand-ai/app/Application/Task/Extra.php", "<?php\n")
+        self.git("add", "sand-ai/app")
         self.assertNotEqual(0, self.gate().returncode)
         self.git("reset", "-q")
-        self.git("rm", "-q", f"{MIRROR}/info.ini")
+        self.git("rm", "-q", "sand-ai/config/sand_ai_task.php")
         self.assertNotEqual(0, self.gate().returncode)
 
     def test_forged_record_without_matching_tree_fails(self):
-        self.record(content_sha256="f" * 64)
+        self.record(units={"sand-ai/app": {"content_sha256": "f" * 64}})
         self.git("add", RECORD)
         self.assertNotEqual(0, self.gate().returncode)
 
     def test_file_count_must_match_even_when_digest_is_copied(self):
         self.payload("delivered")
-        self.record(file_count=99)
+        self.record(units={"sand-ai/config": {"file_count": 99}})
         self.git("add", "sand-ai")
         self.assertNotEqual(0, self.gate().returncode)
 
     def test_missing_or_malformed_record_fails(self):
-        for case in ("missing", "format", "target"):
+        for case in ("missing", "format", "target", "incomplete", "field"):
             with self.subTest(case=case):
                 if case == "missing":
                     self.git("rm", "-q", RECORD)
                 elif case == "format":
-                    self.record(format=2)
+                    self.record(format=1)
+                elif case == "target":
+                    self.record(units={"sand-ai/app": {"target_subdir": "sand-ai/tools"}})
+                elif case == "incomplete":
+                    # A record that drops a delivered tree cannot vouch for it.
+                    self.record()
+                    kept = json.loads((self.root / RECORD).read_text())
+                    kept["units"] = kept["units"][:2]
+                    self.write(RECORD, json.dumps(kept, indent=2) + "\n")
                 else:
-                    self.record(target_subdir="sand-ai/app")
+                    self.record(units={"sand-ai/config": {"content_sha256": ""}})
                 self.payload("delivered")
                 self.git("add", "sand-ai")
                 self.assertNotEqual(0, self.gate().returncode)
@@ -129,15 +157,18 @@ class StagedSandAiDeliveryTest(unittest.TestCase):
         self.git("add", "sand-ai")
         self.payload("dirty worktree edit")  # staged content stays consistent
         self.assertEqual(0, self.gate().returncode)
-        self.git("add", MIRROR)
+        self.git("add", "sand-ai/app")
         self.assertNotEqual(0, self.gate().returncode)
 
     def test_unrelated_staged_change_is_outside_gate_scope(self):
-        self.write("README.md", "unrelated\n")
-        self.git("add", "README.md")
-        result = self.gate()
-        self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn("skipped", result.stdout)
+        for relative in ("README.md", "sand-ai/README.md", "sand-ai/tools/build.php"):
+            with self.subTest(relative=relative):
+                self.write(relative, "unrelated\n")
+                self.git("add", relative)
+                result = self.gate()
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn("skipped", result.stdout)
+                self.git("reset", "-q", "--mixed", "HEAD")
 
     def test_installer_upgrade_keeps_preserved_hook_and_blocks_bad_commit(self):
         scripts = self.root / "scripts"
@@ -158,7 +189,7 @@ class StagedSandAiDeliveryTest(unittest.TestCase):
         self.assertEqual("#!/bin/sh\nprintf invoked > hook-invoked\n",
                          hook.with_name("pre-commit.before-sand-checks").read_text())
         self.payload("hand edited in the delivery repo")
-        self.git("add", MIRROR)
+        self.git("add", "sand-ai/app")
         result = subprocess.run(["git", "commit", "-qm", "must fail"], cwd=self.root,
                                 text=True, capture_output=True)
         self.assertNotEqual(0, result.returncode)

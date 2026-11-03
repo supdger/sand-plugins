@@ -1,8 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
-# Mirror the SandAI plugin payload from its development source of truth into
-# this delivery monorepo. The delivery tree is generated, never hand-edited;
+# Mirror the SandAI payload from its development source of truth into this
+# delivery monorepo. The delivery trees are generated, never hand-edited;
 # scripts/check-staged-sand-ai-delivery.py enforces that at commit time.
 
 script_name="${0:A:t}"
@@ -14,10 +14,37 @@ usage() {
 
 workspace_root="${0:A:h:h}"
 source_root="${SAND_AI_SOURCE_ROOT:-/Users/code/project/sand_ai}"
-source_subdir='server/plugin/sand-ai'
-target_subdir='sand-ai/plugin/sand-ai'
 record_subpath='sand-ai/.delivery-source.json'
 mode=dry-run
+
+# Delivered trees: SandAI source subdir -> target subdir in this repo. Anything
+# else under sand-ai/ (README, CHANGELOG, lifecycle SQL, tools, tests, package
+# metadata) is owned by this repo and never synced.
+typeset -a unit_sources unit_targets
+unit_sources=('server/plugin/sand-ai' 'server/app' 'server/config')
+unit_targets=('sand-ai/plugin/sand-ai' 'sand-ai/app' 'sand-ai/config')
+
+# server/app and server/config also hold host-owned files, so those units carry
+# filters that select the SandAI payload inside them.
+set_unit_filters() {
+  filters=()
+  case "$1" in
+    server/app)
+      # Http.php and Monitor.php are Webman's own processes; app/controller,
+      # app/middleware, app/model, app/view and app/functions.php belong to the
+      # host application, not to the SandAI payload.
+      filters=('--exclude=/process/Http.php' '--exclude=/process/Monitor.php')
+      local kept
+      for kept in Api Application Identity Infrastructure Mcp command process; do
+        filters+=("--include=/$kept/" "--include=/$kept/**")
+      done
+      filters+=('--exclude=*')
+      ;;
+    server/config)
+      filters=('--include=/sand_ai_*.php' '--exclude=*')
+      ;;
+  esac
+}
 
 while (( $# )); do
   case "$1" in
@@ -34,9 +61,11 @@ done
 [[ -e "$workspace_root/.git" ]] || { print -u2 "sand_plugins is not a Git checkout: $workspace_root"; exit 2; }
 [[ -d "$source_root" ]] || { print -u2 "Source checkout not found: $source_root"; exit 2; }
 source_root="${source_root:A}"
-[[ -d "$source_root/$source_subdir" ]] || {
-  print -u2 "Source payload not found: $source_root/$source_subdir"; exit 2;
-}
+for source_subdir in "${unit_sources[@]}"; do
+  [[ -d "$source_root/$source_subdir" ]] || {
+    print -u2 "Source payload not found: $source_root/$source_subdir"; exit 2;
+  }
+done
 
 git_bin="${SAND_GIT_BIN:-}"
 if [[ -n "$git_bin" ]]; then
@@ -65,7 +94,7 @@ fi
 
 # A dirty source payload cannot be recorded as a reproducible commit, so the
 # delivery is refused instead of pinning a revision the source never had.
-if ! source_status="$("$git_bin" -C "$source_root" status --porcelain -- "$source_subdir" 2>&1)"; then
+if ! source_status="$("$git_bin" -C "$source_root" status --porcelain -- "${unit_sources[@]}" 2>&1)"; then
   print -u2 "Cannot verify SandAI source state; refusing delivery:"
   print -u2 "$source_status"
   exit 6
@@ -85,7 +114,7 @@ fi
 # Permissions are deliberately not mirrored (`-rlt`, no `-p`): the development
 # checkout is group/other writable and local openrsync ignores `--chmod`, so the
 # delivery normalises modes itself after transfer.
-rsync_arguments=(-rlt --checksum --delete-delay --itemize-changes)
+rsync_arguments=(-rlt --checksum --delete-delay --delete-excluded --itemize-changes)
 # Runtime, dependency and credential shaped files never cross into delivery.
 rsync_excludes=(
   '--include=.env.example'
@@ -95,80 +124,133 @@ rsync_excludes=(
   '--exclude=.env' '--exclude=.env.*' '--exclude=*.key' '--exclude=*.pem'
   '--exclude=credentials.json' '--exclude=secrets/' '--exclude=*.log'
 )
-source_tree="$source_root/$source_subdir/"
-target_tree="$workspace_root/$target_subdir/"
 
 digest_tree() {
   /usr/bin/python3 "$workspace_root/scripts/check-staged-sand-ai-delivery.py" \
-    --digest-tree "$workspace_root/$target_subdir"
+    --digest-tree "$workspace_root/$1"
 }
 
-print "SandAI delivery ($mode): $source_root/$source_subdir -> $target_subdir at $source_commit"
+# `$filters` is set per unit; `--delete-excluded` makes the filters authoritative
+# on both sides, so a file the delivery no longer selects cannot linger here.
+unit_rsync() {
+  local source_subdir="$1" target_subdir="$2"
+  shift 2
+  set_unit_filters "$source_subdir"
+  rsync "$@" "${rsync_arguments[@]}" "${rsync_excludes[@]}" "${filters[@]}" \
+    "$source_root/$source_subdir/" "$workspace_root/$target_subdir/"
+}
 
-if [[ "$mode" == apply ]]; then
-  rsync "${rsync_arguments[@]}" "${rsync_excludes[@]}" "$source_tree" "$target_tree"
-  chmod -R go-w "${target_tree%/}"
-fi
+typeset -a filters unit_records
+typeset -i unit_index total_files=0
+failed=false
 
-remaining="$(rsync -n "${rsync_arguments[@]}" "${rsync_excludes[@]}" "$source_tree" "$target_tree")"
+print "SandAI delivery ($mode): $source_root -> sand-ai/ at $source_commit"
+
+for (( unit_index = 1; unit_index <= $#unit_sources; unit_index++ )); do
+  source_subdir="$unit_sources[$unit_index]"
+  target_subdir="$unit_targets[$unit_index]"
+  print "  unit: $source_subdir -> $target_subdir"
+
+  if [[ "$mode" == apply ]]; then
+    unit_rsync "$source_subdir" "$target_subdir"
+    chmod -R go-w "$workspace_root/$target_subdir"
+  fi
+
+  remaining="$(unit_rsync "$source_subdir" "$target_subdir" -n)"
+
+  case "$mode" in
+    dry-run)
+      if [[ -n "$remaining" ]]; then
+        print "  pending differences:"
+        print "$remaining"
+      else
+        print "  already matches the source payload."
+      fi
+      ;;
+    apply)
+      [[ -z "$remaining" ]] || {
+        print -u2 "Delivery verification failed for $target_subdir; remaining differences:"
+        print -u2 "$remaining"
+        exit 4
+      }
+      digest_line="$(digest_tree "$target_subdir")"
+      total_files+=${digest_line##* }
+      unit_records+=("    {
+      \"source_subdir\": \"$source_subdir\",
+      \"target_subdir\": \"$target_subdir\",
+      \"file_count\": ${digest_line##* },
+      \"content_sha256\": \"${digest_line%% *}\"
+    }")
+      ;;
+    check)
+      if [[ -n "$remaining" ]]; then
+        print -u2 "$target_subdir differs from the source payload:"
+        print -u2 "$remaining"
+        failed=true
+      fi
+      ;;
+  esac
+done
 
 if [[ "$mode" == dry-run ]]; then
-  if [[ -n "$remaining" ]]; then
-    print "Pending delivery differences:"
-    print "$remaining"
-  else
-    print "Delivery tree already matches the source payload."
-  fi
   print "Dry run only: no files were changed. Re-run with --apply to deliver."
   exit 0
 fi
 
 if [[ "$mode" == apply ]]; then
-  [[ -z "$remaining" ]] || {
-    print -u2 "Delivery verification failed; remaining differences:"
-    print -u2 "$remaining"
-    exit 4
-  }
-  digest_line="$(digest_tree)"
   cat > "$workspace_root/$record_subpath" <<EOF
 {
-  "format": 1,
+  "format": 2,
   "source_repo": "${source_root:t}",
   "source_commit": "$source_commit",
-  "source_subdir": "$source_subdir",
-  "target_subdir": "$target_subdir",
   "generated_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "file_count": ${digest_line##* },
-  "content_sha256": "${digest_line%% *}"
+  "units": [
+${(pj:,\n:)unit_records}
+  ]
 }
 EOF
-  print "Delivered ${digest_line##* } files at ${digest_line%% *}; recorded in $record_subpath."
+  print "Delivered $total_files files across $#unit_targets trees; recorded in $record_subpath."
   print "This is a source delivery only; packaging, install, database and business acceptance remain separate gates."
   exit 0
 fi
 
 # --check: verify without writing, for review and automation.
-failed=false
-if [[ -n "$remaining" ]]; then
-  print -u2 "Delivery tree differs from the source payload:"
-  print -u2 "$remaining"
-  failed=true
-fi
 if [[ ! -f "$workspace_root/$record_subpath" ]]; then
   print -u2 "Missing delivery record: $record_subpath"
   failed=true
 else
-  digest_line="$(digest_tree)"
-  record_commit="$(/usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["content_sha256"],json.load(open(sys.argv[1]))["source_commit"])' "$workspace_root/$record_subpath")"
-  if [[ "${digest_line%% *}" != "${record_commit%% *}" ]]; then
-    print -u2 "Delivery record digest does not match the delivery tree: $record_subpath"
+  record_commit="$(/usr/bin/python3 - "$workspace_root/$record_subpath" <<'PY'
+import json, sys
+record = json.load(open(sys.argv[1]))
+print(record.get("source_commit", ""))
+for unit in record.get("units", []):
+    print(unit["target_subdir"], unit["content_sha256"], unit["file_count"])
+PY
+)"
+  recorded_units="$(print -r -- "$record_commit" | tail -n +2)"
+  record_commit="$(print -r -- "$record_commit" | head -n 1)"
+  if [[ "$record_commit" != "$source_commit" ]]; then
+    print -u2 "Delivery record pins $record_commit but the source is at $source_commit"
     failed=true
   fi
-  if [[ "${record_commit##* }" != "$source_commit" ]]; then
-    print -u2 "Delivery record pins ${record_commit##* } but the source is at $source_commit"
+  if [[ "$(print -r -- "$recorded_units" | wc -l | tr -d ' ')" != "$#unit_targets" ]]; then
+    print -u2 "Delivery record does not cover every delivered tree: $record_subpath"
     failed=true
   fi
+  while read -r recorded_target recorded_sha256 recorded_count; do
+    [[ -n "$recorded_target" ]] || continue
+    if (( ${unit_targets[(Ie)$recorded_target]} == 0 )); then
+      print -u2 "Delivery record holds an unknown tree $recorded_target: $record_subpath"
+      failed=true
+      continue
+    fi
+    digest_line="$(digest_tree "$recorded_target")"
+    if [[ "${digest_line%% *}" != "$recorded_sha256" || "${digest_line##* }" != "$recorded_count" ]]; then
+      print -u2 "Delivery record digest does not match $recorded_target: $record_subpath"
+      failed=true
+    fi
+  done <<< "$recorded_units"
 fi
 $failed && { print -u2 "Run $script_name --apply to regenerate the delivery."; exit 1; }
-print "Delivery check passed: tree and record match $source_commit."
+print "Delivery check passed: trees and record match $source_commit."
 exit 0

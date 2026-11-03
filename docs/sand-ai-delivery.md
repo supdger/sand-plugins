@@ -1,12 +1,17 @@
 # SandAI 交付同步
 
-`sand-ai/plugin/sand-ai/` 是**交付产物**，不是源码。它的唯一源码在 SandAI 开发仓
-`/Users/code/project/sand_ai` 的 `server/plugin/sand-ai/`，由脚本单向镜像进本仓，再随本仓发布到
-GitHub `supdger/sand-ai`。
+`sand-ai/plugin/sand-ai/`、`sand-ai/app/`、`sand-ai/config/` 是**交付产物**，不是源码。唯一源码在 SandAI
+开发仓 `/Users/code/project/sand_ai`，由脚本单向镜像进本仓，再随本仓发布到 GitHub `supdger/sand-ai`。
 
-**禁止在本仓手改 `sand-ai/plugin/`。** 需要改插件后端时在 SandAI 开发仓改、提交，再执行交付。
-`sand-ai/` 下的其他文件（`README.md`、`CHANGELOG.md`、`LICENSE`、生命周期 SQL、`tools/`、`tests/`
-等发布与构建资产）由本仓维护，不在同步范围。
+| 源码（sand_ai） | 本仓目标 | 范围 |
+| --- | --- | --- |
+| `server/plugin/sand-ai` | `sand-ai/plugin/sand-ai` | 整个插件包 |
+| `server/app` | `sand-ai/app` | 仅 `Api/`、`Application/`、`Identity/`、`Infrastructure/`、`Mcp/`、`command/`、`process/`；`process/Http.php`、`process/Monitor.php` 及 `controller/`、`middleware/`、`model/`、`view/`、`functions.php` 属宿主 |
+| `server/config` | `sand-ai/config` | 仅 `sand_ai_*.php` |
+
+**禁止在本仓手改这三棵树。** 需要改后端时在 SandAI 开发仓改、提交，再执行交付。
+`sand-ai/` 下的其他文件（`README.md`、`CHANGELOG.md`、`LICENSE`、生命周期 SQL、`config.json`、
+`info.ini`、`tools/`、`tests/` 等发布与构建资产）由本仓维护，不在同步范围。
 
 ## 交付
 
@@ -22,17 +27,19 @@ scripts/deliver-sand-ai.sh --apply --source /path/to/sand_ai   # 等价于 SAND_
 
 脚本行为：
 
-- `server/plugin/sand-ai` 有未提交改动时拒绝交付（退出码 3）；交付记录必须对应源码仓真实 commit。
+- 三个源子目录（`server/plugin/sand-ai`、`server/app`、`server/config`）任一有未提交改动即拒绝交付
+  （退出码 3）；交付记录必须对应源码仓真实 commit。
 - Git 状态读取失败时失败关闭（退出码 6），空输出不解释成 clean。
-- 按内容（`--checksum`）比对并 `--delete-delay` 删除目标多余文件，相同大小与 mtime 不能掩盖差异。
+- 按内容（`--checksum`）逐棵树比对；`--delete-delay --delete-excluded` 让过滤规则对两侧同时生效，
+  目标里不再属于交付范围的文件会被删除，相同大小与 mtime 不能掩盖差异。
 - 排除运行时与凭证形状的文件：`vendor/`、`node_modules/`、`runtime/`、`storage/`、`tmp/`、`.git`、
   `.idea/`、`.vscode/`、`.DS_Store`、`.env` 及 `.env.*`（`.env.example` 除外）、`*.key`、`*.pem`、
   `credentials.json`、`secrets/`、`*.log`。
 - 不镜像权限位（`-rlt`，不带 `-p`；本机 openrsync 忽略 `--chmod`），`--apply` 后统一 `chmod -R go-w`
-  去掉开发机带来的 group/other 写位。可执行位因此不随同步传递，当前载荷 235 个文件均非可执行；校验和只覆盖
+  去掉开发机带来的 group/other 写位。可执行位因此不随同步传递，当前载荷全部非可执行；校验和只覆盖
   文件内容与相对路径。
-- `--apply` 成功后写 `sand-ai/.delivery-source.json`：源码仓名、source commit、源子目录、目标子目录、
-  生成时间、文件数和内容校验和。
+- `--apply` 成功后写 `sand-ai/.delivery-source.json`（format 2）：源码仓名、source commit、生成时间，
+  以及每棵树的源子目录、目标子目录、文件数和内容校验和。
 
 内容校验和定义：对目标子树每个文件取 `sha256`，按相对路径排序拼成 `<sha256>  <相对路径>` 行，
 再对整体取 `sha256`。实现只有一份，在 `scripts/check-staged-sand-ai-delivery.py`
@@ -40,14 +47,14 @@ scripts/deliver-sand-ai.sh --apply --source /path/to/sand_ai   # 等价于 SAND_
 
 ## 提交门禁
 
-暂存区涉及 `sand-ai/plugin/` 或 `sand-ai/.delivery-source.json` 时，pre-commit 运行
-`scripts/check-staged-sand-ai-delivery.py`：
+暂存区涉及 `sand-ai/plugin/`、`sand-ai/app/`、`sand-ai/config/` 或 `sand-ai/.delivery-source.json` 时，
+pre-commit 运行 `scripts/check-staged-sand-ai-delivery.py`：
 
-- 读**实际 Git index**（不是工作树），重算暂存载荷的校验和与文件数，与暂存的
-  `.delivery-source.json` 对比，不一致或缺记录即拒绝，并提示改用交付脚本。
+- 读**实际 Git index**（不是工作树），逐棵树重算暂存载荷的校验和与文件数，与暂存的
+  `.delivery-source.json` 对比，不一致、缺记录或记录未覆盖全部三棵树即拒绝，并提示改用交付脚本。
 - 记录本身被篡改但树未变同样拒绝，因为两边必须同时自洽。
 - `sand-ai/plugin/` 下出现 `sand-ai/plugin/sand-ai/` 以外的路径即拒绝。
-- 未触及交付范围的提交不受影响。
+- 未触及交付范围的提交（`sand-ai/README.md`、`tools/`、生命周期 SQL 等）不受影响。
 
 安装：`bash scripts/install-pre-commit-checks.sh`（保留既有本地 hook；已安装的旧版生成 hook 原地升级，
 不覆盖 `pre-commit.before-sand-checks`）。回归测试：
