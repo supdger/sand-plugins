@@ -52,10 +52,6 @@ frontend_excludes=(
   '--exclude=.artifacts/' '--exclude=.playwright-cli/' '--exclude=.tmp/'
 )
 
-print "Synchronizing SandAdmin host from $source_root to $target_root ($source_state)"
-rsync "${rsync_arguments[@]}" "${server_excludes[@]}" "$source_root/server/" "$target_root/server/"
-rsync "${rsync_arguments[@]}" "${frontend_excludes[@]}" "$source_root/sandadmin-artd/" "$target_root/sandadmin-artd/"
-
 jwt_config="$target_root/server/config/plugin/tinywan/jwt/app.php"
 jwt_config_state=available
 if [[ ! -f "$jwt_config" ]]; then
@@ -70,8 +66,13 @@ else
 fi
 print "Demo host JWT runtime config: $jwt_config_state"
 if [[ "$jwt_config_state" != available ]]; then
-  print -u2 "Demo host login is not ready; initialize tinywan/jwt for this host under explicit key/service authorization."
+  print -u2 "Demo host JWT secrets are $jwt_config_state; refusing to continue. Initialize tinywan/jwt for this host (each secret at least 32 random bytes, never the __JWT_*__ placeholder) under explicit key/service authorization."
+  exit 4
 fi
+
+print "Synchronizing SandAdmin host from $source_root to $target_root ($source_state)"
+rsync "${rsync_arguments[@]}" "${server_excludes[@]}" "$source_root/server/" "$target_root/server/"
+rsync "${rsync_arguments[@]}" "${frontend_excludes[@]}" "$source_root/sandadmin-artd/" "$target_root/sandadmin-artd/"
 
 if ! $apply; then
   print "Dry run only: no files were changed. Re-run with --apply after review and authorization."

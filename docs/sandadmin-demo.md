@@ -12,7 +12,7 @@
 
 脚本保护 `.env`、依赖、runtime、已安装业务插件目录，以及 demo 自有覆盖层：`server/config/plugin/tinywan/jwt/` 保存宿主独立密钥，不从 SandAdmin 工作树复制，也不因源文件缺失而删除；`server/plugin/sandadmin/config/saithink.php` 是历史配置键兼容层；`server/plugin/sandpackage/config/failed_upgrade_profiles.php` 是 SandIAM 失败升级验收画像。后者虽然位于 SandPackage 配置目录，但内容绑定 SandIAM 版本与迁移，不得回收到零业务插件的 SandAdmin 权威源。脚本只同步宿主 `server/` 与 `sandadmin-artd/` 核心；插件仍从 `sand-iam/`、`sand-ai/`、`sandworkflow/` 单向进入 demo 宿主。
 
-同步结束时脚本只报告 demo JWT 运行配置为 `available`、`missing`、`unreadable` 或 `placeholder`，不输出密钥，也不把运行配置状态写入 `sandadmin-host.lock`。`available` 仅表示文件可读且未检测到已知占位符，不能证明 JWT 配置有效或后台可以登录。状态不是 `available` 时，源码同步仍可完成，但后台登录尚未就绪；必须另行取得密钥操作和服务启停授权，在 demo 执行 Tinywan JWT 初始化并重载后再验收。SandAdmin revision 和登录运行就绪是两项独立证据。
+同步结束时脚本检查 demo JWT 运行配置（`available`、`missing`、`unreadable` 或 `placeholder`），不输出密钥，也不把运行配置状态写入 `sandadmin-host.lock`。`available` 仅表示文件可读且未检测到已知占位符，不能证明 JWT 配置有效或后台可以登录。状态不是 `available` 时脚本以退出码 4 拒绝继续，源码同步不会完成；必须另行取得密钥操作和服务启停授权，在 demo 执行 Tinywan JWT 初始化后重新运行同步。应用启动（SecurityBootstrap 自检）、登录与鉴权同样拒绝空密钥、`__JWT_*__` 占位符或短于 32 字节的密钥。SandAdmin revision 和登录运行就绪是两项独立证据。
 
 `--allow-dirty` 只允许本地探索并记录 `dirty-local`，不得进入兼容矩阵、发布或正式 FLOW 分子。同步宿主文件不授权数据库创建/迁移、服务启停、插件安装、提交、推送或部署。
 

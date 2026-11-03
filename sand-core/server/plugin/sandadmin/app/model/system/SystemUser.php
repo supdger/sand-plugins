@@ -33,6 +33,7 @@ use plugin\sandadmin\basic\think\BaseModel;
  * @property  $updated_by 更新者
  * @property  $create_time 创建时间
  * @property  $update_time 修改时间
+ * @property  $must_change_password 首次登录必须修改密码: 1是
  */
 class SystemUser extends BaseModel
 {

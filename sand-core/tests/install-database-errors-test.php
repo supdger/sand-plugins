@@ -10,7 +10,7 @@ namespace support {
     }
     class Response
     {
-        public function __construct(public array $data) {}
+        public function __construct(public int|array $data, public array $headers = [], public string $body = '') {}
     }
 }
 
@@ -22,8 +22,16 @@ namespace {
     $root = sys_get_temp_dir() . '/sand-core-install-errors-' . bin2hex(random_bytes(6));
     function base_path(): string { return $GLOBALS['root']; }
     function json(array $data, int $options = 0): Response { return new Response($data); }
+    function config(string $key, mixed $default = null): mixed
+    {
+        return $key === 'plugin.tinywan.jwt.app.jwt'
+            ? ['algorithms' => 'HS256', 'access_secret_key' => str_repeat('a', 64), 'refresh_secret_key' => str_repeat('b', 64)]
+            : $default;
+    }
 
     require dirname(__DIR__) . '/server/plugin/sandadmin/basic/OpenController.php';
+    require dirname(__DIR__) . '/server/plugin/sandadmin/utils/InstallGuard.php';
+    require dirname(__DIR__) . '/server/plugin/sandadmin/utils/JwtSecretGuard.php';
     require dirname(__DIR__) . '/server/plugin/sandadmin/app/controller/InstallController.php';
 
     class FailedInstallController extends InstallController
@@ -70,6 +78,8 @@ namespace {
         $response = $controller->install(new Request([
             'databaseType' => 'pgsql', 'host' => '127.0.0.1', 'port' => 5432,
             'database' => 'sand', 'username' => 'postgres', 'password' => 'private-test-secret',
+            'dataType' => 'demo', 'installToken' => $GLOBALS['installToken'],
+            'adminUsername' => 'admin', 'adminPassword' => 'correct horse battery', 'adminPasswordConfirm' => 'correct horse battery',
         ]));
         if ($response->data['code'] !== 400 || !str_contains($response->data['message'], $expected)) {
             throw new RuntimeException('Unexpected installation failure: ' . json_encode($response->data, JSON_UNESCAPED_UNICODE));
@@ -83,6 +93,7 @@ namespace {
         mkdir($root . '/runtime', 0777, true);
         mkdir($root . '/plugin/sandadmin/db', 0777, true);
         file_put_contents($root . '/plugin/sandadmin/db/sandadmin-6.0.pgsql', '-- simulated import');
+        $installToken = \plugin\sandadmin\utils\InstallGuard::ensureToken($root, static function (): void {});
         $cases = [
             'missing database SQLSTATE' => [pdoError('localized message', '3D000'), '数据库不存在'],
             'missing database libpq' => [pdoError('FATAL: database "sand" does not exist'), '数据库不存在'],

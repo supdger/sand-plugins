@@ -74,3 +74,4 @@ Docker 恢复建库等操作时直接沿用，不因阶段、版本、候选或�
 
 - 每次最终回复前，运行 `/usr/bin/python3 /Users/supdger/.codex/hooks/current_model_record.py`，从当前 `CODEX_SESSION_ID` 的最新 `thread_settings_applied` 读取主 Agent 的实际模型与推理档位；不得以 `config.toml` 默认值代替。
 - 最终回复必须追加“模型记录”：主 Agent、推理档位、子 Agent 模型与推理档位（未使用则写“子 Agent：未使用”）。脚本失败时先核查会话记录；仅在记录确实缺失时写“未暴露（不推测）”。
+- Devin 会话中按 `~/.config/devin/AGENTS.md` 记录模型（以 `~/.local/share/devin/cli/sessions.db` 中消息的 `generation_model` 为准），不运行 Codex 的 `current_model_record.py`。
