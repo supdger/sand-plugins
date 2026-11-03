@@ -50,6 +50,14 @@ class SystemUser extends BaseModel
      */
     protected $table = 'sand_system_user';
 
+    /**
+     * 隐藏字段：password 哈希绝不进入 toArray/JSON/分页输出。
+     * 子类重声明会覆盖 BaseModel::$hidden，故须保留 delete_time。
+     * 属性读取、save、value() 不受影响（登录校验/改密/重置密码照常）。
+     * @var array
+     */
+    protected $hidden = ['password', 'delete_time'];
+
     public function searchKeywordAttr($query, $value)
     {
         if ($value) {
