@@ -1,5 +1,16 @@
 # 更新记录
 
+## 0.2.8（2026-11-03）
+
+安全修复：收敛接口与日志中的秘密字段输出，无数据库变更、无需迁移。
+
+- 用户列表：`SystemUser` 模型声明 `$hidden = ['password', 'delete_time']`，`/core/user/index` 等经模型序列化/分页的输出不再包含口令哈希；登录校验、改密、重置密码、初始管理员写入等内部路径按属性读取/赋值，不受影响。
+- 邮件记录：`SystemMail` 模型隐藏 `code`（邮箱验证码），邮件日志列表不再回显验证码（保留 `delete_time`）。
+- 回收站：`recycleData` 直读数据表不经模型，输出前按列名剔除敏感列——名称（忽略大小写及 `_`/`-`）含 `password`、`passwd`、`pwd`、`secret`、`token`、`privatekey`、`apikey`、`accesskey`、`credential`、`authorization`、`cookie` 的列，以及验证码类列（`code`、`otp`、`captcha`、`verify_code` 等）。可用表范围与分页结构不变。
+- 日志遮盖：新增 `utils/SensitiveData` 统一口径；异常日志、debug 模式 `request_param` 回显与操作日志 `request_data` 对敏感键递归遮盖（含嵌套数组），操作日志不再只遮顶层四个固定键。
+- 代码生成器模型模板增加声明 `$hidden` 的提示注释。
+- 未改变：系统配置管理（`SystemConfig`）仍按其管理用途原样返回配置值，含邮件/存储等凭据，访问由权限控制，不在本次范围。
+
 ## 0.2.7（2026-11-03）
 
 安全加固，**升级须知见末条**。
