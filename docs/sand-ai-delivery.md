@@ -32,6 +32,8 @@ scripts/deliver-sand-ai.sh --apply --source /path/to/sand_ai   # 等价于 SAND_
 - Git 状态读取失败时失败关闭（退出码 6），空输出不解释成 clean。
 - 按内容（`--checksum`）逐棵树比对；`--delete-delay --delete-excluded` 让过滤规则对两侧同时生效，
   目标里不再属于交付范围的文件会被删除，相同大小与 mtime 不能掩盖差异。
+- `--check` 与 dry-run 只按内容与文件存在性判定，忽略时间戳和目录元数据：新检出的仓库 mtime 与源码仓
+  不同属正常，不算不一致。`--apply` 仍同步 mtime 并按完整 itemize 结果自检。
 - 排除运行时与凭证形状的文件：`vendor/`、`node_modules/`、`runtime/`、`storage/`、`tmp/`、`.git`、
   `.idea/`、`.vscode/`、`.DS_Store`、`.env` 及 `.env.*`（`.env.example` 除外）、`*.key`、`*.pem`、
   `credentials.json`、`secrets/`、`*.log`。
@@ -58,7 +60,8 @@ pre-commit 运行 `scripts/check-staged-sand-ai-delivery.py`：
 
 安装：`bash scripts/install-pre-commit-checks.sh`（保留既有本地 hook；已安装的旧版生成 hook 原地升级，
 不覆盖 `pre-commit.before-sand-checks`）。回归测试：
-`/usr/bin/python3 scripts/check_staged_sand_ai_delivery_test.py`。
+`/usr/bin/python3 scripts/check_staged_sand_ai_delivery_test.py`、
+`zsh scripts/deliver_sand_ai_mtime_test.zsh`。
 
 ## 边界
 

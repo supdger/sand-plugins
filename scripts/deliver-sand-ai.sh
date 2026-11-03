@@ -125,6 +125,26 @@ rsync_excludes=(
   '--exclude=credentials.json' '--exclude=secrets/' '--exclude=*.log'
 )
 
+# `-t` keeps mtimes, so a tree whose content already matches still itemizes
+# timestamp-only items (`.f..t....`, `.d..t....`) whenever the local files were
+# written at a different moment, as in any fresh checkout. Content comparison
+# drops those; every transfer, creation, deletion or content change keeps a
+# non-timestamp marker and survives this filter.
+content_differences() {
+  local -a kept
+  local line flags
+  for line in ${(f)1}; do
+    [[ -n "$line" ]] || continue
+    flags="${line%% *}"
+    # `YX` is the update/type prefix; the rest are the attribute markers.
+    if [[ "$flags" == .[fdLDS]* && "${${flags:2}//[.+]/}" == t ]]; then
+      continue
+    fi
+    kept+=("$line")
+  done
+  print -r -- "${(F)kept}"
+}
+
 digest_tree() {
   /usr/bin/python3 "$workspace_root/scripts/check-staged-sand-ai-delivery.py" \
     --digest-tree "$workspace_root/$1"
@@ -157,6 +177,9 @@ for (( unit_index = 1; unit_index <= $#unit_sources; unit_index++ )); do
   fi
 
   remaining="$(unit_rsync "$source_subdir" "$target_subdir" -n)"
+  # --apply has just written the tree, so it verifies the full itemize output;
+  # the read-only modes only judge content.
+  [[ "$mode" == apply ]] || remaining="$(content_differences "$remaining")"
 
   case "$mode" in
     dry-run)
