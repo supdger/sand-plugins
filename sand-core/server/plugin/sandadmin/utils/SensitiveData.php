@@ -35,8 +35,10 @@ final class SensitiveData
 
     /**
      * 列名额外口径：邮箱/短信等验证码列。
-     * 裸 `code`（如邮件记录的验证码）与 `verify_code`/`captcha`/`otp` 等视为敏感；
-     * 不泛化到所有 `*_code`，避免误伤部门编码、字典编码等业务字段。
+     * 裸 `code`（如邮件记录的验证码）与 `verify_code`/`captcha`/`otp` 等整列名匹配即视为敏感，
+     * 因此名为 `code` 的业务编码列（部门、角色、字典等表）在回收站输出中也会被剔除；
+     * 仅限这些确切列名，不泛化到其他 `*_code`（如 `dept_code`）。
+     * 请求参数键口径（isSensitiveKey）不含裸 `code`。
      */
     private const COLUMN_EXACT = ['code', 'otp', 'captcha', 'verifycode', 'verificationcode', 'smscode', 'emailcode', 'authcode'];
 

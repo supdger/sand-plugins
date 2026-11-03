@@ -10,6 +10,8 @@
 - 日志遮盖：新增 `utils/SensitiveData` 统一口径；异常日志、debug 模式 `request_param` 回显与操作日志 `request_data` 对敏感键递归遮盖（含嵌套数组），操作日志不再只遮顶层四个固定键。
 - 代码生成器模型模板增加声明 `$hidden` 的提示注释。
 - 未改变：系统配置管理（`SystemConfig`）仍按其管理用途原样返回配置值，含邮件/存储等凭据，访问由权限控制，不在本次范围。
+- 已知遗留：回收站（`recycleData`）对 `sand_system_config` 仍会输出 `value` 列（含 SMTP/OSS 等凭据），与配置管理同属“凭权限访问的设计面”，该路径要求 `core:recycle:index` 权限。
+- 功能副作用：回收站行会剔除名为 `code` 的列，包括部门、角色、字典等表的业务编码列。
 
 ## 0.2.7（2026-11-03）
 
