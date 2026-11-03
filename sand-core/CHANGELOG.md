@@ -1,5 +1,17 @@
 # 更新记录
 
+## 0.2.7（2026-11-03）
+
+安全加固，**升级须知见末条**。
+
+- 安装器防接管：安装向导仅在未安装时可用，根 `.env` 或 `runtime/install.lock` 任一存在即对 `/core/install` 页面与安装接口一律返回 404。未安装时生成一次性令牌（`random_bytes(32)` 十六进制，写入仅属主可读的 `runtime/install-token` 并在服务器控制台/日志输出一次），安装表单必须填写；缺失或错误令牌在任何数据库连接之前即被拒绝（常量时间比较），安装成功后删除令牌并写入安装锁。
+- 初始管理员：安装时由操作者填写用户名和密码（至少 12 位、需确认）；密码留空则随机生成强密码，仅在安装成功页显示一次。仓库种子 SQL 与代码不再包含 `123456` 或任何已知口令哈希；演示数据中的非管理员账号一律禁用并写入随机口令。安装数据默认改为“纯净数据”，演示数据需显式选择。
+- 首次登录强制改密：`sand_system_user` 新增 `must_change_password`。初始管理员置位后，登录返回并在用户信息中带出该标志，除“修改本人密码”和“获取用户信息”外的受保护接口全部拒绝（HTTP 200 + `code: 400`，提示先修改初始密码）；修改成功（新密码至少 12 位且与原密码不同）后清除标志。管理端新增 `/auth/change-password` 页，登录后检测到标志即跳转，修改成功后需重新登录。
+- 数据库配置：生成的 `config/think-orm.php`、`config/database.php` 不再回退 `DB_PASSWORD=123456` 与库名 `sandadmin`，`DB_NAME`/`DB_PASSWORD` 缺失时加载配置即抛出明确错误；安装器只使用操作者填写的库名。
+- JWT 密钥自检：启动（`config/bootstrap.php` 注册的启动自检）以及登录、鉴权中间件都会校验 `tinywan/jwt` 的 access/refresh 密钥，为空、仍是 `__JWT_*__` 占位符或短于 32 字节即拒绝启动/请求并给出重新生成方法，不再静默放行。安装向导在密钥不安全时同样拒绝安装。`scripts/sync-sandadmin-demo.sh` 发现 demo 宿主 JWT 配置缺失、不可读或仍是占位符时改为非零退出。
+- 行为变化：安装完成后 `/core/install` 返回 404，不再展示“重新检查”完成页；管理端入口检查仍在安装向导完成页内进行，之后直接访问后台地址。
+- 升级须知：已有部署需执行 `db/update-0.2.7.pgsql`（幂等，增加 `must_change_password` 列；未执行前账号按“无需改密”处理，不会被锁定）；旧版 `.env` 已存在的宿主不受安装器影响。**仍使用旧默认口令 `admin/123456` 的部署应立即修改密码**，也可执行 `UPDATE sand_system_user SET must_change_password = 1 WHERE id = 1;` 强制其下次登录改密。宿主 `config/think-orm.php` 等由旧安装器生成的文件仍含旧默认值，建议改用新模板（缺少 `DB_NAME`/`DB_PASSWORD` 时报错）。需发布并构建匹配的管理端源码。
+
 ## 0.2.6（2026-11-02）
 
 - Composer 发布生命周期加固：安装/更新先装后端载荷再发布前端，前端失败降级为 `[sandadmin]` 告警并附 `composer run-script sand:publish` 恢复命令，不再中止 Composer；无清单非空目标改为逐文件 sha256 收养判定；`.pending` 两阶段清单与中断重入；升级删除集与用户修改跳过；`uninstall` 清单驱动且 `config/` 仅首次写入；`extra.sandadmin.frontend-path` 显式目标路径与越界/符号链接校验；`SAND_FRONTEND_PUBLISH=skip|force` 逃生门。
