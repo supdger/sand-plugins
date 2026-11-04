@@ -1,10 +1,16 @@
--- SandIAM top-level navigation regroup (sort/parent_id/is_hidden only).
+-- SandIAM top-level navigation regroup (parent_id and stored path only).
 -- Three stable groups sit under the SandIAM root: 应用接入 / 用户与权限 / 高级.
--- Permission codes, slugs, paths and components are unchanged; direct links to
--- old routes keep working. Every statement is idempotent: re-running converges
--- to the same tree without duplicating menus or role links.
+-- Permission codes, slugs and components are unchanged; hidden entity pages
+-- keep is_hidden=1 so they stay reachable but invisible in the sidebar. Moved
+-- pages switch their stored path to the absolute route (for example
+-- '/sand-iam/application') so the front-end hierarchical path join keeps every
+-- effective URL identical; direct links to the old routes keep working. Every
+-- statement is idempotent: re-running converges to the same tree without
+-- duplicating menus or role links.
 
--- The groups are visible directories (type=1); children collapse under them.
+-- The groups are visible component-less menu nodes (type=2 with an empty
+-- component). A directory row (type=1) would force the host layout component
+-- '/index/index' on the nested level and render a second layout frame.
 WITH group_def("name","code","path","sort") AS (
     VALUES
         ('应用接入','SandIAMGroupAccess','access',97),
@@ -13,7 +19,7 @@ WITH group_def("name","code","path","sort") AS (
 )
 INSERT INTO "sand_system_menu"
     ("parent_id","name","code","slug","type","path","component","icon","sort","is_hidden","status","create_time","update_time")
-SELECT root."id", group_def."name", group_def."code", '', 1, group_def."path", '', '', group_def."sort", 2, 1, NOW(), NOW()
+SELECT root."id", group_def."name", group_def."code", '', 2, group_def."path", '', '', group_def."sort", 2, 1, NOW(), NOW()
 FROM group_def
 CROSS JOIN LATERAL (
     SELECT "id" FROM "sand_system_menu" WHERE "code" = 'SandIAM' ORDER BY "id" LIMIT 1
@@ -22,13 +28,19 @@ WHERE NOT EXISTS (
     SELECT 1 FROM "sand_system_menu" existing WHERE existing."code" = group_def."code"
 );
 
+-- Moved pages keep their effective URL byte-for-byte: the stored path becomes
+-- the absolute route, which the front-end path joiner returns unchanged
+-- instead of prefixing it with the group path. is_hidden is not touched, so
+-- hidden entity pages stay hidden.
 UPDATE "sand_system_menu" menu
 SET "parent_id" = grp."id",
-    "is_hidden" = 2,
+    "path" = CASE WHEN menu."path" LIKE '/%' THEN menu."path" ELSE '/sand-iam/' || menu."path" END,
     "update_time" = NOW()
 FROM "sand_system_menu" grp
 WHERE grp."code" = 'SandIAMGroupAccess'
   AND menu."type" = 2
+  AND menu."status" = 1
+  AND menu."delete_time" IS NULL
   AND menu."code" IN (
       'SandIAMConnection','SandIAMApplication','SandIAMEnvironment',
       'SandIAMWorkload','SandIAMCredential','SandIAMGrant',
@@ -37,11 +49,13 @@ WHERE grp."code" = 'SandIAMGroupAccess'
 
 UPDATE "sand_system_menu" menu
 SET "parent_id" = grp."id",
-    "is_hidden" = 2,
+    "path" = CASE WHEN menu."path" LIKE '/%' THEN menu."path" ELSE '/sand-iam/' || menu."path" END,
     "update_time" = NOW()
 FROM "sand_system_menu" grp
 WHERE grp."code" = 'SandIAMGroupPeople'
   AND menu."type" = 2
+  AND menu."status" = 1
+  AND menu."delete_time" IS NULL
   AND menu."code" IN (
       'SandIAMPeopleAccess','SandIAMOrganization','SandIAMIdentity',
       'SandIAMIdentityBinding','SandIAMUserType','SandIAMIdentityUserType',
@@ -51,11 +65,13 @@ WHERE grp."code" = 'SandIAMGroupPeople'
 
 UPDATE "sand_system_menu" menu
 SET "parent_id" = grp."id",
-    "is_hidden" = 2,
+    "path" = CASE WHEN menu."path" LIKE '/%' THEN menu."path" ELSE '/sand-iam/' || menu."path" END,
     "update_time" = NOW()
 FROM "sand_system_menu" grp
 WHERE grp."code" = 'SandIAMGroupAdvanced'
   AND menu."type" = 2
+  AND menu."status" = 1
+  AND menu."delete_time" IS NULL
   AND menu."code" IN (
       'SandIAMGettingStarted','SandIAMAuditTroubleshooting','SandIAMApiGovernance',
       'SandIAMAuthSession','SandIAMEventNotification','SandIAMService',
