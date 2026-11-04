@@ -1,7 +1,7 @@
 {
   "format": 1,
   "app": "sand-iam",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "install_sql_sha256": "032665eeeb6392322dfad389baaa468321e14c8f3542e5c2e8a14d13a5a4d68e",
   "ledger_table": "sand_iam_schema_migration",
   "ledger_rows": 44,

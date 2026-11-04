@@ -264,7 +264,7 @@ if (is_string($builderSource)
     $updateSource = $updateMatch[1];
 }
 preg_match_all("/^\\s*'([0-9]{3}_[^']+\\.pgsql)',$/m", $updateSource, $updateMatches);
-$updateMigrationNames = in_array($currentVersion, ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0'], true)
+$updateMigrationNames = in_array($currentVersion, ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1'], true)
     ? ['043_scope_audit_event_key.pgsql']
     : ($currentVersion === '0.7.6' ? [] : ($updateMatches[1] ?? []));
 if ($currentVersion === '0.7.3' && !is_file($root . '/migrations/042_permission_menu_hierarchy.pgsql')) {
@@ -379,12 +379,12 @@ $assert('generated lifecycle separates full install from guarded versioned updat
             throw new RuntimeException('update replays historical migration ' . $name);
         }
     }
-    if (in_array($currentVersion, ['0.7.6', '0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0'], true)) {
-        $preflightFile = in_array($currentVersion, ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0'], true)
+    if (in_array($currentVersion, ['0.7.6', '0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1'], true)) {
+        $preflightFile = in_array($currentVersion, ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1'], true)
             ? '/lifecycle/update-073-or-075-or-076-to-080-preflight.pgsql'
             : '/lifecycle/update-073-or-075-to-076-preflight.pgsql';
         $preflight = (string) file_get_contents($root . $preflightFile);
-        if (in_array($currentVersion, ['0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0'], true)) {
+        if (in_array($currentVersion, ['0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1'], true)) {
             require_once $root . '/release/tools/build-upgrade-082.php';
             if ($update !== sandIamBuild082Update($root)) {
                 throw new RuntimeException('0.8.2 update differs from strict43/44 admission and immutable043 conditional body');
@@ -551,7 +551,7 @@ $assert('published 0.6.0 migration 021 remains byte-immutable in root and packag
 });
 
 $assert('current lifecycle generation preserves frozen SQL bytes', static function () use ($root, $currentVersion): bool {
-    if (!in_array($currentVersion, ['0.7.6', '0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0'], true)) return true;
+    if (!in_array($currentVersion, ['0.7.6', '0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1'], true)) return true;
     $output = [];
     exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($root . '/release/tools/build-lifecycle.php') . ' --check 2>&1', $output, $status);
     if ($status !== 0) throw new RuntimeException(implode("\n", $output));

@@ -3,6 +3,12 @@
 本文件只记录能够由当前公开源码、迁移和包契约复核的发行变化，不补写无法从权威来源确认的
 历史版本内容。日期标记为“待发布”的条目仍是候选，不代表已经上传、部署或公开发布。
 
+## 0.9.1（候选，待发布）
+
+- 修复访问矩阵一键授权 503：单个 `service_grant.create`/`service_grant.reactivate` 审计行原先共用父 `request_id`，同一请求授予多个 action 时第二条写入撞上 `uk_sand_iam_audit_log_request_action_event`（request_id, action, event_key）唯一约束（23505）；该冲突被误读为幂等抢占竞态，回滚后 grant 返回 503 `SAND_IAM_IDEMPOTENCY_REPLAY_UNAVAILABLE`，掩盖真实失败。
+- `service_grant.create`/`service_grant.reactivate` 审计现按 action code 派生 `childRequestId` 写入（沿用 `credential.issue` 既有模式）；`IdempotencyService` 在业务写入阶段 23505 于 `RETRY_REQUIRED` 上链回原始异常；grant 无已完成重放时回传链上原因而非裸 503。
+- 版本声明、SBOM 与冻结构建元数据同步为 0.9.1。无新增数据库迁移；`install.sql`/`update.sql`/`uninstall.sql` 与 0.9.0 逐字节一致（`build-lifecycle.php --check` 通过）。
+
 ## 0.9.0（候选，待发布）
 
 - 新首页"应用×服务"授权网格（UX P9）：SandIAM 首页改为访问矩阵视图，已有应用可"允许使用"一键授予默认能力（AI 对话、文档读取），未接入应用经"接入新应用"对话框由管理员命名并一键授权；可选同时生成调用密钥（≤2 次点击），默认环境/客户端自动创建；`issueCredential()` 仅签发凭证、不再隐式触碰授权（修复评审必修项：生成密钥不再静默复活已撤销授权）。
