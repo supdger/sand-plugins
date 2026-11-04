@@ -14,6 +14,17 @@ final class DeploymentDraftSaveRequestPolicy
     private const PROVIDER_FIELDS = ['code', 'name', 'adapter', 'timeout_ms'];
     private const MODEL_FIELDS = ['code', 'name', 'type', 'capabilities'];
 
+    /** @var \Closure():bool */
+    private readonly \Closure $materialGuard;
+
+    /** @param null|\Closure():bool $materialGuard */
+    public function __construct(?\Closure $materialGuard = null)
+    {
+        $this->materialGuard = $materialGuard ?? static function (): bool {
+            return (new InternalSecurityMaterialGuard())->ready();
+        };
+    }
+
     /**
      * @param array<string,mixed> $input
      * @return array{provider_id:?int,provider:?array{code:string,name:string,adapter:string,timeout_ms:int},model_id:?int,model:?array{code:string,name:string,type:string,capabilities:list<string>},deployment_id:?int,connection_submitted:bool,remote_model:string,config:array<string,int|string>}
@@ -136,14 +147,26 @@ final class DeploymentDraftSaveRequestPolicy
 
     private function keyForId(string $keyId): string
     {
+        $key = $this->keyFromEnvironment($keyId);
+        // The shared file may hold material this process never loaded (first
+        // request after install/upgrade) or the instance may still lack it;
+        // resolve on demand instead of failing until a manual service reload.
+        if (strlen($key) < 32 && ($this->materialGuard)()) {
+            $key = $this->keyFromEnvironment($keyId);
+        }
+        if (strlen($key) < 32) {
+            throw new ApiProblem('SAND_AI_IDEMPOTENCY_KEY_UNAVAILABLE', 'Idempotency key material is unavailable');
+        }
+        return $key;
+    }
+
+    private function keyFromEnvironment(string $keyId): string
+    {
         $activeId = (string) env('SAND_AI_IDEMPOTENCY_KEY_ID', 'active');
         $key = $keyId === $activeId ? (string) env('SAND_AI_IDEMPOTENCY_KEY', '') : '';
         if ($key === '') {
             $keyring = json_decode((string) env('SAND_AI_IDEMPOTENCY_KEYRING', '{}'), true);
             $key = is_array($keyring) && is_string($keyring[$keyId] ?? null) ? $keyring[$keyId] : '';
-        }
-        if (strlen($key) < 32) {
-            throw new ApiProblem('SAND_AI_IDEMPOTENCY_KEY_UNAVAILABLE', 'Idempotency key material is unavailable');
         }
         return $key;
     }
