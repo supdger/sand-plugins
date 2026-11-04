@@ -3,6 +3,11 @@
 本文件只记录能够由当前公开源码、迁移和包契约复核的发行变化，不补写无法从权威来源确认的
 历史版本内容。日期标记为“待发布”的条目仍是候选，不代表已经上传、部署或公开发布。
 
+## 0.9.4（候选，待发布）
+
+- 修复试用签发与一键授权两条懒供给链路的实体分裂与数据分级不匹配：`SandIamAdminTrialEntityStore`（SandAI 侧交付源码同步修复）原先自建 `system`/`production`/`admin_trial` 链，而授权与 ensure-defaults 走规范默认链路，导致边缘顺序（先试用后授权）下环境、client 重复创建且访问矩阵解析到试用 client；试用 grant 继承列默认 `data_class='internal'` 与未分级（NULL）的模型/调用事实不匹配。前端 `matrixClientFor` 现优先解析 `code=sand-ai` 的业务 client（跳过 `admin_trial`），`upsertGrant` 新建 grant 的 `data_class` 置 NULL；存量显式分级不自动改级。
+- 版本声明、SBOM 与冻结构建元数据同步为 0.9.4。无新增数据库迁移；`install.sql`/`update.sql`/`uninstall.sql` 与 0.9.3 逐字节一致（`build-lifecycle.php --check` 通过）。
+
 ## 0.9.3（候选，待发布）
 
 - 修复试用签发首调失败：`ContextSigningKeyProvisioner` 在原子写入 `.env` 成功后无条件调用 `\Webman\Config::set()`，而本交付线 webman-framework 的 `Config` 只有 `load`/`reload`/`clear`/`get`，该 `Error` 被 `ensure()` 吞掉导致当次签发仍以 503 失败关闭（`.env` 已写好，靠宿主 monitor reload 才让第二次调用成功；无 monitor 的 daemon 形态下每个 worker 首次供给后会永久闩死）。现按 `method_exists` 守卫该调用，并新增进程内 `$resolved` 缓存：供给成功的同一次请求即返回密钥，无需等待进程重启。
