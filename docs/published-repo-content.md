@@ -19,7 +19,8 @@
 
 ## 目录约定
 
-- `app/` 是全插件统一的"非后台应用面"顶层目录（SandAI 的 `app/`、SandIAM 的终端门户同一语义）。插件对外用户面一律用 `app/`，不得另造 `portal/` 等别名；产品名仍可叫"门户/portal"，但目录名固定 `app/`。
+- 顶层 `app/`、`config/` 是 SandPackage 受控宿主载荷保留前缀：安装器 `HostPayloadManifest.allowedPath` 仅允许 `app/**.php` 等受控 PHP 载荷占用（如 SandAI 安装到宿主 `app/**` 的载荷）。随包发行的非 PHP 源码（TS/JS 前端、文档源码等）放在顶层 `app/`/`config/` 下会导致整包校验拒绝、无法安装。
+- 因此插件对外用户面源码（如 SandIAM 终端门户 SPA 源码）一律用 `portal/` 顶层目录；产品名仍可叫"门户/portal"。SandIAM 0.8.5 曾误用 `app/` 发行门户 TS 源码导致包布局不合规，0.8.6 回退为 `portal/`。
 - `plugin/<app>/`（后端+载荷）、`sandadmin-artd/`（管理端源码）、`sdk/`、`examples/`、`release/`（发布机器收编位）、`docs/user-guide` 为其余标准顶层。
 - `plugin/<app>/docs/` 是随包契约文档，属用户面；只有仓根级 `docs/development|product|internal` 才算开发内容。
 

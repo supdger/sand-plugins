@@ -33,7 +33,7 @@ function sandIamPayloadRoots(): array
         'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'SECURITY.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md', 'SBOM.cdx.json', 'release-build-contract.json',
         'config.json', 'info.ini', 'existing-schema.json', 'install.sql', 'update.sql', 'uninstall.sql',
         'migrations', 'lifecycle', 'plugin/sand-iam',
-        'sandadmin-artd/src/views/plugin/sand-iam', 'app', 'sdk', 'docs/user-guide', 'examples',
+        'sandadmin-artd/src/views/plugin/sand-iam', 'portal', 'sdk', 'docs/user-guide', 'examples',
     ];
 }
 

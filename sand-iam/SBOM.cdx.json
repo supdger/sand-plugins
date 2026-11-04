@@ -6,9 +6,9 @@
     "metadata": {
         "component": {
             "type": "application",
-            "bom-ref": "pkg:generic/sandiam@0.8.5",
+            "bom-ref": "pkg:generic/sandiam@0.8.6",
             "name": "SandIAM",
-            "version": "0.8.5",
+            "version": "0.8.6",
             "licenses": [
                 {
                     "license": {
@@ -393,7 +393,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -418,7 +418,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -443,7 +443,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -468,7 +468,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -493,7 +493,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -518,7 +518,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -543,7 +543,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -568,7 +568,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -593,7 +593,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -618,7 +618,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -643,7 +643,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -668,7 +668,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -693,7 +693,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -718,7 +718,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -743,7 +743,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -768,7 +768,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -793,7 +793,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -818,7 +818,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -843,7 +843,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -868,7 +868,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -893,7 +893,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -918,7 +918,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -943,7 +943,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -968,7 +968,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -993,7 +993,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -1018,7 +1018,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -1043,7 +1043,7 @@
             "properties": [
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:license-evidence",
@@ -1072,7 +1072,7 @@
                 },
                 {
                     "name": "sandiam:lockfile",
-                    "value": "app/pnpm-lock.yaml"
+                    "value": "portal/pnpm-lock.yaml"
                 },
                 {
                     "name": "sandiam:lockfile",
@@ -2836,7 +2836,7 @@
     ],
     "dependencies": [
         {
-            "ref": "pkg:generic/sandiam@0.8.5",
+            "ref": "pkg:generic/sandiam@0.8.6",
             "dependsOn": [
                 "pkg:composer/casbin/casbin@v4.5.0",
                 "pkg:composer/onelogin/php-saml@4.3.2",
