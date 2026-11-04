@@ -1358,3 +1358,10 @@ TOTP 建立、确认和恢复码再生成也已按应用用户与同一 `X-Reque
 
 - 为 SandAI 文件尚未创建前的正式调用授权，增加 SandIAM 宿主本地只读 `WorkloadClientReferenceVerifier::verifyForService`：从当前 `sand_iam_*` 四级身份记录核实客户端、环境、应用、组织均启用且未删除，只返回 ID 与状态，不返回凭证。归属、接口和验收边界已冻结在开发入口。
 - 测试场无数据库行为测试 **11/11** 覆盖有效、非法 ID、缺失、四级停用及软删除；未进行真实 PostgreSQL/HTTP/宿主安装、grant 撤权或插件发行验收，不改变 SandIAM 正式 FLOW 和发布统计。SandAI 消费端另在其 OpenSpec 证据中记录。
+
+### 2026-11-03 Access Matrix（UX P9：首页"应用×服务"网格 + 一键授权）
+
+- 新工作项：改造 `index/index.vue` 为 SandIAM 首页（定位一句话 + 待你决定 + 应用×服务网格 + 折叠全部功能），新增 `GET/POST /app/sand-iam/admin/access-matrix/{index,grant}` 编排端点与 `AccessMatrixService`/`AccessMatrixInput`/`AccessMatrixController`。
+- 冻结条目已写入开发入口（Access Matrix 节）：权限复用 `sand_iam:grant:index|save`，发证另校验 `sand_iam:credential:issue`；audience 固定 `sand-ai`；service_code 白名单 `sand_ai`；action_codes 服务端裁剪；幂等 IdempotencyService+advisory lock+serializable；凭证明文仅显式要求返回且 no-store；授权只增不删原子回滚。
+- 离线验证：`php -l` 全过；`access_matrix_non_pg_test` 通过（规范化/白名单裁剪/audience 固定/无 secret/目录登记）；`access-matrix-contract.test.ts` 通过（解析/穿透 envelope/无 secret_hash/过期与撤销判定/律序预设）；隔离 overlay 上 `vue-tsc --noEmit` 无错误；`management_sdk_catalog` 通过；OpenAPI 对账测试在既有 0.7.3 版本硬编码处失败（基线 0.8.6，与本包无关）。
+- 未执行：真实 PostgreSQL/宿主 HTTP/浏览器验收、install 升级、P10 菜单改名（由并行包负责）。不改变正式 FLOW 或发布门槛统计。
