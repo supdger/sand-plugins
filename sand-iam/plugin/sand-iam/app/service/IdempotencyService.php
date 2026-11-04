@@ -116,6 +116,13 @@ final class IdempotencyService
     ): array {
         $requestId = RequestId::normalize($requestId);
         if ($manageTransaction) Db::startTrans();
+        // A unique conflict may come from the claim insert (a concurrent claim
+        // race on this operation's unique key) or from business writes inside
+        // the callback (e.g. a losing concurrent commit). Both take the
+        // retry/replay path, but a post-claim violation chains its original
+        // exception so callers can surface the real error instead of a bare
+        // SAND_IAM_IDEMPOTENCY_REPLAY_UNAVAILABLE.
+        $claimed = false;
         try {
             $record = SecurityOperation::where('actor_type', $actorType)
                 ->where('actor_ref', $actorRef)
@@ -147,6 +154,7 @@ final class IdempotencyService
                 'create_time' => date('Y-m-d H:i:s'),
                 'update_time' => date('Y-m-d H:i:s'),
             ]);
+            $claimed = true;
             $completed = $operation();
             $result = $completed['result'];
             $record->save([
@@ -164,7 +172,7 @@ final class IdempotencyService
                     // PostgreSQL marks the surrounding transaction aborted on
                     // 23505. The owner must roll it back before replay lookup;
                     // never recurse here or invoke the callback twice.
-                    throw new ApiException('SAND_IAM_IDEMPOTENCY_RETRY_REQUIRED: 外层事务发生唯一冲突，已回滚后才能安全读取幂等结果', 409);
+                    throw new ApiException('SAND_IAM_IDEMPOTENCY_RETRY_REQUIRED: 外层事务发生唯一冲突，已回滚后才能安全读取幂等结果', 409, $claimed ? $exception : null);
                 }
                 return $this->execute($actorType, $actorRef, $operationName, $requestId, $requestFingerprint, $resourceType, $operation, 1, $manageTransaction);
             }
