@@ -50,6 +50,8 @@ namespace plugin\SandIam\app\model {
     {
         /** @var array<int,self> */ public static array $rows = [];
         public static int $nextId = 1;
+        /** @var null|\Throwable consumed once to simulate a claim-insert race */
+        public static ?\Throwable $createFailure = null;
         public int $id;
         public string $actor_type;
         public string $actor_ref;
@@ -66,6 +68,11 @@ namespace plugin\SandIam\app\model {
         /** @param array<string,mixed> $payload */
         public static function create(array $payload): self
         {
+            if (self::$createFailure !== null) {
+                $failure = self::$createFailure;
+                self::$createFailure = null;
+                throw $failure;
+            }
             $record = new self();
             $record->id = self::$nextId++;
             foreach ($payload as $field => $value) $record->{$field} = $value;
@@ -160,6 +167,67 @@ namespace {
     $completed = $service->waitForCompletedReplay('admin', '9', 'onboarding.apply', 'onboarding-concurrent-20260823', $pendingFingerprint, 2, 1);
     tP0($completed !== null && $completed['replayed'] === true && ($completed['result']['workload_client_id'] ?? null) === 99 && ($completed['result']['secret_available'] ?? null) === false, 'matching in-flight operation did not wait for and return its completed replay');
     tP0($pending->state === 'succeeded', 'in-flight completion hook did not settle the pending record');
+
+    // Unique violations raised by the claim insert take the retry/replay
+    // path unchanged. Violations raised inside the operation callback still
+    // take that path (a concurrent commit may legitimately own the key), but
+    // the thrown retry signal must chain the original exception so callers can
+    // surface the real failure (regression: an audit-log 23505 used to surface
+    // as SAND_IAM_IDEMPOTENCY_REPLAY_UNAVAILABLE with no trace of the cause).
+    $raceFingerprint = IdempotencyService::fingerprint(['race' => 'claim']);
+    SecurityOperation::$createFailure = new \RuntimeException('SQLSTATE[23505]: duplicate key value violates unique constraint "uk_sand_iam_security_operation_actor_request"');
+    $raceCalls = 0;
+    $raceResult = $service->execute('admin', '7', 'claim.race', 'claim-race-20261104', $raceFingerprint, 'resource', static function () use (&$raceCalls): array {
+        $raceCalls++;
+        return ['resource_id' => 5, 'result' => ['ok' => true]];
+    });
+    tP0($raceResult['replayed'] === false && $raceCalls === 1, 'claim-phase unique conflict did not retry into a successful operation');
+
+    // Outer-transaction claim conflict keeps the pure retry signal — no
+    // previous, so callers keep replay semantics for the claim race itself.
+    SecurityOperation::$createFailure = new \RuntimeException('SQLSTATE[23505]: duplicate key value violates unique constraint "uk_sand_iam_security_operation_actor_request"');
+    try {
+        $service->execute('admin', '7', 'claim.race.outer', 'claim-race-outer-20261104', IdempotencyService::fingerprint(['outer' => true]), 'resource', static function (): array {
+            return ['resource_id' => 6, 'result' => ['ok' => true]];
+        }, 0, false);
+        tP0(false, 'outer-transaction claim conflict was not signalled');
+    } catch (ApiException $exception) {
+        tP0($exception->getCode() === 409 && str_contains($exception->getMessage(), 'SAND_IAM_IDEMPOTENCY_RETRY_REQUIRED'), 'outer-transaction claim conflict must still request the retry path');
+        tP0($exception->getPrevious() === null, 'claim-phase conflict must not chain a business cause');
+    }
+
+    // Outer-transaction business violation: the retry signal must carry the
+    // original exception so a caller with no completed replay can rethrow it.
+    $outerViolation = new \RuntimeException('SQLSTATE[23505]: duplicate key value violates unique constraint "uk_sand_iam_audit_log_request_action_event"');
+    try {
+        $service->execute('admin', '7', 'business.violation.outer', 'business-violation-outer-20261104', IdempotencyService::fingerprint(['outer' => 'audit']), 'audit_log', static function () use ($outerViolation): array {
+            throw $outerViolation;
+        }, 0, false);
+        tP0(false, 'outer-transaction operation violation was swallowed');
+    } catch (ApiException $exception) {
+        tP0($exception->getCode() === 409 && str_contains($exception->getMessage(), 'SAND_IAM_IDEMPOTENCY_RETRY_REQUIRED'), 'outer-transaction operation violation lost the retry contract');
+        tP0($exception->getPrevious() === $outerViolation, 'outer-transaction operation violation did not chain the original error');
+    }
+
+    // Managed-transaction business violation: the single retry re-invokes the
+    // callback in a fresh transaction (mirroring the post-rollback recheck the
+    // outer-transaction callers do), then the real error propagates.
+    $businessViolation = new \RuntimeException('SQLSTATE[23505]: duplicate key value violates unique constraint "uk_sand_iam_audit_log_request_action_event"');
+    $businessCalls = 0;
+    try {
+        $service->execute('admin', '7', 'business.violation', 'business-violation-20261104', IdempotencyService::fingerprint(['kind' => 'audit']), 'audit_log', static function () use (&$businessCalls, $businessViolation): array {
+            $businessCalls++;
+            // The stub cannot roll the pending claim row back; clearing the
+            // store models the committed-elsewhere state the retry observes.
+            SecurityOperation::$rows = [];
+            throw $businessViolation;
+        });
+        tP0(false, 'operation-phase unique violation was swallowed');
+    } catch (\RuntimeException $exception) {
+        tP0($exception === $businessViolation, 'operation-phase unique violation did not propagate as the original error');
+        tP0(!$exception instanceof ApiException, 'operation-phase unique violation was misclassified as an idempotency error');
+    }
+    tP0($businessCalls === 2, 'managed operation-phase conflict must get exactly one retry before surfacing');
 
     $root = dirname(__DIR__, 3);
     $runtime = file_get_contents($root . '/plugin/sand-iam/app/api/controller/RuntimeContextController.php');

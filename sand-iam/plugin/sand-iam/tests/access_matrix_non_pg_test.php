@@ -121,6 +121,24 @@ amxAssert(!str_contains($service, "'revoked_time' => date"), 'access matrix must
 // Credential-only issuance skips the whole grant orchestration
 amxAssert(str_contains($service, "['action_codes'] !== []"), 'grant orchestration must be skippable for credential-only issuance');
 
+// Per-action grant audits must not share the parent request id: the audit
+// unique key (request_id, action, event_key) admits one row per action name
+// per request, so a multi-action grant needs a derived id per action code —
+// the established childRequestId pattern used for credential.issue.
+amxAssert(str_contains($service, "childRequestId(\$requestId, 'service_grant.' . \$actionCode)"), 'service_grant audits must derive a request id per action code');
+amxAssert(!str_contains($service, "'succeeded', \$requestId, ['action_code'"), 'service_grant audits must not reuse the parent request id');
+$parentRequestId = 'req_access_matrix_grant_regression';
+$grantAuditIdA = 'amx_' . substr(hash('sha256', $parentRequestId . "\0" . 'service_grant.' . 'sand_ai.chat.complete'), 0, 48);
+$grantAuditIdB = 'amx_' . substr(hash('sha256', $parentRequestId . "\0" . 'service_grant.' . 'sand_ai.document_parse'), 0, 48);
+amxAssert($grantAuditIdA !== $grantAuditIdB, 'derived grant audit request ids must differ per action code');
+amxAssert(preg_match('/^[A-Za-z0-9][A-Za-z0-9_.:-]{7,95}$/', $grantAuditIdA) === 1, 'derived grant audit request id must stay request-id compatible');
+
+// A unique conflict inside the orchestration must surface its real cause:
+// the retry signal chains the original exception and grant rethrows it when
+// no completed replay exists — never masked as REPLAY_UNAVAILABLE.
+amxAssert(str_contains($idempotency, '$claimed ? $exception : null'), 'retry signal must chain post-claim violations as previous');
+amxAssert(str_contains($service, 'getPrevious()') && str_contains($service, 'throw $previous'), 'grant must surface the chained business conflict when no replay exists');
+
 // S-3: explicit organization_id must match the resolved application's org
 amxAssert(str_contains($service, 'ORGANIZATION_MISMATCH'), 'service must reject organization_id/application org mismatch');
 // id-only callers are re-anchored to the application's own organization so

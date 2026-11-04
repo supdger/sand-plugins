@@ -258,10 +258,15 @@ final class AccessMatrixService
                         foreach ($clip['granted'] as $actionCode) {
                             $action = $actionsByCode[$actionCode];
                             [$grant, $grantState] = $this->upsertGrant((int) $client->id, (int) $action['id']);
+                            // The audit unique key (request_id, action, event_key)
+                            // admits one row per action name per request, so each
+                            // granted action audits under its own derived id —
+                            // the same pattern as credential.issue above.
+                            $auditRequestId = $this->childRequestId($requestId, 'service_grant.' . $actionCode);
                             if ($grantState === 'created') {
-                                $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'service_grant.create', 'service_grant', (int) $grant->id, 'succeeded', $requestId, ['action_code' => $actionCode]);
+                                $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'service_grant.create', 'service_grant', (int) $grant->id, 'succeeded', $auditRequestId, ['action_code' => $actionCode]);
                             } elseif ($grantState === 'reactivated') {
-                                $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'service_grant.reactivate', 'service_grant', (int) $grant->id, 'succeeded', $requestId, ['action_code' => $actionCode]);
+                                $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'service_grant.reactivate', 'service_grant', (int) $grant->id, 'succeeded', $auditRequestId, ['action_code' => $actionCode]);
                             }
                             $granted[] = [
                                 'service_action_id' => (int) $action['id'],
@@ -311,6 +316,14 @@ final class AccessMatrixService
             $completedReplay = $operations->waitForCompletedReplay('admin', (string) $adminId, 'access_matrix.grant', $requestId, $fingerprint);
             if ($completedReplay !== null) return $completedReplay;
             if (str_starts_with($exception->getMessage(), 'SAND_IAM_IDEMPOTENCY_RETRY_REQUIRED')) {
+                $previous = $exception->getPrevious();
+                if ($previous !== null) {
+                    // The conflict came from the orchestration writes, not the
+                    // idempotency claim, and the wait above proved no replay
+                    // exists. Surface the real failure instead of masking it
+                    // as SAND_IAM_IDEMPOTENCY_REPLAY_UNAVAILABLE.
+                    throw $previous;
+                }
                 return $operations->replay('admin', (string) $adminId, 'access_matrix.grant', $requestId, $fingerprint);
             }
             throw $exception;
