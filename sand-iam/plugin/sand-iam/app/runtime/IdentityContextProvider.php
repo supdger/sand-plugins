@@ -328,7 +328,7 @@ final class IdentityContextProvider
         }
     }
 
-    private function signingKey(): string { return (string) config('plugin.sand-iam.app.context_signing_key', ''); }
+    private function signingKey(): string { return ContextSigningKeyProvisioner::ensure(); }
     private function expired(mixed $value): bool { return $value !== null && $value !== '' && strtotime((string) $value) <= time(); }
     private function requestId(string $requestId): string { return RequestId::normalize($requestId); }
     private function base64Url(string $value): string { return rtrim(strtr(base64_encode($value), '+/', '-_'), '='); }

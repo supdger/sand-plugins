@@ -341,6 +341,100 @@ final class AccessMatrixService
         return $result;
     }
 
+    /**
+     * Idempotent first-use provisioning of the default entity chain so a fresh
+     * install can present an actionable home and wizard without a manual
+     * registration detour: default organization + default application
+     * (lvxu/律序) + default environment (prod/正式) + the sand-ai workload
+     * client. Creates nothing twice, grants nothing, issues no credential —
+     * capability grants stay an explicit admin decision on the same page.
+     *
+     * @return array{organization_id:int,application_id:int,environment_id:int,workload_client_id:int,created:list<string>}
+     */
+    public function ensureDefaults(int $adminId, string $requestId, AdminOrganizationAccess $access): array
+    {
+        $normalized = [
+            'organization_id' => null,
+            'application' => ['id' => null, 'code' => AccessMatrixInput::DEFAULT_APPLICATION_CODE, 'name' => AccessMatrixInput::DEFAULT_APPLICATION_NAME],
+            'service_code' => 'sand_ai',
+            'action_codes' => [],
+            'environment_code' => AccessMatrixInput::DEFAULT_ENVIRONMENT_CODE,
+            'issue_credential' => false,
+            'credential_name' => '',
+        ];
+        if (!$access->isSuperAdmin()) {
+            // Scoped admins can only place the default application inside an
+            // organization they already manage; creating a new organization is
+            // platform-level only, same boundary as grant().
+            $organizationIds = $access->organizationIds();
+            if ($organizationIds === []) {
+                throw new ApiException('SAND_IAM_ORGANIZATION_SCOPE_FORBIDDEN: 没有可管理的客户主体', 403);
+            }
+            $normalized['organization_id'] = (int) $organizationIds[0];
+        }
+
+        $fingerprint = IdempotencyService::fingerprint(['scope' => 'ensure-defaults'] + $normalized);
+        $operations = new IdempotencyService();
+        $completedReplay = $operations->waitForCompletedReplay('admin', (string) $adminId, 'access_matrix.ensure_defaults', $requestId, $fingerprint);
+        if ($completedReplay !== null) return $completedReplay;
+
+        [$lockLeft, $lockRight] = self::advisoryKeyFor($normalized);
+        $previousIsolation = $this->beginSerializableTransaction();
+        try {
+            Db::query('SELECT pg_advisory_xact_lock(?, ?)', [$lockLeft, $lockRight]);
+            $result = $operations->execute('admin', (string) $adminId, 'access_matrix.ensure_defaults', $requestId, $fingerprint, 'access_matrix', function () use ($normalized, $adminId, $requestId): array {
+                Db::startTrans();
+                try {
+                    $actor = (string) $adminId;
+                    $writer = new AuditWriter();
+                    $created = [];
+
+                    [$organization, $organizationCreated] = $this->resolveOrganization($normalized);
+                    if ($organizationCreated) {
+                        $created[] = 'organization';
+                        $writer->write('admin', $actor, (int) $organization->id, null, 'organization.create', 'organization', (int) $organization->id, 'succeeded', $requestId);
+                    }
+                    [$application, $applicationCreated] = $this->resolveApplication($normalized, (int) $organization->id);
+                    if ($applicationCreated) {
+                        $created[] = 'application';
+                        $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'application.create', 'application', (int) $application->id, 'succeeded', $requestId);
+                    }
+                    [$environment, $environmentCreated] = $this->resolveEnvironment($normalized, (int) $application->id);
+                    if ($environmentCreated) {
+                        $created[] = 'environment';
+                        $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'environment.create', 'environment', (int) $environment->id, 'succeeded', $requestId);
+                    }
+                    [$client, $clientCreated] = $this->resolveClient((int) $environment->id);
+                    if ($clientCreated) {
+                        $created[] = 'workload_client';
+                        $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'workload_client.create', 'workload_client', (int) $client->id, 'succeeded', $requestId);
+                    }
+                    $result = [
+                        'organization_id' => (int) $organization->id,
+                        'application_id' => (int) $application->id,
+                        'environment_id' => (int) $environment->id,
+                        'workload_client_id' => (int) $client->id,
+                        'created' => $created,
+                    ];
+                    Db::commit();
+                    return ['resource_id' => (int) $client->id, 'result' => $result];
+                } catch (\Throwable $exception) { Db::rollback(); throw $exception; }
+            }, 0, false);
+            Db::commit();
+        } catch (\Throwable $exception) {
+            Db::rollback();
+            $completedReplay = $operations->waitForCompletedReplay('admin', (string) $adminId, 'access_matrix.ensure_defaults', $requestId, $fingerprint);
+            if ($completedReplay !== null) return $completedReplay;
+            if ($this->isSerializationFailure($exception)) {
+                throw new ApiException('SAND_IAM_ACCESS_MATRIX_CONFLICT: 并发创建默认实体冲突，请重试', 409);
+            }
+            throw $exception;
+        } finally {
+            $this->restoreTransactionIsolation($previousIsolation);
+        }
+        return $result;
+    }
+
     /** @return array{0:object,1:bool} */
     private function resolveOrganization(array $normalized): array
     {
