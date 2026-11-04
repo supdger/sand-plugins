@@ -3,6 +3,12 @@
 本文件只记录能够由当前公开源码、迁移和包契约复核的发行变化，不补写无法从权威来源确认的
 历史版本内容。日期标记为“待发布”的条目仍是候选，不代表已经上传、部署或公开发布。
 
+## 0.9.0（候选，待发布）
+
+- 新首页"应用×服务"授权网格（UX P9）：SandIAM 首页改为访问矩阵视图，"允许律序使用"一键授权并自动生成调用密钥（≤2 次点击），默认应用/环境自动创建；`issueCredential()` 仅签发凭证、不再隐式触碰授权（修复评审必修项：生成密钥不再静默复活已撤销授权）。
+- 菜单与术语通俗化（UX P10）：管理入口更名"身份与权限（SandIAM）"，总览更名"首页"；SCIM→"自动同步用户（SCIM）"、RADIUS→"网络设备登录认证（RADIUS）"、OAuth→"OAuth 授权接入"、动态注册令牌、CAS→"CAS 单点接入"等；新装由 `lifecycle/base.pgsql` 播种新名称，升级由 `lifecycle/menu-regroup.pgsql` 尾部幂等 UPDATE 按稳定 code 收敛，权限码、slug、路径、组件、sort、is_hidden 不变。
+- 版本声明、SBOM 与冻结构建元数据同步为 0.9.0。无新增数据库迁移；`install.sql`/`update.sql` 经 `build-lifecycle.php` 重新生成（仅菜单种子与收敛语句变化）。
+
 ## 0.8.6（候选，待发布）
 
 - 修复发行包布局回归：随包发行的账户门户 SPA 源码由顶层 `app/` 回退为 `portal/`（恢复 0.8.4 及更早布局）。顶层 `app/` 是 SandPackage 受控宿主载荷保留前缀，`HostPayloadManifest.allowedPath` 仅允许 `app/**.php`，0.8.5 包因顶层 `app/` 携带 TS 源码被拒装（400）。运行时产物仍由 `portal/scripts/build.mjs` 输出至 `plugin/sand-iam/public/account/`，运行面 URL 与插件内 PHP `app/` 目录不变。
