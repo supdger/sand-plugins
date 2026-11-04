@@ -212,7 +212,7 @@
     try {
       await ElMessageBox.confirm(
         `确认停用「${row.name}」吗？停用后不能再设置共享密钥，已配置密钥不会回显。`,
-        '停用 RADIUS 设备',
+        '停用网络认证设备',
         { type: 'warning', confirmButtonText: '确认停用', cancelButtonText: '取消' }
       )
     } catch {
@@ -287,7 +287,7 @@
   <div class="sand-iam-page">
     <ElCard class="sand-iam-page-card" shadow="never">
       <div class="mb-4">
-        <h2 class="m-0 text-lg font-semibold">RADIUS 网络设备</h2>
+        <h2 class="m-0 text-lg font-semibold">网络设备登录认证（RADIUS）</h2>
         <p class="mb-0 mt-2 text-sm text-gray-500">
           登记可发起 RADIUS
           认证的网络设备。默认列表只显示设备名称、所属应用、来源网段、密钥已配置/未配置和状态。共享密钥、密文、版本、报文和请求指纹不进入本页。
@@ -300,14 +300,14 @@
         type="warning"
         :closable="false"
         title="没有权限"
-        description="当前账号无权查看 RADIUS 设备。请联系平台管理员开通设备查看权限。"
+        description="当前账号无权查看网络认证设备。请联系平台管理员开通设备查看权限。"
       />
       <ElAlert
         class="mb-4"
         type="warning"
         :closable="false"
         title="当前协议能力"
-        description="当前 RADIUS 只支持 User-Name + User-Password。已启用 MFA 的账号会被拒绝。管理路由没有独立测试接口，本页不会伪造成功连通。"
+        description="当前 RADIUS 只支持用户名+密码。已启用两步验证（MFA）的账号会被拒绝。管理路由没有独立测试接口，本页不会伪造成功连通。"
       />
       <ElAlert
         v-if="requestError"
@@ -331,7 +331,7 @@
         type="info"
         :closable="false"
         title="当前没有设备"
-        description="所选范围内还没有 RADIUS 网络设备。这与没有权限不同。"
+        description="所选范围内还没有网络认证设备。这与没有权限不同。"
       />
 
       <ElForm label-width="170px" class="mb-4">

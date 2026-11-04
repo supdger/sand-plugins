@@ -113,3 +113,16 @@ WHERE grp."code" IN ('SandIAMGroupAccess','SandIAMGroupPeople','SandIAMGroupAdva
       SELECT 1 FROM "sand_system_role_menu" existing
       WHERE existing."role_id" = role_menu."role_id" AND existing."menu_id" = grp."id"
   );
+
+-- UX-P10 terminology pass: rename menus by stable code only. Fresh installs
+-- already seed the new names from lifecycle/base.pgsql; these updates converge
+-- upgraded installations to the same labels. Codes, slugs, paths, components,
+-- sort and is_hidden are untouched, so permissions and routes are unaffected.
+-- Every statement is idempotent: re-running writes the same name again.
+UPDATE "sand_system_menu" SET "name" = '身份与权限（SandIAM）', "update_time" = NOW() WHERE "code" = 'SandIAM';
+UPDATE "sand_system_menu" SET "name" = '首页', "update_time" = NOW() WHERE "code" = 'SandIAMOverview';
+UPDATE "sand_system_menu" SET "name" = 'OAuth 授权接入', "update_time" = NOW() WHERE "code" = 'SandIAMOAuthClient';
+UPDATE "sand_system_menu" SET "name" = 'OAuth 动态注册令牌', "update_time" = NOW() WHERE "code" = 'SandIAMOAuthRegistrationToken';
+UPDATE "sand_system_menu" SET "name" = 'CAS 单点接入', "update_time" = NOW() WHERE "code" = 'SandIAMCasService';
+UPDATE "sand_system_menu" SET "name" = '自动同步用户（SCIM）', "update_time" = NOW() WHERE "code" = 'SandIAMScimTokens';
+UPDATE "sand_system_menu" SET "name" = '网络设备登录认证（RADIUS）', "update_time" = NOW() WHERE "code" = 'SandIAMRadiusNas';

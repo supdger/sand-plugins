@@ -281,7 +281,7 @@
   <div class="sand-iam-page">
     <ElCard class="sand-iam-page-card" shadow="never">
       <div class="mb-4">
-        <h2 class="m-0 text-lg font-semibold">动态注册令牌</h2>
+        <h2 class="m-0 text-lg font-semibold">OAuth 动态注册令牌</h2>
         <p class="mb-0 mt-2 text-sm text-gray-500">
           给接入应用签发 OAuth
           动态注册初始访问令牌。默认列表只显示用途名称、所属应用、回调地址摘要、可用范围、剩余次数、到期和状态。令牌只展示一次，请立即安全保存。

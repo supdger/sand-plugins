@@ -271,7 +271,7 @@
   <div class="sand-iam-page">
     <ElCard class="sand-iam-page-card" shadow="never">
       <div class="mb-4">
-        <h2 class="m-0 text-lg font-semibold">MFA 与通行密钥</h2>
+        <h2 class="m-0 text-lg font-semibold">两步验证（MFA）与通行密钥</h2>
         <p class="mb-0 mt-2 text-sm text-gray-500">
           此处只管理当前应用用户自己的验证方式。默认列表只显示名称、类型、状态和最近使用时间；一次性密钥和恢复码只在成功后展示一次。通行密钥策略在「认证设置」高级区；本机添加通行密钥请前往应用门户。
         </p>
