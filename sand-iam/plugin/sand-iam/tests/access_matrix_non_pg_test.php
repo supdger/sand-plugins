@@ -118,6 +118,11 @@ amxAssert(str_contains($service, 'isSuperAdmin') && str_contains($service, 'orga
 amxAssert(!str_contains($service, '->delete()'), 'access matrix must never delete rows');
 amxAssert(!str_contains($service, "'revoked_time' => date"), 'access matrix must not revoke grants');
 
+// One-click grants pin data_class NULL: the default action set resolves
+// unclassified invocation facts and the runtime requires an exact match;
+// existing rows are never reclassified by re-granting.
+amxAssert(str_contains($service, "'data_class' => null"), 'matrix grant must pin a NULL data class on create');
+
 // Credential-only issuance skips the whole grant orchestration
 amxAssert(str_contains($service, "['action_codes'] !== []"), 'grant orchestration must be skippable for credential-only issuance');
 

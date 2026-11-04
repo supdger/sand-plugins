@@ -245,14 +245,31 @@ export function parseMatrixGrantResult(raw: unknown): SandIamMatrixGrantResult {
   }
 }
 
-/** Flatten clients: the grid shows one row per application. */
+/** The business calling identity the one-click grant/ensure chain materializes. */
+export const MATRIX_BUSINESS_CLIENT_CODE = 'sand-ai'
+/**
+ * The dedicated administrator-trial client. Its transient credentials and
+ * trial-only grants are never the row's calling identity, so it is skipped
+ * even when it is the only client a lazy trial-first provisioning created.
+ */
+export const MATRIX_TRIAL_CLIENT_CODE = 'admin_trial'
+
+/**
+ * Flatten clients: the grid shows one row per application. The canonical
+ * business client (code `sand-ai`) always wins regardless of which lazy
+ * chain materialized it first; the dedicated trial client is never reported
+ * as the row's calling identity.
+ */
 export function matrixClientFor(app: SandIamMatrixApplication): SandIamMatrixClient | null {
+  let fallback: SandIamMatrixClient | null = null
   for (const env of app.environments) {
     for (const client of env.clients) {
-      if (client.status === 1) return client
+      if (client.status !== 1) continue
+      if (client.code === MATRIX_BUSINESS_CLIENT_CODE) return client
+      if (client.code !== MATRIX_TRIAL_CLIENT_CODE && fallback === null) fallback = client
     }
   }
-  return null
+  return fallback
 }
 
 /** Active grant check for a service action (status 1, not expired). */

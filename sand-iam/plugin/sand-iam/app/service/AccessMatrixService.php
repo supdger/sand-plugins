@@ -526,10 +526,18 @@ final class AccessMatrixService
             ->lock(true)
             ->find();
         if ($grant === null) {
+            // data_class is pinned to NULL: the one-click default action set
+            // (chat/document/catalog/file calls on this client's own
+            // resources) resolves unclassified invocation facts, and the
+            // runtime requires an exact match — the column default
+            // 'internal' would deny every such call. Classified resources
+            // still need an explicit grant via the service-grant admin API.
+            // Existing rows are never reclassified silently.
             return [ServiceGrant::create([
                 'workload_client_id' => $clientId,
                 'service_action_id' => $actionId,
                 'audience' => AccessMatrixInput::DEFAULT_AUDIENCE,
+                'data_class' => null,
                 'status' => 1,
             ]), 'created'];
         }
