@@ -3,6 +3,12 @@
 本文件只记录能够由当前公开源码、迁移和包契约复核的发行变化，不补写无法从权威来源确认的
 历史版本内容。日期标记为“待发布”的条目仍是候选，不代表已经上传、部署或公开发布。
 
+## 0.9.2（候选，待发布）
+
+- 全新安装试用签发 503 修复：`SAND_IAM_CONTEXT_SIGNING_KEY` 原本只由部署侧注入，全新实例无人供给导致 `trial/context` 签发失败。新增 `ContextSigningKeyProvisioner`：首次需要签发上下文时按私有锁串行生成密钥、先备份再以原子写补入宿主 `.env`、进程内即时刷新，签发不再依赖人工预置密钥。
+- S2 默认实体零步化：新增幂等端点 `POST access-matrix/ensure-defaults`，为空实例自动创建默认客户主体、律序应用、prod 环境与 client（不授权、不发证）；SandIAM 首页与 SandAI 首页在检测到实体为空时自动调用一次，新装实例不再要求先手工走 3 步登记才能"设为默认并启用"。
+- 版本声明、SBOM 与冻结构建元数据同步为 0.9.2。无新增数据库迁移；`install.sql`/`update.sql`/`uninstall.sql` 与 0.9.1 逐字节一致（`build-lifecycle.php --check` 通过）。
+
 ## 0.9.1（候选，待发布）
 
 - 修复访问矩阵一键授权 503：单个 `service_grant.create`/`service_grant.reactivate` 审计行原先共用父 `request_id`，同一请求授予多个 action 时第二条写入撞上 `uk_sand_iam_audit_log_request_action_event`（request_id, action, event_key）唯一约束（23505）；该冲突被误读为幂等抢占竞态，回滚后 grant 返回 503 `SAND_IAM_IDEMPOTENCY_REPLAY_UNAVAILABLE`，掩盖真实失败。
