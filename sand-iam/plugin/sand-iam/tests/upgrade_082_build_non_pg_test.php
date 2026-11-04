@@ -64,17 +64,19 @@ echo "[PASS] catalog capture is a build-only input, absent from runtime payload\
 $branchStart = strpos($sql, 'IF source_rows = 43 THEN');
 $branchEnd = strpos($sql, 'ELSIF source_rows <> 44 THEN', $branchStart === false ? 0 : $branchStart);
 if ($branchStart === false || $branchEnd === false
-    || substr_count($sql, 'EXECUTE ') !== 2
+    || substr_count($sql, 'EXECUTE ') !== 3
     || substr_count(substr($sql, $branchStart, $branchEnd - $branchStart), 'EXECUTE ') !== 2
+    || !str_contains($sql, 'EXECUTE $iam082_menu_regroup$')
     || !str_contains($sql, 'FULL OUTER JOIN public.sand_iam_schema_migration')
     || !str_contains($sql, "actual_catalog IS DISTINCT FROM \$iam082_policies\$[]\$iam082_policies\$::jsonb")) {
     throw new RuntimeException('43 mutation / 44 validation boundary changed');
 }
-echo "[PASS] only the 43 branch contains prior admission and original043 execution; complete44 compares all ledger rows and catalog groups\n";
+echo "[PASS] only the 43 branch contains prior admission and original043 execution; complete44 compares all ledger rows and catalog groups, then the idempotent menu regroup runs\n";
 $temp = sys_get_temp_dir() . '/iam082-build-contract-' . bin2hex(random_bytes(5));
 $files = ['release/tools/resources/schema-043-catalog.json',
     'lifecycle/update-073-or-075-or-076-to-080-preflight.pgsql',
-    'migrations/043_scope_audit_event_key.pgsql'];
+    'migrations/043_scope_audit_event_key.pgsql',
+    'lifecycle/menu-regroup.pgsql'];
 $restore = [];
 try {
     foreach ($files as $relative) {

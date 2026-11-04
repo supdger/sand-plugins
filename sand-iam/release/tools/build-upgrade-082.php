@@ -102,6 +102,12 @@ function sandIamBuild082Update(string $root): string
             . "    END IF;\n";
     }
     $migrationBody = withoutOuterTransaction($migration, '043_scope_audit_event_key.pgsql');
+    $menuRegroup = file_get_contents($root . '/lifecycle/menu-regroup.pgsql');
+    if (!is_string($menuRegroup)
+        || hash('sha256', $menuRegroup) !== 'a1d1f58f128150196f89953509daad82922165d206334276982de1a94c781463'
+        || str_contains($menuRegroup, '$iam082_menu_regroup$')) {
+        throw new RuntimeException('Menu regroup lifecycle source differs from the exact reviewed input');
+    }
     foreach (['$iam082_prior$', '$iam082_migration$'] as $tag) {
         if (str_contains($oldAdmissionBody . $migrationBody, $tag)) {
             throw new RuntimeException('Migration dollar-quote collision');
@@ -152,6 +158,9 @@ SQL;
         . "        RAISE EXCEPTION 'SandIAM 0.8.2 requires the exact complete revision043 ledger';\n"
         . "    END IF;\n"
         . $catalogChecks
+        . "    EXECUTE \$iam082_menu_regroup\$"
+        . $menuRegroup
+        . "\$iam082_menu_regroup\$;\n"
         . "END \$sand_iam_upgrade_082\$;\n";
 
     // The public PostgreSQL executor understands multiline dollar-quoted DO

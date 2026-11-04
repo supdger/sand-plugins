@@ -37,7 +37,7 @@ try {
     }
     // A supported lifecycle profile must not mask mismatched package metadata.
     $currentVersion = parse_ini_file($root . '/info.ini')['version'];
-    foreach (['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4'] as $otherVersion) {
+    foreach (['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5'] as $otherVersion) {
         if ($otherVersion === $currentVersion) continue;
         $manifest = json_decode($original, true, 16, JSON_THROW_ON_ERROR);
         $manifest['version'] = $otherVersion;
