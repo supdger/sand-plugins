@@ -17,6 +17,7 @@ import {
   readOrchestrationSessions,
   removeOrchestrationSession,
   resumeInstallOrchestration,
+  runDependencyChainLoop,
   runInstallOrchestration,
   upsertOrchestrationSession,
   type DependencyChainRow,
@@ -340,6 +341,101 @@ test('onPhase：首跑 install→链前 chain；续跑只发 chain', async () =>
     { app: 'sand-ai', title: 'SandAI' }
   )
   assert.deepEqual(resumePhases, ['chain'])
+})
+
+// ========== 依赖队列续跑（0.2.20 依赖自动升级） ==========
+
+test('断点记录携带依赖队列：queue/depIndex 往返与坏形状归一', () => {
+  const storage = memoryStorage()
+  upsertOrchestrationSession(
+    storage,
+    session({ queue: [{ app: 'sand-iam', title: 'SandIAM' }], depIndex: 1 })
+  )
+  let sessions = readOrchestrationSessions(storage)
+  assert.equal(sessions.length, 1)
+  assert.deepEqual(sessions[0].queue, [{ app: 'sand-iam', title: 'SandIAM' }])
+  assert.equal(sessions[0].depIndex, 1)
+
+  storage.map.set(
+    ORCHESTRATION_SESSION_STORAGE_KEY,
+    JSON.stringify([{ app: 'sand-ai', queue: [{ app: '' }, 'x', { app: 'dep', title: 1 }], depIndex: -2 }])
+  )
+  sessions = readOrchestrationSessions(storage)
+  assert.deepEqual(sessions[0].queue, [{ app: 'dep', title: 'dep' }])
+  assert.equal(sessions[0].depIndex, 0)
+})
+
+test('续跑先重算依赖计划：dep 已装完（state1）→ 不重跑 dep，直接收敛目标', async () => {
+  const installs: string[] = []
+  const prepared: string[] = []
+  const outcome = await resumeInstallOrchestration(
+    baseDeps({
+      resolveDeps: async () => [], // 计划端点重算：sand-iam 已满足，无剩余队列
+      prepareDep: async (item) => {
+        prepared.push(item.app)
+        return row({ app: item.app })
+      },
+      install: async (app) => {
+        installs.push(app)
+        return null
+      },
+      fetchRows: async () => [row({ state: 1, version: '0.3.5' })]
+    }),
+    { app: 'sand-ai', title: 'SandAI' }
+  )
+  assert.equal(outcome.kind, 'installed')
+  assert.deepEqual(prepared, [])
+  assert.deepEqual(installs, [])
+})
+
+test('续跑先重算依赖计划：dep 断在依赖等待 → 续跑 dep 依赖链再收敛目标', async () => {
+  const tasks: DependencyKind[] = []
+  const snapshots: DependencyChainRow[][] = [
+    [row({ app: 'sand-iam', state: 4, composer_dependent_wait_install: 1 })], // dep 链第 1 步
+    [row({ app: 'sand-iam', state: 1, version: '0.8.6' })], // dep 装完
+    [row({ state: 1, version: '0.3.5' })] // 目标已装完
+  ]
+  let fetches = 0
+  const outcome = await resumeInstallOrchestration(
+    baseDeps({
+      resolveDeps: async () => [
+        { app: 'sand-iam', title: 'SandIAM', action: 'resume', market: null }
+      ],
+      fetchRows: async () => snapshots[Math.min(fetches++, snapshots.length - 1)],
+      runDependencyTask: async (kind) => {
+        tasks.push(kind)
+        return true
+      }
+    }),
+    { app: 'sand-ai', title: 'SandAI' }
+  )
+  assert.equal(outcome.kind, 'installed')
+  assert.deepEqual(tasks, ['composer'])
+})
+
+test('state4+等待标志无 session 的一键续做（行级续跑 = 直接依赖链）', async () => {
+  // resumeChainForRow 的纯函数等价路径：无 session 记录，行快照 wait 标志
+  // 仍在 → 直接入队剩余依赖任务收敛。
+  const tasks: DependencyKind[] = []
+  const snapshots: DependencyChainRow[][] = [
+    [row({ state: 4, composer_dependent_wait_install: 1 })],
+    [row({ state: 4, npm_dependent_wait_install: 1 })],
+    [row({ state: 1, version: '0.3.5' })]
+  ]
+  let fetches = 0
+  const outcome = await runDependencyChainLoop(
+    baseDeps({
+      fetchRows: async () => snapshots[Math.min(fetches++, snapshots.length - 1)],
+      runDependencyTask: async (kind) => {
+        tasks.push(kind)
+        return true
+      }
+    }),
+    'sand-ai',
+    'SandAI'
+  )
+  assert.equal(outcome.kind, 'installed')
+  assert.deepEqual(tasks, ['composer', 'npm'])
 })
 
 // ========== 幂等：在途依赖任务匹配谓词 ==========

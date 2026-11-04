@@ -172,6 +172,18 @@ if ($case !== null && $root !== null) {
             fwrite(STDOUT, 'payload_dir=' . (is_dir($payload) ? '1' : '0'));
             break;
 
+        case 'install-restart-flag':
+            // install 端点 restart 透传：缺省重载，显式 0/false 抑制（编排器对
+            // 依赖插件传 0，dependency_restart_pending 跟随该参数）。
+            require_once $packageRoot . '/server/plugin/sandpackage/app/service/HostPayloadPlan.php';
+            require_once $packageRoot . '/server/plugin/sandpackage/app/service/PluginStorage.php';
+            require_once $packageRoot . '/server/plugin/sandpackage/app/logic/InstallLogic.php';
+            fwrite(STDOUT, implode(',', array_map(
+                static fn($v) => \plugin\sandpackage\app\logic\InstallLogic::restartRequested($v) ? '1' : '0',
+                [null, '1', true, '0', 0, false, 'false'],
+            )));
+            break;
+
         default:
             fwrite(STDERR, '未知用例：' . $case);
             exit(2);
@@ -288,6 +300,15 @@ try {
     $result = runCase($script, $root, 'uninstall-clean');
     check($failures, $result['code'] === 0, '无改动卸载应成功', $result['err']);
     check($failures, str_contains($result['out'], 'payload_dir=0'), '无改动卸载应清空载荷目录', $result['out']);
+
+    $result = runCase($script, $root, 'install-restart-flag');
+    check($failures, $result['code'] === 0, 'restart 标志解析应成功', $result['err']);
+    check(
+        $failures,
+        $result['out'] === '1,1,1,0,0,0,0',
+        'restart 缺省重载，0/false 抑制',
+        $result['out']
+    );
 
     if ($failures !== []) {
         throw new RuntimeException('断言失败：' . PHP_EOL . '  - ' . implode(PHP_EOL . '  - ', $failures));
