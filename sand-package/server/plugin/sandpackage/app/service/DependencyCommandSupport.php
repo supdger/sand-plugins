@@ -151,7 +151,11 @@ final class DependencyCommandSupport
             && preg_match('/ERESOLVE|No matching version|notarget|unable to resolve|404/i', $outputTail) === 1) {
             return '前端依赖版本无法解析，请核对插件声明的依赖版本与仓库可用性';
         }
-        // 4) 网络不可达 / 镜像不可用（curl 6/7/28、域名解析失败、连接被拒、超时等）
+        // 4) Composer secure-http 策略在连接前拒绝 http 协议的仓库/镜像地址
+        if (preg_match('/does not allow connections? to https?:\/\/|secure-http/i', $outputTail) === 1) {
+            return '依赖仓库或镜像使用了 Composer 安全策略不允许的 http 地址，请改用 https 镜像地址后重试，或检查依赖仓库配置';
+        }
+        // 5) 网络不可达 / 镜像不可用（curl 6/7/28、域名解析失败、连接被拒、超时等）
         if (self::isNetworkFailure($outputTail)) {
             if ($githubTouched) {
                 return '网络连接 GitHub 失败、超时或被拒绝，请检查宿主网络与代理设置后重试';

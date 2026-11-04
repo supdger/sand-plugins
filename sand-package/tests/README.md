@@ -8,6 +8,7 @@ php tests/install-lifecycle-test.php       # 安装生命周期：目标路径�
 php tests/dependency-command-test.php      # 依赖命令：COMPOSER_HOME 沙箱镜像注入、凭证继承、失败原因中文归类与输出摘录
 php tools/assert-publish-exclusions.php    # 发布排除规则四口径一致性门禁
 node --test tests/frontend/dependency-chain.test.ts   # 一键安装依赖链判定：入队条件、结果状态、结果未知错误识别与轮询收敛（Node ≥22.18 原生跑 .ts）
+node --test tests/frontend/install-orchestrator.test.ts  # 依赖链编排器：安装中止/超时按快照裁决、停用窗口内轮询入队、失败面板语义（Node ≥22.18 原生跑 .ts）
 ```
 
 `install-lifecycle-test.php` 在子进程中逐个执行用例并分别采集 stdout/stderr，用临时目录模拟宿主，不触碰真实宿主，也不启动服务。

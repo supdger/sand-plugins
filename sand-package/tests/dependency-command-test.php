@@ -178,7 +178,13 @@ try {
         '无法解析'
     ), 'npm ERESOLVE → 中文原因');
 
-    // ---- 5f. 其他兜底：输出摘录 ----------------------------------------------
+    // ---- 5f. Composer secure-http 拒绝 http 镜像（连接前策略拦截）-----------
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', "Loading composer repositories with package information\nYour configuration does not allow connections to http://127.0.0.1:9/. See https://getcomposer.org/doc/06-config.md#secure-http for details."),
+        '安全策略'
+    ), 'composer secure-http 拒绝 http 镜像 → 中文原因');
+
+    // ---- 5g. 其他兜底：输出摘录 ----------------------------------------------
     check($failures, DependencyCommandSupport::failureExcerpt('Some unrelated output tail') === 'Some unrelated output tail', '输出摘录保留原文');
     check($failures, DependencyCommandSupport::failureExcerpt("  line1\n\n line2  ") === 'line1 line2', '输出摘录折叠空白');
     $longTail = str_repeat('a', 300);
