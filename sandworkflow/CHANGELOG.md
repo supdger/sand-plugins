@@ -1,26 +1,30 @@
 # 更新日志
 
-记录面向 SandAdmin 的 SandWorkflow 插件变化；上游版本历史与本插件发行版本分别维护。未核实的中间版本不补写发布日期或变更。
+仅记录本插件可核实的版本变化；上游历史不作为本插件逐版发行记录。
 
-## Unreleased
+## 1.0.8（修正版，2026-11-03）
 
-- 宿主适配声明调整为 SandAdmin `>=0.1.0`，同步根目录与后端元数据。最低版本声明不代表所有宿主组合已通过验收。
-- 使用指南入口统一到独立 Wiki，提供安装、第一次流程、设计发布、审批查询及权限排障路径。
-
-以上为当前本地源码差异；未通过本次任务提交或发布。升级前仍需核对候选包、宿主版本与权限，并在隔离环境完成生命周期和最小工作流验收。
-
-## 1.0.7（预览基线）
-
-### 功能与修复
-
-- 提供 PostgreSQL 原生安装与生命周期 SQL，流程菜单父级通过稳定菜单代码查找，安装不再依赖 MySQL 会话变量。
-- 抄送人查询使用 JSONB 包含判断，适配 PostgreSQL 数据存储。
-- 补齐插件根目录及后端元数据，使完整包能够被安装器识别；增加载荷完整性核对入口。
-- 完整发行包包含上游 AGPL-3.0 许可证与来源声明，便于确认衍生代码的分发条件。
+- 修正发行元数据的宿主兼容声明：根部与 `plugin/sandworkflow/` 两份 `info.ini` 的 `support` 由 `6.x` 改为 `">=0.1.0"`，`about` 文案同步为 SandAdmin 0.1.x；`config/app.php` 与 `info.ini` 版本号一致为 1.0.8。1.0.7 预览资产内的元数据仍是旧声明。
+- `uninstall.sql`（根部与 `plugin/sandworkflow/` 两份）回流权威源：与 1.0.7 预览资产一致的收紧版，即事务包裹并收紧菜单归属与路径边界谓词；该修复此前只随预览资产发布，权威源码未同步。
+- 首个包含管理端路由修复的发行包：路由组增加 `/app/sandworkflow` 前缀，`plugin/sandworkflow/app/functions.php` 注册 `plugin\sandworkflow\` PSR-4 自动加载回退（SandPackage 安装不重建宿主 Composer 映射）。
+- 移除未使用的 `OrganDialog.deprecated` 备份文件。
+- README 与独立 Wiki 的中文“版本更新”入口及版本变化、升级影响说明随本版公开发布。
 
 ### 升级影响
 
-- 仅面向 PostgreSQL；不提供从 MySQL 原地迁移的路径。首次安装与卸载会删除相应工作流表，已有数据应先备份，不应通过重装修复。
-- 预览包不能替代目标宿主的安装、登录和发布→发起→审批业务验收。
+- 仅 PostgreSQL，不提供 MySQL 数据原地迁移。首次安装与卸载会删除对应工作流表；先备份，已有数据不要通过重装修复。
+- 本版修正发行元数据并补齐随包清理脚本；真实宿主的安装、升级与最小工作流验收范围见 [版本与验收范围](https://github.com/supdger/sand-workflow/wiki/SandWorkflow-Versions)。
 
-依据：根仓标签 `sandworkflow-v1.0.7-preview-216cccf`、该标签中的 [原发行说明](RELEASE_NOTES.md)，以及安装可发现性修复 `7282a244`、许可证补齐 `61fd9b1d`。公开资产见 [Releases](https://github.com/supdger/sand-workflow/releases)。历史 `1.0.2` 内容保留在原发行说明中，未把上游历史误写成本插件逐版差异。
+依据：标签 `sandworkflow-v1.0.8`，公开资产见 [Releases](https://github.com/supdger/sand-workflow/releases)。
+
+## 1.0.7（预览版，2026-09-21）
+
+- 从独立 SandWorkflow 仓库重新构建预览包，包内文档明确 `supdger/sand-workflow` 为唯一权威来源。
+- 此 PostgreSQL 工作流包提供流程定义、发布、发起、审批、待办与抄送查询；这些能力是 1.0.7 的现有基线，不表示本次重构包新增所有能力。
+
+### 升级影响
+
+- 仅 PostgreSQL，不提供 MySQL 数据原地迁移。首次安装与卸载会删除对应工作流表；先备份，已有数据不要通过重装修复。
+- Release 沿用此前安装与卸载证据；真实升级和完整工作流验收仍待完成。预览包或文档发布不等于目标宿主业务通过。
+
+依据：[公开预览 Release](https://github.com/supdger/sand-workflow/releases/tag/sandworkflow-v1.0.7-preview-ddea7b6)，标签 `sandworkflow-v1.0.7-preview-ddea7b6`（`ddea7b609b55d4f7c9b62c23ea9f1970e6fe2607`）。完整已公开历史见 [Releases](https://github.com/supdger/sand-workflow/releases)。没有可靠依据的中间版本不补写变化或发布日期。
