@@ -160,6 +160,106 @@ async function run(): Promise<void> {
   assert.equal(DEFAULT_GRANT_SERVICE_CODE, 'sand_ai')
   assert.deepEqual([...DEFAULT_GRANT_ACTION_CODES], ['sand_ai.chat.complete', 'sand_ai.document_parse'])
 
+  // --- client selection converges on the canonical business client ---
+  // Trial-first provisioning leaves a dedicated `admin_trial` client under an
+  // earlier environment; the grant chain's `sand-ai` client must still win.
+  const trialFirstApp = parseAccessMatrix({
+    applications: [{
+      id: 10,
+      organization_id: 1,
+      code: 'system',
+      name: '本系统',
+      status: 1,
+      environments: [
+        {
+          id: 100,
+          code: 'production',
+          name: '正式',
+          status: 1,
+          clients: [{
+            id: 201,
+            code: 'admin_trial',
+            audience: 'sand-ai',
+            status: 1,
+            grants: [{ service_action_id: 50, action_code: 'sand_ai.chat.complete', service_code: 'sand_ai', status: 1, expire_time: null }],
+            credentials: [{ id: 301, name: '管理员试用', key_prefix: 'siam_trial', expire_time: '2030-01-01 00:00:00', status: 1 }],
+          }],
+        },
+        {
+          id: 101,
+          code: 'prod',
+          name: '正式',
+          status: 1,
+          clients: [{
+            id: 202,
+            code: 'sand-ai',
+            audience: 'sand-ai',
+            status: 1,
+            grants: [{ service_action_id: 51, action_code: 'sand_ai.document_parse', service_code: 'sand_ai', status: 1, expire_time: null }],
+            credentials: [{ id: 302, name: '首页一键接入', key_prefix: 'siam_business', expire_time: null, status: 1 }],
+          }],
+        },
+      ],
+    }],
+  }).applications[0]
+  const businessClient = matrixClientFor(trialFirstApp)
+  assert.equal(businessClient?.id, 202, 'canonical sand-ai client wins over the earlier trial client')
+  assert.equal(grantActive(businessClient, 51), true, 'business grant is visible, not shadowed by trial grants')
+  assert.equal(grantActive(businessClient, 50), false, 'trial grants do not leak onto the business row')
+  assert.equal(activeCredential(businessClient)?.key_prefix, 'siam_business', 'credential column shows the issued calling key, not the trial credential')
+
+  // A trial client alone never counts as the row's calling identity.
+  const trialOnlyApp = parseAccessMatrix({
+    applications: [{
+      id: 10,
+      organization_id: 1,
+      code: 'lvxu',
+      name: '律序',
+      status: 1,
+      environments: [{
+        id: 100,
+        code: 'prod',
+        name: '正式',
+        status: 1,
+        clients: [{
+          id: 201,
+          code: 'admin_trial',
+          audience: 'sand-ai',
+          status: 1,
+          grants: [],
+          credentials: [],
+        }],
+      }],
+    }],
+  }).applications[0]
+  assert.equal(matrixClientFor(trialOnlyApp), null, 'a lone admin_trial client is not the calling identity')
+
+  // An operator-named client still surfaces when no canonical client exists.
+  const operatorApp = parseAccessMatrix({
+    applications: [{
+      id: 10,
+      organization_id: 1,
+      code: 'lvxu',
+      name: '律序',
+      status: 1,
+      environments: [{
+        id: 100,
+        code: 'prod',
+        name: '正式',
+        status: 1,
+        clients: [{
+          id: 203,
+          code: 'api-server',
+          audience: 'sand-ai',
+          status: 1,
+          grants: [],
+          credentials: [],
+        }],
+      }],
+    }],
+  }).applications[0]
+  assert.equal(matrixClientFor(operatorApp)?.id, 203, 'non-trial clients remain the fallback row identity')
+
   console.log('SandIAM access-matrix contracts passed')
 }
 
