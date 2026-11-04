@@ -51,9 +51,14 @@ async function callBootstrap(): Promise<void> {
     }
   } catch (error) {
     const proof = error instanceof HttpError ? error.data : null
-    notice.value = isSetupBootstrapFailure(proof)
-      ? noticeFor(proof)
-      : { message: '系统准备未完成', retryable: true }
+    if (isSetupBootstrapFailure(proof)) {
+      notice.value = noticeFor(proof)
+    } else if (error instanceof HttpError && (error.code === 401 || error.code === 403)) {
+      // 无权限调用准备接口的管理员不进入可重试失败态；已尝试标记阻止同会话重复调用。
+      notice.value = { message: '权限不足，跳过系统准备检查', retryable: false }
+    } else {
+      notice.value = { message: '系统准备未完成', retryable: true }
+    }
   } finally {
     busy.value = false
     inFlight = null

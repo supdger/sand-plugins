@@ -1081,7 +1081,7 @@ BEGIN
         ('202610300161_provider_identity_admin_scope','3d1561d6dab24098aa2978e5ee2522ac749edcdde0fdfba522983471b5e1b9ec'),
         ('202610310162_meeting_review_workflow','6b3d40ff99cce6e74233317731b41012c4db3128f1b5ef65f3ff1a7554f1e982'),
         ('202611010163_recovery_continuation_allowance','2c76a5cdc114c531b9892c2573d1ae7a5e85d6616b94810e950fbe55584ffbdc'),
-        ('202611030164_admin_menu_regroup','faef99fa30ec033cca883fa8c9571db3d47d5a66bdf0c8f692fc20cd54d1ec23')
+        ('202611030164_admin_menu_regroup','34ce09d82d637dd842661f1add75525403aae73df72e55c6e98135d75bc21251')
     ) AS expected(version,checksum) ON expected.version=applied.version
     WHERE expected.version IS NULL OR applied.checksum IS DISTINCT FROM expected.checksum
     ORDER BY applied.version LIMIT 1;
@@ -13986,7 +13986,7 @@ END $sand_ai_upgrade_0163$;
 
 DO $sand_ai_upgrade_0164$
 BEGIN
- IF EXISTS(SELECT 1 FROM sand_ai_schema_migration WHERE version='202611030164_admin_menu_regroup' AND checksum IS DISTINCT FROM 'faef99fa30ec033cca883fa8c9571db3d47d5a66bdf0c8f692fc20cd54d1ec23') THEN
+ IF EXISTS(SELECT 1 FROM sand_ai_schema_migration WHERE version='202611030164_admin_menu_regroup' AND checksum IS DISTINCT FROM '34ce09d82d637dd842661f1add75525403aae73df72e55c6e98135d75bc21251') THEN
   RAISE EXCEPTION 'SandAI migration 164 checksum mismatch';
  END IF;
  IF NOT EXISTS(SELECT 1 FROM sand_ai_schema_migration WHERE version='202611030164_admin_menu_regroup') THEN
@@ -13994,9 +13994,12 @@ BEGIN
 -- SandAI administrator navigation regroup: fold the low-frequency configuration
 -- and diagnostics surfaces under one visible "高级" group, leaving the daily
 -- entries (概览 / 首次开通 / 模型 / 服务商 / 文件中心 / 费用与账单) at the top
--- level. Permission codes, slugs, paths and components are unchanged; direct
--- links to the old routes keep working. The block is idempotent: re-running it
--- converges to the same tree without duplicating menus or role links.
+-- level. Permission codes, slugs and components are unchanged. Moved pages
+-- switch their stored path to the absolute route (for example '/sand-ai/task')
+-- so the front-end hierarchical path join keeps every effective URL identical;
+-- direct links to the old routes keep working. The block is idempotent:
+-- re-running it converges to the same tree without duplicating menus or role
+-- links.
 DO $sand_ai_menu_regroup$
 DECLARE
     root_id bigint;
@@ -14014,33 +14017,50 @@ BEGIN
         RAISE EXCEPTION 'SandAI root navigation is missing or duplicated';
     END IF;
 
-    -- The group itself is a visible directory (type=1); children collapse under it.
+    -- The group is a visible component-less menu node (type=2, component='').
+    -- A directory row (type=1) would force the host layout component
+    -- '/index/index' on the nested level and render a second layout frame.
     SELECT count(*),min(id) INTO count_nodes,group_id FROM sand_system_menu WHERE code='SandAIAdvanced';
     IF count_nodes>1 THEN
         RAISE EXCEPTION 'SandAIAdvanced menu is duplicated';
     END IF;
     IF count_nodes=0 THEN
         INSERT INTO sand_system_menu(parent_id,name,code,slug,type,path,component,icon,sort,is_hidden,status,create_time,update_time)
-        VALUES(root_id,'高级','SandAIAdvanced','',1,'advanced','','',10,0,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+        VALUES(root_id,'高级','SandAIAdvanced','',2,'advanced','','',10,2,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
         RETURNING id INTO group_id;
         INSERT INTO sand_ai_configuration_navigation_ownership
         SELECT 'menu',id,to_jsonb(menu)-ARRAY['id','create_time','update_time','created_by','updated_by']
         FROM sand_system_menu menu WHERE id=group_id;
     ELSIF NOT EXISTS(
-        SELECT 1 FROM sand_system_menu WHERE id=group_id AND parent_id=root_id AND type=1
-          AND is_hidden=0 AND status=1 AND delete_time IS NULL
+        SELECT 1 FROM sand_system_menu WHERE id=group_id AND parent_id=root_id AND type=2
+          AND COALESCE(component,'')='' AND is_hidden=2 AND status=1 AND delete_time IS NULL
     ) THEN
         RAISE EXCEPTION 'Existing SandAIAdvanced menu is incompatible';
     END IF;
 
+    -- Moved pages keep their effective URL byte-for-byte: the stored path
+    -- becomes the absolute route, which the front-end path joiner returns
+    -- unchanged instead of prefixing it with the group path. is_hidden is
+    -- normalised to the schema default 2 (visible); a hidden page keeps 1.
     UPDATE sand_system_menu menu
-    SET parent_id=group_id, update_time=CURRENT_TIMESTAMP
-    WHERE menu.code IN (
-        'SandAITaskTrial','SandAIInvocation','SandAIAudit',
-        'SandAIKnowledgeConfiguration','SandAIAgentConfiguration','SandAIComposition',
-        'SandAICapability','SandAIMaterialConfig'
-    ) AND menu.type=2 AND menu.status=1 AND menu.delete_time IS NULL
-      AND menu.parent_id IS DISTINCT FROM group_id;
+    SET parent_id=group_id,
+        path=page.absolute_path,
+        is_hidden=CASE WHEN menu.is_hidden=0 THEN 2 ELSE menu.is_hidden END,
+        update_time=CURRENT_TIMESTAMP
+    FROM (VALUES
+        ('SandAITaskTrial','/sand-ai/task'),
+        ('SandAIInvocation','/sand-ai/invocation'),
+        ('SandAIAudit','/sand-ai/audit'),
+        ('SandAIKnowledgeConfiguration','/sand-ai/knowledge'),
+        ('SandAIAgentConfiguration','/sand-ai/agent'),
+        ('SandAIComposition','/sand-ai/ai-workflows'),
+        ('SandAICapability','/sand-ai/capability'),
+        ('SandAIMaterialConfig','/sand-ai/material-config')
+    ) AS page(code,absolute_path)
+    WHERE menu.code=page.code AND menu.type=2 AND menu.status=1 AND menu.delete_time IS NULL
+      AND (menu.parent_id IS DISTINCT FROM group_id
+        OR menu.path IS DISTINCT FROM page.absolute_path
+        OR menu.is_hidden=0);
 
     -- Ownership snapshots stay immutable: reparented pages keep their original
     -- recorded definition, matching the append-only ownership contract.
@@ -14080,7 +14100,7 @@ BEGIN
 END
 $sand_ai_menu_regroup$;
 $sand_ai_migration_0164$;
-  INSERT INTO sand_ai_schema_migration(version,checksum,applied_time) VALUES('202611030164_admin_menu_regroup','faef99fa30ec033cca883fa8c9571db3d47d5a66bdf0c8f692fc20cd54d1ec23',CURRENT_TIMESTAMP(0));
+  INSERT INTO sand_ai_schema_migration(version,checksum,applied_time) VALUES('202611030164_admin_menu_regroup','34ce09d82d637dd842661f1add75525403aae73df72e55c6e98135d75bc21251',CURRENT_TIMESTAMP(0));
  END IF;
 END $sand_ai_upgrade_0164$;
 
