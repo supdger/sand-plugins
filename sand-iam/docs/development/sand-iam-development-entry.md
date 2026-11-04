@@ -56,6 +56,16 @@
 
 本次对应 OpenSpec integrate-casbin-policy-engine；正式交付须锁定 vendor/lock/model 与 SBOM、许可，区分源码、真实 Enforcer、PG、ZIP 与实际安装宿主证据。
 
+### Access Matrix — 首页"应用×服务"网格与一键授权（UX P9，2026-11-03）
+
+- 归属 SandIAM 现有 `sand_iam_*` 实体（organization/application/environment/workload_client/service/service_action/service_grant/credential）；不新增表、主键、迁移或菜单。页面改造 `sandadmin-artd/src/views/plugin/sand-iam/index/index.vue`（菜单 code `SandIAMOverview` 不变，菜单名由 P10 负责）。
+- 新路由（管理组 `/app/sand-iam/admin`，CheckLogin+CheckAuth+SystemLog，登记于 `ManagementApiCatalog::specialRoutes()` 与 `PERMISSION_OVERRIDES`）：
+  - `GET /access-matrix/index` — 聚合查询，权限 `sand_iam:grant:index`。响应仅 `{organizations, services(+actions), applications(+environments+clients+grants+credentials 元数据)}`；绝不包含 `secret_hash` 或凭证明文；非超管按 `AdminOrganizationAccess` 范围裁剪。
+  - `POST /access-matrix/grant` — 编排授权，权限 `sand_iam:grant:save`；`issue_credential=true` 时控制器内另行校验 `sand_iam:credential:issue`。输入 `{organization_id?, application:{id?|code,name}, service_code, action_codes[], environment_code?, issue_credential?}`；响应 `{application_id, environment_id, workload_client_id, granted[], credential?}`。
+- 边界：service_code 白名单（当前仅 `sand_ai`）；action_codes 服务端裁剪为已存在且 `status=1` 的动作，全被裁掉则 400；workload_client.audience 与 grant.audience 固定 `sand-ai` 不接受入参；缺失结构服务端 upsert（默认 organization「本机构」code `default`、environment code `prod`「正式」、client code `sand-ai`）；授权只增不删，失败整体回滚。
+- 幂等与并发：`IdempotencyService`（operation `access_matrix.grant`，manageTransaction=false）+ `pg_advisory_xact_lock`（按组织/应用作用域 hash）+ serializable 事务；重复请求安全收敛不重复发证。
+- 安全：凭证明文仅当 `issue_credential=true` 时返回且 `Cache-Control: no-store`；审计逐条 `AuditWriter`（organization/application/environment/workload_client/service_grant create|reactivate + CredentialIssuanceService 自记 credential.issue），request_id 贯穿，审计 context 只记 key_prefix。
+
 ### 范围检查审计事件键（0.8.3 源码候选）
 
 归属 SandIAM 现有 `sand_iam_audit_log`，主键、组织/应用归属和公开权限不变。新增迁移 `043_scope_audit_event_key.pgsql`：`event_key varchar(64) NOT NULL DEFAULT ''`，仅允许空或 64 位小写十六进制，并以 `(request_id, action, event_key)` 唯一约束替换原两字段约束。旧审计事实不改写；非 scope 审计保持空键及原请求/动作去重。scope 检查以版本化稳定 SHA-256 区分语义事件，重复事件不再发布副作用；原始可信属性不落入审计。0.8.3 的旧 43 条升级先精确准入，再同事务执行原 043，形成 44 条账本；已在 44 条的 0.8.1 / 0.8.2 升级只核对完整账本和六组捕获结构，不执行 DDL 或重放 043；接入已有 schema 只接受目标 44 条账本及真实捕获的新结构指纹。

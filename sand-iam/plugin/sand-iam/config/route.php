@@ -1,5 +1,6 @@
 <?php
 
+use plugin\SandIam\app\admin\controller\AccessMatrixController;
 use plugin\SandIam\app\admin\controller\ApplicationController;
 use plugin\SandIam\app\admin\controller\AdminOrganizationGrantController;
 use plugin\SandIam\app\admin\controller\AdminApplicationGrantController;
@@ -114,6 +115,8 @@ Route::group('/app/sand-iam/admin', static function (): void {
     Route::post('/grant/revoke', [ServiceGrantController::class, 'revoke']);
     Route::get('/grant/services', [ServiceGrantController::class, 'services']);
     Route::get('/grant/actions', [ServiceGrantController::class, 'actions']);
+    Route::get('/access-matrix/index', [AccessMatrixController::class, 'index']);
+    Route::post('/access-matrix/grant', [AccessMatrixController::class, 'grant']);
     Route::post('/policy/publish', [PolicyController::class, 'publish']);
     Route::post('/policy/rollback', [PolicyController::class, 'rollback']);
     Route::get('/policy/versions', [PolicyController::class, 'versions']);
@@ -346,6 +349,7 @@ Route::delete('/api/sand-iam/v1/scim/{provider}/Groups/{id}', [ScimController::c
 Route::disableDefaultRoute(AuthorizationController::class);
 Route::disableDefaultRoute(SelfServiceController::class);
 foreach ([
+    AccessMatrixController::class,
     ApplicationController::class,
     AdminOrganizationGrantController::class,
     AdminApplicationGrantController::class,
