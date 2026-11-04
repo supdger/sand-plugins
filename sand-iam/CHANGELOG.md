@@ -3,6 +3,12 @@
 本文件只记录能够由当前公开源码、迁移和包契约复核的发行变化，不补写无法从权威来源确认的
 历史版本内容。日期标记为“待发布”的条目仍是候选，不代表已经上传、部署或公开发布。
 
+## 0.8.6（候选，待发布）
+
+- 修复发行包布局回归：随包发行的账户门户 SPA 源码由顶层 `app/` 回退为 `portal/`（恢复 0.8.4 及更早布局）。顶层 `app/` 是 SandPackage 受控宿主载荷保留前缀，`HostPayloadManifest.allowedPath` 仅允许 `app/**.php`，0.8.5 包因顶层 `app/` 携带 TS 源码被拒装（400）。运行时产物仍由 `portal/scripts/build.mjs` 输出至 `plugin/sand-iam/public/account/`，运行面 URL 与插件内 PHP `app/` 目录不变。
+- 同步修订：`package-payload-policy.php` 载荷根、`check-package-integrity.php` 门户源码清单、`generate-sbom.php` 锁文件路径、`release_070` 契约测试与 `.gitignore`；`SBOM.cdx.json` 重新生成；发布仓内容策略明确 `app/`/`config/` 保留前缀语义。
+- 版本声明、SBOM 与冻结构建元数据同步为 0.8.6。无数据库迁移与载荷行为变化。本候选尚未重新安装、执行 SQL 或业务验收。
+
 ## 0.8.5（候选，待发布）
 
 - 管理端导航重组：54 个平铺路由折叠为 4 个顶层分组（管理总览 / 应用接入 / 用户与权限 / 高级），由 `lifecycle/menu-regroup.pgsql` 按稳定菜单 code 幂等重排 sort/parent_id/is_hidden；权限码、slug、路径与组件不变。
