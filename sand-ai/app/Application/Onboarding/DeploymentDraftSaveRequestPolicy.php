@@ -75,7 +75,7 @@ final class DeploymentDraftSaveRequestPolicy
     /** @param array<string,mixed> $canonical @return array{idempotency_hmac:string,request_fingerprint_hmac:string,key_version:string,key_id:string} */
     public function fingerprint(array $canonical, string $idempotencyKey, string $actorRef): array
     {
-        return $this->fingerprintForKeyId($canonical, $idempotencyKey, $actorRef, (string) env('SAND_AI_IDEMPOTENCY_KEY_ID', 'active'));
+        return $this->fingerprintForKeyId($canonical, $idempotencyKey, $actorRef, $this->activeKeyId());
     }
 
     /** @param array<string,mixed> $canonical @return array{idempotency_hmac:string,request_fingerprint_hmac:string,key_version:string,key_id:string} */
@@ -143,6 +143,27 @@ final class DeploymentDraftSaveRequestPolicy
             throw new ApiProblem('SAND_AI_IDEMPOTENCY_KEY_UNAVAILABLE', 'Stored idempotency key material is unavailable');
         }
         return $save['key_id'];
+    }
+
+    /**
+     * The declared current key id is read only after the lazy material
+     * boundary had its chance to make freshly written shared material
+     * visible. Reading it earlier would freeze the `active` default for the
+     * whole request while the shared file declares another id (for example a
+     * rotated or install-time value this cold process has not loaded yet),
+     * and the very first write would fail instead of resolving on demand.
+     */
+    private function activeKeyId(): string
+    {
+        $keyId = (string) env('SAND_AI_IDEMPOTENCY_KEY_ID', 'active');
+        if (preg_match('/^[A-Za-z0-9._-]{1,64}$/', $keyId) === 1
+            && strlen($this->keyFromEnvironment($keyId)) >= 32) {
+            return $keyId;
+        }
+        if (($this->materialGuard)()) {
+            $keyId = (string) env('SAND_AI_IDEMPOTENCY_KEY_ID', 'active');
+        }
+        return $keyId;
     }
 
     private function keyForId(string $keyId): string
