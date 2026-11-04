@@ -3,6 +3,11 @@
 本文件只记录能够由当前公开源码、迁移和包契约复核的发行变化，不补写无法从权威来源确认的
 历史版本内容。日期标记为“待发布”的条目仍是候选，不代表已经上传、部署或公开发布。
 
+## 0.9.3（候选，待发布）
+
+- 修复试用签发首调失败：`ContextSigningKeyProvisioner` 在原子写入 `.env` 成功后无条件调用 `\Webman\Config::set()`，而本交付线 webman-framework 的 `Config` 只有 `load`/`reload`/`clear`/`get`，该 `Error` 被 `ensure()` 吞掉导致当次签发仍以 503 失败关闭（`.env` 已写好，靠宿主 monitor reload 才让第二次调用成功；无 monitor 的 daemon 形态下每个 worker 首次供给后会永久闩死）。现按 `method_exists` 守卫该调用，并新增进程内 `$resolved` 缓存：供给成功的同一次请求即返回密钥，无需等待进程重启。
+- 版本声明、SBOM 与冻结构建元数据同步为 0.9.3。无新增数据库迁移；`install.sql`/`update.sql`/`uninstall.sql` 与 0.9.2 逐字节一致（`build-lifecycle.php --check` 通过）。
+
 ## 0.9.2（候选，待发布）
 
 - 全新安装试用签发 503 修复：`SAND_IAM_CONTEXT_SIGNING_KEY` 原本只由部署侧注入，全新实例无人供给导致 `trial/context` 签发失败。新增 `ContextSigningKeyProvisioner`：首次需要签发上下文时按私有锁串行生成密钥、先备份再以原子写补入宿主 `.env`、进程内即时刷新，签发不再依赖人工预置密钥。

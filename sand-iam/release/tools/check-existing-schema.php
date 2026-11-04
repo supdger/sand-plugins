@@ -20,7 +20,7 @@ function sandIamCheckExistingSchema(string $root): void
         || $manifest['install_sql_sha256'] !== hash_file('sha256', $root . '/plugin/sand-iam/install.sql')) {
         throw new RuntimeException('existing-schema package identity or SQL digest mismatch');
     }
-    $preflightFile = in_array(($info['version'] ?? ''), ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1', '0.9.2'], true)
+    $preflightFile = in_array(($info['version'] ?? ''), ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1', '0.9.2', '0.9.3'], true)
         ? '/lifecycle/update-073-or-075-or-076-to-080-preflight.pgsql'
         : '/lifecycle/update-073-or-075-to-076-preflight.pgsql';
     $preflight = (string) file_get_contents($root . $preflightFile);
@@ -44,7 +44,7 @@ function sandIamCheckExistingSchema(string $root): void
     if (preg_match('/\b(?:CREATE|ALTER|DROP)\s+(?:TABLE|INDEX|SEQUENCE|VIEW|TRIGGER|FUNCTION)\b/i', $migration) === 1) {
         throw new RuntimeException('revision042 changed structure; recapture reviewed catalog fingerprint');
     }
-    if (in_array(($info['version'] ?? ''), ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1', '0.9.2'], true)) {
+    if (in_array(($info['version'] ?? ''), ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1', '0.9.2', '0.9.3'], true)) {
         $name = '043_scope_audit_event_key.pgsql';
         $scopeMigration = (string) file_get_contents($root . '/migrations/' . $name);
         if ($scopeMigration !== file_get_contents($root . '/plugin/sand-iam/migrations/' . $name)
@@ -65,7 +65,7 @@ function sandIamCheckExistingSchema(string $root): void
     }
     if ($manifest['table_count'] !== 86
         || $manifest['table_names_sha256'] !== '5feaa153988f0b1e05a04e6c91192c8ef19d9ee8fb7b4bf51aa8350bd369ea88'
-        || $manifest['catalog_schema_sha256'] !== (in_array(($info['version'] ?? ''), ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1', '0.9.2'], true)
+        || $manifest['catalog_schema_sha256'] !== (in_array(($info['version'] ?? ''), ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4', '0.8.5', '0.8.6', '0.9.0', '0.9.1', '0.9.2', '0.9.3'], true)
             ? '4adf9cd8200fab6f95bc11542d3a5f973aebf78107f31d55a235faa1dc34ecb7'
             : '3ba37e63adace3e7950cdd1f435010216d351929c27662a24ae55eedadc6821e')) {
         throw new RuntimeException('Reviewed read-only structure fingerprint mismatch');
