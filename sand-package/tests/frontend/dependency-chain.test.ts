@@ -51,6 +51,32 @@ test('安装结果判定：依赖等待 / 已安装 / 进行中 / 失败', () =>
   assert.equal(installOutcomeOf(undefined), 'pending')
 })
 
+test('安装结果判定：事务在途 operation_pending=1 判 pending，失败态不被吞掉', () => {
+  // WP-PRE2 撞锁现场：deployFreshOrUpgrade 在锁内先登记 state=4+依赖等待
+  // 标志再写载荷，此时 operation_pending=1 —— 必须按在途轮询而非入队。
+  assert.equal(
+    installOutcomeOf(row({ state: 4, composer_dependent_wait_install: 1, operation_pending: 1 })),
+    'pending'
+  )
+  assert.equal(
+    installOutcomeOf(row({ state: 4, npm_dependent_wait_install: 1, operation_pending: 1 })),
+    'pending'
+  )
+  // 事务收尾窗口：state 已推进但 pending 尚未清除，仍按在途
+  assert.equal(installOutcomeOf(row({ state: 1, operation_pending: 1 })), 'pending')
+  // 安装失败现场同样保留 operation_pending=1 —— 失败终态优先，不被在途吞掉
+  assert.equal(
+    installOutcomeOf(row({ state: 8, operation_pending: 1, composer_dependent_wait_install: 1 })),
+    'failed'
+  )
+  assert.equal(installOutcomeOf(row({ state: 8, operation_pending: 1 })), 'failed')
+  // 事务提交解锁后同一等待标志才放行入队
+  assert.equal(
+    installOutcomeOf(row({ state: 4, composer_dependent_wait_install: 1, operation_pending: 0 })),
+    'wait_dependencies'
+  )
+})
+
 test('失败原因字段优先级与兜底', () => {
   assert.equal(
     installOutcomeReason(row({ recovery_reason: '恢复原因', last_error: '最后错误' })),
