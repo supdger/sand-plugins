@@ -1,6 +1,6 @@
 # Changelog
 
-## 未发布
+## 0.2.19（2026-11-03）
 
 - 修复续跑/编排撞安装事务锁：依赖等待标志在锁内先于安装事务提交对外可见（`deployFreshOrUpgrade` 先登记 `state=4+*_dependent_wait_install` 再写载荷），整页 reload 落回续跑读到等待标志立即入队时安装请求仍在持锁，`dependency_begin` 以「已有安装操作正在执行」拒绝，需人工一键重试才收敛。行快照已有 `operation_pending` 登记但裁决未消费：`installOutcomeOf` 现在在失败终态之后、依赖等待标志之前判 `operation_pending=1 → pending` 继续轮询；`runDependencyChainLoop` 在链执行中遇到 `operation_pending=1` 时在等待预算（默认与轮询预算一致）内按轮询节奏等待事务提交再入队，登记转失败态立即收尾。安装操作锁冲突改用专用异常 `OperationLockException`（`ApiException` 子类）承载，`TerminalRunner` 把它映射为失败详情中的稳定【锁冲突】记号；编排器对命中的失败在同一预算内重试入队同一环节、不消耗链步数，预算耗尽或非锁类失败才判 chain-failed（仍可一键重试）。成功/失败语义不变：成功零弹窗、失败自动弹面板、断点终态清理与幂等 attach 不变。
 - 一键依赖链增加会话级断点续跑：安装器把插件前端载荷写入 `src/views/plugin/**` 时 vite dev watcher 对每个新文件触发整页 reload，JS 上下文整体销毁、编排器随之消失，链断在「等待依赖安装」退化为人工「处理依赖」。编排器发起时把最小进度（插件标识/名称/阶段/发起时间）写入 sessionStorage——同 tab 整页刷新保留、关 tab 自然失效；安装视图挂载/重激活时调用 `resumeIfPending()` 按服务端行快照（`state` 与 `*_dependent_wait_install`）裁决断点续跑：安装仍进行则轮询、依赖等待则重入队（服务端在客户端断连时已终止并回收依赖进程）、已安装/失败/未登记则按终态收敛并清理记录。续跑幂等：同插件同环节已有在途依赖任务时 attach 其回调观察终态，不重复入队；重入防护与失败面板语义（仅失败自动弹、一键重试不回退）不变。
