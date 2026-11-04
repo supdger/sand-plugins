@@ -117,6 +117,75 @@ try {
     ), 'npm 网络错误 → 中文原因');
     check($failures, DependencyCommandSupport::failureHint('composer', 'Some unrelated output') === null, '无法识别的输出不编造原因');
 
+    // ---- 5b. 网络类夹具（curl 6/7/28、域名解析、连接失败）--------------------
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', "Loading composer repositories with package information\ncurl error 7 while downloading https://127.0.0.1:9/packages.json: Failed to connect to 127.0.0.1:9 after 0 ms: Could not connect to server"),
+        '依赖仓库'
+    ), 'curl error 7 镜像不可达 → 依赖仓库原因');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', 'curl error 6 while downloading https://mirrors.example.test/packages.json: Could not resolve host: mirrors.example.test'),
+        '依赖仓库'
+    ), 'curl error 6 域名解析失败 → 依赖仓库原因');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', 'curl error 28 while downloading https://mirrors.example.test/x.zip: Connection timed out after 30000 milliseconds'),
+        '依赖仓库'
+    ), 'curl error 28 超时 → 依赖仓库原因');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', 'Failed to connect to repo.packagist.example: connect failed'),
+        '依赖仓库'
+    ), 'connect failed → 依赖仓库原因');
+
+    // ---- 5c. GitHub 限流夹具（本地输出推算分钟数，不请求真实 api.github.com）---
+    $resetTs = time() + 1800;
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', "GitHub API rate limit (60 calls/hr) exceeded for api.github.com. X-RateLimit-Reset: {$resetTs}"),
+        '约 30 分钟'
+    ), 'GitHub 限额 + X-RateLimit-Reset → 约 30 分钟');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', "rate limit exceeded for github.com\nRetry-After: 300"),
+        '约 5 分钟'
+    ), 'GitHub 限额 + Retry-After 秒数 → 约 5 分钟');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', 'rate limit exceeded for github.com, please try again in 42 minutes'),
+        '约 42 分钟'
+    ), 'GitHub 限额 + 分钟数报文 → 约 42 分钟');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', 'rate limit exceeded for github.com without any reset hint'),
+        'GitHub 访问次数'
+    ), 'GitHub 限额无时间线索 → 仍给令牌指引');
+
+    // ---- 5d. 磁盘 / 权限夹具 ------------------------------------------------
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', 'copy(/tmp/vendor/x/y.zip): failed to open stream: No space left on device'),
+        '磁盘空间不足'
+    ), 'composer 磁盘满 → 中文原因');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', 'mkdir(): Permission denied'),
+        '权限'
+    ), 'composer 目录无权限 → 中文原因');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('npm', "npm ERR! code EACCES\nnpm ERR! syscall mkdir"),
+        '权限'
+    ), 'npm EACCES → 中文原因');
+
+    // ---- 5e. 版本冲突夹具 ---------------------------------------------------
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('composer', "Your requirements could not be resolved to an installable set of packages.\n  Problem 1\n    - Root composer.json requires x/y ^2.0 -> satisfiable by x/y[v2.0.0]."),
+        '无法满足'
+    ), 'composer 依赖冲突 → 中文原因');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::failureHint('npm', "npm ERR! ERESOLVE unable to resolve dependency tree\nnpm ERR! code ERESOLVE"),
+        '无法解析'
+    ), 'npm ERESOLVE → 中文原因');
+
+    // ---- 5f. 其他兜底：输出摘录 ----------------------------------------------
+    check($failures, DependencyCommandSupport::failureExcerpt('Some unrelated output tail') === 'Some unrelated output tail', '输出摘录保留原文');
+    check($failures, DependencyCommandSupport::failureExcerpt("  line1\n\n line2  ") === 'line1 line2', '输出摘录折叠空白');
+    $longTail = str_repeat('a', 300);
+    $excerpt = (string) DependencyCommandSupport::failureExcerpt($longTail);
+    check($failures, mb_strlen($excerpt) <= 201 && str_starts_with($excerpt, '…'), '输出摘录超长截断');
+    check($failures, DependencyCommandSupport::failureExcerpt('   ') === null, '空输出不编造摘录');
+
     // ---- 6. 真实 composer 进程：依赖解析不请求 api.github.com ---------------
     $composer = trim((string) shell_exec('command -v composer 2>/dev/null'));
     if ($composer === '') {
