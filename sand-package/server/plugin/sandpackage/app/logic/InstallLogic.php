@@ -643,8 +643,12 @@ class InstallLogic
         }
         if ($state === self::WAIT_INSTALL) {
             if ($installedVersion !== null && version_compare($installedVersion, $minimum, '>=')) {
-                // 已有满足最低版本的待安装候选，直接续装，不需要下载。
-                $item['action'] = 'install';
+                // 已有满足最低版本的待安装候选，直接续装，不需要下载；
+                // 升级候选（update=1/upgrade_from_version）需走升级确认串，归 'upgrade'。
+                $item['action'] = !empty($info['update'])
+                    || (is_string($info['upgrade_from_version'] ?? null) && $info['upgrade_from_version'] !== '')
+                    ? 'upgrade'
+                    : 'install';
                 return $item;
             }
             $item['reason'] = '依赖插件 ' . $name . ' 已有待安装候选（版本 ' . ($installedVersion ?? '未知')

@@ -1935,14 +1935,19 @@
       // 重接走 install(false) 不重启且可能登记依赖等待：交给编排器续完
       // 剩余依赖任务，链完补一次服务重载再报成功；失败由终端面板呈现。
       const outcome = await orchestrator.resumeChainForRow(record.app, record.title || record.app)
-      if (outcome?.kind === 'installed') {
+      if (outcome === null) {
+        ElMessage.warning('已有插件安装或依赖任务进行中，请稍后重试')
+      } else if (outcome.kind === 'installed') {
         try {
           await sandpackageApi.reloadBackend()
           ElMessage.success('已接管现有数据库并部署插件文件，服务已自动生效')
         } catch {
           ElMessage.warning('已接管现有数据库并部署插件文件；服务自动生效未完成，请稍后重试')
         }
+      } else if (outcome.kind === 'install-failed' || outcome.kind === 'unconfirmed') {
+        ElMessage.warning(outcome.reason)
       }
+      // chain-failed：编排器已登记失败并请求弹出终端面板（含一键重试）。
     } catch {
       // Error already handled by http utility
     } finally {

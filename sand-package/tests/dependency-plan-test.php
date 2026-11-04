@@ -209,6 +209,13 @@ try {
     check($failures, $dep['action'] === 'install' && $dep['market'] === null,
         '待安装候选 0.8.6 满足 → install + market=null');
 
+    // ---- 8b. 已暂存升级候选满足 → upgrade（需确认串，前端按候选行生成）-------------
+    writeCandidate('sand-iam', ['version' => '0.8.6', 'update' => 1, 'upgrade_from_version' => '0.8.4'], ['schema' => 1]);
+    $plan = (new InstallLogic('sand-ai'))->inspectDependencies($catalog);
+    $dep = $plan['dependencies'][0];
+    check($failures, $dep['action'] === 'upgrade' && $dep['market'] === null,
+        '已暂存升级候选满足 → upgrade + market=null（前端按候选行生成确认串）');
+
     // ---- 9. 待安装候选版本不足 → blocked -----------------------------------------
     writeCandidate('sand-iam', ['version' => '0.8.5'], ['schema' => 1]);
     $plan = (new InstallLogic('sand-ai'))->inspectDependencies($catalog);

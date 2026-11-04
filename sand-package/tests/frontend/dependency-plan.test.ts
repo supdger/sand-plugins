@@ -250,6 +250,28 @@ test('dep 的依赖任务失败（dep 自身依赖链断）→ 透传通俗原�
   assert.match(outcome.failure.reason, /Composer 依赖仓库/)
 })
 
+test('dep 已暂存升级候选（upgrade + market=null）：按候选行生成 UPGRADE 确认串', async () => {
+  const installs: Array<{ app: string; confirmation?: string; restart?: boolean }> = []
+  const outcome = await runInstallOrchestration(
+    baseDeps({
+      resolveDeps: async (app) =>
+        app === 'sand-ai' ? [depItem({ action: 'upgrade', market: null })] : [],
+      prepareDep: async (item) =>
+        row({ app: item.app, state: 2, update: 1, upgrade_from_version: '0.8.4', version: '0.8.6' }),
+      install: async (app, confirmation, restart) => {
+        installs.push({ app, confirmation, restart })
+        return row({ app, state: 1 })
+      }
+    }),
+    { app: 'sand-ai', title: 'SandAI' }
+  )
+  assert.equal(outcome.kind, 'installed')
+  assert.deepEqual(installs, [
+    { app: 'sand-iam', confirmation: 'UPGRADE sand-iam@0.8.4->0.8.6', restart: false },
+    { app: 'sand-ai', confirmation: undefined, restart: true }
+  ])
+})
+
 test('resume 计划项：直接续跑 dep 的依赖链，不下载不重发安装', async () => {
   const installs: string[] = []
   const prepared: string[] = []
