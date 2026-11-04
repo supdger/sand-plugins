@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import '../components/sandIamPage.css'
-  import { computed, onMounted, onScopeDispose, ref } from 'vue'
+  import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
   import { useRouter } from 'vue-router'
   import { ElMessage } from 'element-plus'
   import { useAuth } from '@/hooks/core/useAuth'
@@ -8,7 +8,8 @@
   import GoalGuide from '../components/GoalGuide.vue'
   import { sandIamTaskPathCanOpen, sandIamTaskPaths } from '../api/taskPaths'
   import {
-    LVXU_GRANT_PRESET,
+    DEFAULT_GRANT_ACTION_CODES,
+    DEFAULT_GRANT_SERVICE_CODE,
     activeCredential,
     fetchAccessMatrix,
     grantAccessMatrix,
@@ -53,45 +54,55 @@
     return primary.length > 0 ? primary : services.flatMap((s) => s.actions)
   })
 
-  /** Pending decisions: 律序 not onboarded, or missing default capabilities. */
+  /**
+   * Pending decisions: an onboarded application is missing default
+   * capabilities, or no application has been onboarded yet.
+   */
   const dismissedPending = ref(false)
-  const lvxuApp = computed(() =>
-    (matrix.value?.applications ?? []).find((a) => a.code === LVXU_GRANT_PRESET.application.code))
-  const lvxuClient = computed(() => (lvxuApp.value ? matrixClientFor(lvxuApp.value) : null))
-  const lvxuMissingDefault = computed(() => {
-    if (lvxuApp.value === undefined) return true
+  const pendingApp = computed(() => {
     const actionIds = new Map(
       (matrix.value?.services ?? [])
         .flatMap((s) => s.actions)
         .map((a) => [a.code, a.id] as const),
     )
-    return LVXU_GRANT_PRESET.action_codes.some((code) => {
-      const id = actionIds.get(code)
-      return id !== undefined && !grantActive(lvxuClient.value, id)
-    })
+    return (matrix.value?.applications ?? []).find((app) =>
+      DEFAULT_GRANT_ACTION_CODES.some((code) => {
+        const id = actionIds.get(code)
+        return id !== undefined && !grantActive(matrixClientFor(app), id)
+      }))
   })
+  const hasApplications = computed(() => (matrix.value?.applications.length ?? 0) > 0)
   /** Scoped admins must name an organization they manage when creating apps. */
   const defaultOrganizationId = computed(() => matrix.value?.organizations[0]?.id)
   /** Without any manageable organization the grant endpoint cannot be used. */
   const hasOrganizationScope = computed(() => (matrix.value?.organizations.length ?? 0) > 0)
-  const showLvxuPending = computed(() =>
-    canGrant.value && hasOrganizationScope.value && !dismissedPending.value && lvxuMissingDefault.value)
+  const showPending = computed(() =>
+    canGrant.value && hasOrganizationScope.value && !dismissedPending.value
+    && (pendingApp.value !== undefined || !hasApplications.value))
 
   // --- pending actions ---
   const granting = ref(false)
 
-  async function allowLvxu(): Promise<void> {
+  /**
+   * One-click default grant for an existing application. When no application
+   * exists yet the administrator onboards one through the dialog instead —
+   * the application name/code is never preset by SandIAM.
+   */
+  async function allowPending(): Promise<void> {
+    const app = pendingApp.value
+    if (app === undefined) {
+      openNewApp()
+      return
+    }
     granting.value = true
     try {
-      const input: SandIamMatrixGrantInput = lvxuApp.value === undefined
-        ? { ...LVXU_GRANT_PRESET, organization_id: defaultOrganizationId.value }
-        : {
-            application: { id: lvxuApp.value.id },
-            service_code: LVXU_GRANT_PRESET.service_code,
-            action_codes: [...LVXU_GRANT_PRESET.action_codes],
-          }
+      const input: SandIamMatrixGrantInput = {
+        application: { id: app.id },
+        service_code: DEFAULT_GRANT_SERVICE_CODE,
+        action_codes: [...DEFAULT_GRANT_ACTION_CODES],
+      }
       await grantAccessMatrix(input)
-      ElMessage.success('已允许律序使用选中的能力')
+      ElMessage.success(`已允许「${app.name}」使用选中的能力`)
       await reload()
     } catch {
       ElMessage.error('授权失败，请稍后重试')
@@ -171,14 +182,41 @@
   const newAppDialogOpen = ref(false)
   const newAppName = ref('')
   const newAppCode = ref('')
-  const newAppActions = ref<string[]>([...LVXU_GRANT_PRESET.action_codes])
+  const newAppCodeTouched = ref(false)
+  const newAppCodeSeed = ref('')
+  const newAppActions = ref<string[]>([...DEFAULT_GRANT_ACTION_CODES])
   const newAppIssue = ref(false)
   const newAppSaving = ref(false)
+
+  /**
+   * Neutral code suggestion derived from the typed name: ASCII slug when the
+   * name yields one, otherwise a stable random `app-xxxxxxxx` per dialog
+   * opening. The administrator can always override it.
+   */
+  function deriveAppCode(name: string): string {
+    const slug = name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64)
+      .replace(/-+$/g, '')
+    if (slug.length >= 2) return slug
+    return `app-${newAppCodeSeed.value}`
+  }
+
+  watch(newAppName, (name) => {
+    if (!newAppCodeTouched.value) newAppCode.value = deriveAppCode(name)
+  })
 
   function openNewApp(): void {
     newAppName.value = ''
     newAppCode.value = ''
-    newAppActions.value = [...LVXU_GRANT_PRESET.action_codes]
+    newAppCodeTouched.value = false
+    newAppCodeSeed.value = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    newAppActions.value = [...DEFAULT_GRANT_ACTION_CODES]
     newAppIssue.value = false
     newAppDialogOpen.value = true
   }
@@ -306,16 +344,17 @@
       </div>
 
       <!-- 待你决定 -->
-      <div v-if="showLvxuPending" class="sand-iam-home__pending">
+      <div v-if="showPending" class="sand-iam-home__pending">
         <div class="sand-iam-home__pending-info">
           <span class="sand-iam-home__pending-dot">!</span>
           <div>
-            <p class="m-0 font-medium">「律序」还没有获得 AI 能力的使用许可</p>
+            <p v-if="pendingApp" class="m-0 font-medium">「{{ pendingApp.name }}」还没有获得 AI 能力的使用许可</p>
+            <p v-else class="m-0 font-medium">还没有应用接入，接入后即可允许它使用 AI 能力</p>
             <p class="m-0 mt-1 text-sm text-gray-500">默认开启：AI 对话、文档读取。可以随时在下方矩阵里调整。</p>
           </div>
         </div>
         <div class="sand-iam-home__pending-actions">
-          <ElButton type="primary" :loading="granting" @click="allowLvxu">允许律序使用</ElButton>
+          <ElButton type="primary" :loading="granting" @click="allowPending">{{ pendingApp ? '允许使用' : '接入新应用' }}</ElButton>
           <ElButton text @click="dismissedPending = true">暂不</ElButton>
         </div>
       </div>
@@ -470,10 +509,10 @@
     <ElDialog v-model="newAppDialogOpen" title="接入新应用" width="560px">
       <ElForm label-position="top">
         <ElFormItem label="应用名称" required>
-          <ElInput v-model="newAppName" placeholder="例如：律序" />
+          <ElInput v-model="newAppName" placeholder="例如：我的应用" />
         </ElFormItem>
-        <ElFormItem label="系统代码（自动生成标识，一般用拼音或英文小写）" required>
-          <ElInput v-model="newAppCode" placeholder="例如：lvxu" />
+        <ElFormItem label="系统代码（已按名称自动建议，可修改；小写字母、数字、短横线或下划线）" required>
+          <ElInput v-model="newAppCode" placeholder="例如：my-app" @input="newAppCodeTouched = true" />
         </ElFormItem>
         <ElFormItem label="允许使用的能力">
           <ElCheckboxGroup v-model="newAppActions">

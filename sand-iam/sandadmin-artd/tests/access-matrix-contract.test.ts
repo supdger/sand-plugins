@@ -12,7 +12,8 @@ registerHooks({
 
 async function run(): Promise<void> {
   const {
-    LVXU_GRANT_PRESET,
+    DEFAULT_GRANT_ACTION_CODES,
+    DEFAULT_GRANT_SERVICE_CODE,
     activeCredential,
     grantActive,
     matrixClientFor,
@@ -155,10 +156,9 @@ async function run(): Promise<void> {
   assert.equal(replayed.secret_available, false)
   assert.throws(() => parseMatrixGrantResult({ application_id: 'x' }))
 
-  // --- lvxu preset contract ---
-  assert.deepEqual(LVXU_GRANT_PRESET.application, { code: 'lvxu', name: '律序' })
-  assert.equal(LVXU_GRANT_PRESET.service_code, 'sand_ai')
-  assert.deepEqual(LVXU_GRANT_PRESET.action_codes, ['sand_ai.chat.complete', 'sand_ai.document_parse'])
+  // --- default grant capability set (service-level, application-neutral) ---
+  assert.equal(DEFAULT_GRANT_SERVICE_CODE, 'sand_ai')
+  assert.deepEqual([...DEFAULT_GRANT_ACTION_CODES], ['sand_ai.chat.complete', 'sand_ai.document_parse'])
 
   console.log('SandIAM access-matrix contracts passed')
 }

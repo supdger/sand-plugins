@@ -289,9 +289,13 @@ export async function grantAccessMatrix(input: SandIamMatrixGrantInput): Promise
   return parseMatrixGrantResult(raw)
 }
 
-/** "允许律序使用" preset — default capabilities: AI chat + document parsing. */
-export const LVXU_GRANT_PRESET: Pick<SandIamMatrixGrantInput, 'application' | 'service_code' | 'action_codes'> = {
-  application: { code: 'lvxu', name: '律序' },
-  service_code: 'sand_ai',
-  action_codes: ['sand_ai.chat.complete', 'sand_ai.document_parse'],
-}
+/**
+ * Default capability set suggested when granting or onboarding an
+ * application: AI chat + document parsing. Service-level defaults only —
+ * the application identity is always chosen by the administrator.
+ */
+export const DEFAULT_GRANT_SERVICE_CODE = 'sand_ai'
+export const DEFAULT_GRANT_ACTION_CODES: readonly string[] = [
+  'sand_ai.chat.complete',
+  'sand_ai.document_parse',
+]
