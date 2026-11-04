@@ -117,6 +117,7 @@ Route::group('/app/sand-iam/admin', static function (): void {
     Route::get('/grant/actions', [ServiceGrantController::class, 'actions']);
     Route::get('/access-matrix/index', [AccessMatrixController::class, 'index']);
     Route::post('/access-matrix/grant', [AccessMatrixController::class, 'grant']);
+    Route::post('/access-matrix/ensure-defaults', [AccessMatrixController::class, 'ensureDefaults']);
     Route::post('/policy/publish', [PolicyController::class, 'publish']);
     Route::post('/policy/rollback', [PolicyController::class, 'rollback']);
     Route::get('/policy/versions', [PolicyController::class, 'versions']);

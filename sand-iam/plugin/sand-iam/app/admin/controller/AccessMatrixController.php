@@ -27,6 +27,21 @@ final class AccessMatrixController extends BaseController
         return $this->success((new AccessMatrixService())->matrix($this->access()));
     }
 
+    /** Idempotent entity-only provisioning: default organization + 律序 application + prod environment + sand-ai client. Grants stay an explicit decision. */
+    #[Permission('SandIAM 默认实体就绪（一键接入前置）', 'sand_iam:grant:save')]
+    public function ensureDefaults(Request $request): Response
+    {
+        if ($request->post() !== [] || $request->get() !== []) {
+            throw new ApiException('SAND_IAM_VALIDATION_ERROR: 默认实体就绪不接受参数', 400);
+        }
+        $result = (new AccessMatrixService())->ensureDefaults(
+            $this->adminId(),
+            RequestId::fromRequest($request),
+            $this->access(),
+        );
+        return $this->success($result['result'], '默认应用与环境已就绪');
+    }
+
     #[Permission('SandIAM 一键授权应用使用服务', 'sand_iam:grant:save')]
     public function grant(Request $request): Response
     {

@@ -15,6 +15,8 @@ final class AccessMatrixInput
     public const DEFAULT_AUDIENCE = 'sand-ai';
     public const DEFAULT_ORGANIZATION_CODE = 'default';
     public const DEFAULT_ORGANIZATION_NAME = '本机构';
+    public const DEFAULT_APPLICATION_CODE = 'lvxu';
+    public const DEFAULT_APPLICATION_NAME = '律序';
     public const DEFAULT_ENVIRONMENT_CODE = 'prod';
     public const DEFAULT_ENVIRONMENT_NAME = '正式';
     public const DEFAULT_CLIENT_CODE = 'sand-ai';

@@ -107,6 +107,7 @@ final class ManagementApiCatalog
         'GET /initialization/draft-read' => 'sand_iam:initialization:read',
         'GET /access-matrix/index' => 'sand_iam:grant:index',
         'POST /access-matrix/grant' => 'sand_iam:grant:save',
+        'POST /access-matrix/ensure-defaults' => 'sand_iam:grant:save',
     ];
 
     /** @return list<array{method:string,path:string,operation_id:string,summary:string,permission:string,sensitive:bool}> */
@@ -447,7 +448,7 @@ final class ManagementApiCatalog
         ];
         $post = [
             '/application-business-action/publish' => '发布应用业务动作',
-            '/grant/revoke' => '撤销服务授权', '/access-matrix/grant' => '一键接入应用并授权服务能力', '/policy/publish' => '发布授权策略', '/policy/rollback' => '回滚并发布授权策略版本', '/policy/revoke' => '撤销授权策略', '/policy/simulate' => '模拟并解释授权策略（只读）',
+            '/grant/revoke' => '撤销服务授权', '/access-matrix/grant' => '一键接入应用并授权服务能力', '/access-matrix/ensure-defaults' => '准备默认客户主体应用与环境（不授权）', '/policy/publish' => '发布授权策略', '/policy/rollback' => '回滚并发布授权策略版本', '/policy/revoke' => '撤销授权策略', '/policy/simulate' => '模拟并解释授权策略（只读）',
             '/identity-role/grant' => '授予应用用户角色', '/identity-role/revoke' => '撤销应用用户角色',
             '/identity-user-type/grant' => '分配用户类型', '/identity-user-type/revoke' => '撤销用户类型',
             '/credential/issue' => '签发调用凭证', '/credential/rotate' => '轮换调用凭证', '/credential/revoke' => '撤销调用凭证',

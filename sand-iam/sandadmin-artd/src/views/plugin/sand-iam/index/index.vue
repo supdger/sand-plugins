@@ -11,6 +11,7 @@
     DEFAULT_GRANT_ACTION_CODES,
     DEFAULT_GRANT_SERVICE_CODE,
     activeCredential,
+    ensureAccessMatrixDefaults,
     fetchAccessMatrix,
     grantAccessMatrix,
     grantActive,
@@ -74,8 +75,8 @@
   const hasApplications = computed(() => (matrix.value?.applications.length ?? 0) > 0)
   /** Scoped admins must name an organization they manage when creating apps. */
   const defaultOrganizationId = computed(() => matrix.value?.organizations[0]?.id)
-  /** Without any manageable organization the grant endpoint cannot be used. */
-  const hasOrganizationScope = computed(() => (matrix.value?.organizations.length ?? 0) > 0)
+  /** Grant attempts stay available when the matrix is empty: the backend auto-creates the default organization for admins allowed to grant; scoped limits are still enforced server-side. */
+  const hasOrganizationScope = computed(() => canGrant.value || (matrix.value?.organizations.length ?? 0) > 0)
   const showPending = computed(() =>
     canGrant.value && hasOrganizationScope.value && !dismissedPending.value
     && (pendingApp.value !== undefined || !hasApplications.value))
@@ -264,10 +265,23 @@
   }
 
   // --- data ---
+  const defaultsEnsured = ref(false)
   async function reload(): Promise<void> {
     try {
       matrix.value = await fetchAccessMatrix()
       loadError.value = ''
+      // First-use zero-step: a fresh install has no entities at all, so the
+      // home materializes the default organization/application/environment
+      // itself instead of sending the admin through the registration wizard.
+      if (!defaultsEnsured.value && canGrant.value && (matrix.value?.applications.length ?? 0) === 0) {
+        defaultsEnsured.value = true
+        try {
+          await ensureAccessMatrixDefaults()
+          matrix.value = await fetchAccessMatrix()
+        } catch {
+          // Provisioning is best-effort; the grid keeps its guided empty state.
+        }
+      }
     } catch {
       loadError.value = '无法加载授权矩阵，请检查网络或权限后重试'
     }

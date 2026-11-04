@@ -289,6 +289,14 @@ export async function grantAccessMatrix(input: SandIamMatrixGrantInput): Promise
   return parseMatrixGrantResult(raw)
 }
 
+export async function ensureAccessMatrixDefaults(): Promise<unknown> {
+  return request.post<unknown>({
+    url: `${PREFIX}/access-matrix/ensure-defaults`,
+    data: {},
+    headers: { 'X-Request-Id': createSandIamRequestId() },
+  })
+}
+
 /**
  * Default capability set suggested when granting or onboarding an
  * application: AI chat + document parsing. Service-level defaults only —
