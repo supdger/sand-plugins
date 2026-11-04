@@ -166,6 +166,16 @@ try {
         'market 携带所选版本的 sha256');
     check($failures, $plan['resolvable'] === true, '可消解计划 resolvable=true');
 
+    // ---- 3b. 目标 app 断在依赖等待（state=4+等待标志）时计划端点仍可读 -----------
+    // 一键续做的入口：目标候选已登记 state=4，行级续跑先重算依赖计划——
+    // 端点只读候选 config.json，不受目标自身登记状态影响。
+    writeCandidate('sand-ai', ['version' => '0.3.5', 'state' => 4,
+        'composer_dependent_wait_install' => 1], depConfig('sand-iam', '0.8.6', str_repeat('a', 64)));
+    $plan = (new InstallLogic('sand-ai'))->inspectDependencies($catalog);
+    $dep = $plan['dependencies'][0];
+    check($failures, $dep['action'] === 'upgrade' && $dep['market']['version'] === '0.8.6',
+        '目标 app 处于 state4+依赖等待时 inspectDependencies 仍返回正确计划（upgrade+market）');
+
     // ---- 4. 未安装 + 仓库命中 → install -----------------------------------------
     removeTree(registryRoot() . '/sand-iam');
     removeTree(base_path('plugin/sand-iam'));
