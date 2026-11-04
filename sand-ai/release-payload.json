@@ -1023,7 +1023,7 @@
     "config/sand_ai_workflow.php": "86f5426edc9637c17933d06636120b5ccacf5ac9109f21ba4ba4f04dd7fb954e",
     "config/sand_ai_workflow_services.php": "53a26873d91de0e7df5cdcab8d726fccd27d29957d011d3b220bcd8b06fa5fb6",
     "dependencies/sand-iam-0.9.2.zip": "c54d14982115cbfeeb468755645ba0a80b0250883acea0746b9dd19c69b2e837",
-    "host-payload.json": "df44a8d7528ada18eae9b200d75013bf58f69f159dff287f5f5ab85c23a48882",
+    "host-payload.json": "4a7722686205f1d176f57217f1e4b24111d7a4c0c657385119400a086291a946",
     "info.ini": "afe80efe8ce6548a7057b1b7bc4381ba13d323561c149183a02fa6f76d679a23",
     "install.sql": "80215221e8a611f81a3693d29bd39020cacf9ca6f19401e78fcc97e41b0e1f4a",
     "plugin/sand-ai/CHANGELOG.md": "10c5a14176ff6caa36e5f1a2ba27e39722d0a0fa6068133be1b3f62d797f24c7",
