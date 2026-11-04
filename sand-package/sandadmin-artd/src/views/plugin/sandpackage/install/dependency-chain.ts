@@ -3,9 +3,12 @@
  *
  * 依赖任务只允许经认证管理员会话的 SSE 终端启动（TerminalRunner::isSuperAdmin），
  * 后端没有不经会话的执行器，因此自动依赖链只能由页面触发。这里的判定以服务端
- * 登记状态（info.ini 的 state 与 *_dependent_wait_install 标志）为唯一依据，
- * 不依赖安装请求的客户端成败：axios 超时或连接断开时，服务端 PHP 仍在后台
- * 继续完成安装登记，按服务端状态轮询收敛才不会让链静默缺失。
+ * 登记状态（info.ini 的 state、operation_pending 与 *_dependent_wait_install
+ * 标志）为唯一依据，不依赖安装请求的客户端成败：axios 超时或连接断开时，
+ * 服务端 PHP 仍在后台继续完成安装登记，按服务端状态轮询收敛才不会让链静默缺失。
+ * 依赖等待标志在锁内先于事务提交对外可见（deployFreshOrUpgrade 先登记
+ * state=4+等待标志再写载荷），operation_pending=1 期间入队必撞安装操作锁，
+ * 裁决按在途继续轮询；服务端把残余锁冲突映射为【锁冲突】记号供瞬态重试。
  *
  * 0.2.18 把「安装 → 轮询 → 依赖链」挂在安装视图组件内：安装完成触发
  * 动态路由重建后 keep-alive 停用视图，组件内 readsActive/getList 轮询
@@ -52,20 +55,26 @@ export const dependencyKindOf = (row: DependencyChainRow | null | undefined): De
 
 /**
  * 服务端登记的安装结果判定：
+ * - state 3/5/6/7/8/0 或未知异常态 → 安装失败或需人工处理（先判：
+ *   安装失败现场保留 operation_pending=1，不能按「在途」吞掉）
+ * - operation_pending=1 → 安装/操作事务仍在锁内：依赖等待标志在锁内
+ *   先于事务提交对外可见（deployFreshOrUpgrade 先于载荷写入登记
+ *   state=4+*_dependent_wait_install，载荷写入触发整页 reload），
+ *   此时入队必撞安装操作锁——按「在途」继续轮询，待事务提交解锁
  * - 依赖等待标志 → 可立即入队依赖任务
  * - state=1 → 安装完成
- * - state 3/5/6/7/8 或未知异常态 → 安装失败或需人工处理
  * - 其余（安装进行中的 state=2/4、行暂缺）→ 仍需等待
  */
 export const installOutcomeOf = (
   row: DependencyChainRow | null | undefined
 ): InstallOutcomeStatus => {
   if (!row) return 'pending'
-  if (dependencyKindOf(row) !== null) return 'wait_dependencies'
   const state = row.state
+  if (state === 0 || state === 3 || (typeof state === 'number' && state >= 5)) return 'failed'
+  if (row.operation_pending === 1) return 'pending'
+  if (dependencyKindOf(row) !== null) return 'wait_dependencies'
   if (state === 1) return 'installed'
   if (state === 2 || state === 4) return 'pending'
-  if (typeof state === 'number' && (state === 0 || state === 3 || state >= 5)) return 'failed'
   return 'failed'
 }
 
@@ -203,6 +212,14 @@ export interface DependencyOrchestratorDeps {
   /** 依赖任务失败后的通俗原因读取（通常为终端输出尾部归纳）。 */
   failureReason?: (app: string, kind: DependencyKind) => string
   /**
+   * 依赖任务失败是否为「安装操作锁冲突」瞬态：服务端把 flock 冲突
+   * （OperationLockException）映射为失败详情中的稳定记号
+   * 【锁冲突】（DependencyCommandSupport::LOCK_CONFLICT_TOKEN），
+   * 实现侧按终端失败任务输出判定。返回 true 时编排器在
+   * lockWaitBudgetMs 预算内重试入队同一环节，而非判链失败。
+   */
+  lockConflict?: (app: string, kind: DependencyKind) => boolean
+  /**
    * 编排阶段迁移回调：安装请求发出后置 'install'，开始入队依赖链前置
    * 'chain'。应用级编排器用它更新 sessionStorage 断点记录，整页 reload
    * 后续跑时按服务端行快照裁决，本字段仅作诊断信息。
@@ -214,7 +231,20 @@ export interface DependencyOrchestratorDeps {
   pollBudgetMs?: number
   pollIntervalMs?: number
   maxChainSteps?: number
+  /**
+   * 安装事务在途等待与依赖入队锁冲突重试共享的总预算（毫秒），
+   * 默认与轮询预算相同。wait 标志在锁内先于事务提交对外可见，
+   * 撞锁属瞬态，预算内等待/重试而非直接判失败。
+   */
+  lockWaitBudgetMs?: number
 }
+
+/**
+ * 服务端依赖命令失败详情中的锁冲突分类记号，与
+ * DependencyCommandSupport::LOCK_CONFLICT_TOKEN 保持一致；
+ * 前端只按该记号判定瞬态，不裸匹配中文错误文案。
+ */
+export const DEPENDENCY_LOCK_CONFLICT_TOKEN = '【锁冲突】'
 
 export const dependencyTaskLabel = (kind: DependencyKind): string =>
   kind === 'composer' ? '后端依赖（composer）' : '前端依赖（npm/pnpm）'
@@ -231,39 +261,96 @@ const chainFailed = (
  * 登记的 *_dependent_wait_install 标志决定下一步；initialRows 允许
  * 调用方传入已有快照作为第一步失败读的兜底。读失败保留上次快照继续，
  * 不中断链——是否完成只认服务端登记。
+ *
+ * 与安装事务在途期解耦（WP-PRE2 撞锁返工）：
+ * - operation_pending=1：安装/操作事务仍在锁内，等待标志先于解锁
+ *   对外可见，此时入队必撞操作锁——在 lockWaitBudgetMs 预算内按
+ *   pollIntervalMs 节奏等待事务提交；登记转入失败态立即收尾；
+ * - 依赖任务仍被操作锁拒绝（服务端【锁冲突】记号，如行快照与解锁
+ *   之间的残余窗口或其他插件的在途事务）：同一预算内重试入队同一
+ *   环节，不消耗链步数；预算耗尽或非锁类失败才判 chain-failed。
  */
 export const runDependencyChainLoop = async (
   deps: Pick<
     DependencyOrchestratorDeps,
-    'fetchRows' | 'runDependencyTask' | 'failureReason' | 'maxChainSteps'
+    | 'fetchRows'
+    | 'runDependencyTask'
+    | 'failureReason'
+    | 'lockConflict'
+    | 'maxChainSteps'
+    | 'sleep'
+    | 'now'
+    | 'pollIntervalMs'
+    | 'lockWaitBudgetMs'
   >,
   app: string,
   title: string,
   initialRows: DependencyChainRow[] = []
 ): Promise<InstallOrchestrationOutcome> => {
   const maxSteps = Math.max(1, deps.maxChainSteps ?? 8)
+  const intervalMs = deps.pollIntervalMs ?? INSTALL_OUTCOME_POLL_INTERVAL_MS
+  const sleep = deps.sleep ?? defaultSleep
+  const now = deps.now ?? Date.now
+  const lockDeadline = now() + Math.max(
+    intervalMs,
+    deps.lockWaitBudgetMs ?? INSTALL_OUTCOME_POLL_BUDGET_MS
+  )
   let rows = initialRows
-  for (let step = 0; step < maxSteps; step++) {
+  let step = 0
+  while (step < maxSteps) {
     try {
       rows = await deps.fetchRows()
     } catch {
       // 读失败保留上次快照；轮次上限与失败兜底不变。
     }
-    const row = rows.find((item) => item.app === app)
+    let row = rows.find((item) => item.app === app)
     if (!row) {
       return chainFailed(app, title, '依赖', '无法读取插件当前状态，请刷新后重试')
+    }
+    // 安装/操作事务仍在锁内：等待标志先于解锁对外可见，此时入队必撞
+    // 操作锁——预算内按轮询节奏等待事务提交后再入队。
+    while (row.operation_pending === 1) {
+      if (installOutcomeOf(row) === 'failed') {
+        return chainFailed(
+          app,
+          title,
+          '依赖',
+          installOutcomeReason(row, '安装未完成，请到插件管理查看')
+        )
+      }
+      if (now() + intervalMs > lockDeadline) {
+        return chainFailed(app, title, '依赖', '仍有安装操作正在执行，请稍后到插件管理重试')
+      }
+      await sleep(intervalMs)
+      try {
+        rows = await deps.fetchRows()
+      } catch {
+        // 同上：读失败保留上次快照，预算到期即收尾。
+      }
+      const next = rows.find((item) => item.app === app)
+      if (!next) {
+        return chainFailed(app, title, '依赖', '无法读取插件当前状态，请刷新后重试')
+      }
+      row = next
     }
     const kind = dependencyKindOf(row)
     if (kind === null) return { kind: 'installed' }
     const ok = await deps.runDependencyTask(kind, app)
-    if (!ok) {
-      return chainFailed(
-        app,
-        title,
-        dependencyTaskLabel(kind),
-        deps.failureReason?.(app, kind) || '请查看终端输出中的具体错误'
-      )
+    if (ok) {
+      step += 1
+      continue
     }
+    // 瞬态锁冲突（服务端【锁冲突】记号）：预算内重试同一环节。
+    if (deps.lockConflict?.(app, kind) === true && now() + intervalMs <= lockDeadline) {
+      await sleep(intervalMs)
+      continue
+    }
+    return chainFailed(
+      app,
+      title,
+      dependencyTaskLabel(kind),
+      deps.failureReason?.(app, kind) || '请查看终端输出中的具体错误'
+    )
   }
   return chainFailed(app, title, '依赖', '依赖任务轮次异常，请到插件管理确认插件状态')
 }

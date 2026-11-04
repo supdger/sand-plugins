@@ -184,7 +184,33 @@ try {
         '安全策略'
     ), 'composer secure-http 拒绝 http 镜像 → 中文原因');
 
-    // ---- 5g. 其他兜底：输出摘录 ----------------------------------------------
+    // ---- 5g. 锁冲突归类：稳定分类记号 ---------------------------------------
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::lockConflictDetail('已有安装操作正在执行'),
+        DependencyCommandSupport::LOCK_CONFLICT_TOKEN
+    ), '锁冲突详情带【锁冲突】分类记号');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::lockConflictDetail('已有安装操作正在执行'),
+        '已有安装操作正在执行，请稍后重试'
+    ), '锁冲突详情保留原提示并给出重试指引');
+    check($failures, str_contains(
+        (string) DependencyCommandSupport::lockConflictDetail(''),
+        DependencyCommandSupport::LOCK_CONFLICT_TOKEN . '安装操作仍在执行'
+    ), '空消息锁冲突详情有兜底文案');
+
+    // ---- 5h. 锁冲突异常类型（宿主无依赖时以最小桩验证继承契约）--------------
+    if (!class_exists(\plugin\sandadmin\exception\ApiException::class)) {
+        eval('namespace plugin\sandadmin\exception; class ApiException extends \Exception {}');
+    }
+    require $packageRoot . '/server/plugin/sandpackage/app/exception/OperationLockException.php';
+    check($failures, is_subclass_of(
+        \plugin\sandpackage\app\exception\OperationLockException::class,
+        \plugin\sandadmin\exception\ApiException::class
+    ), '锁冲突异常是 ApiException 子类（宿主仍按业务拒绝统一处理）');
+    $lockError = new \plugin\sandpackage\app\exception\OperationLockException('已有安装操作正在执行');
+    check($failures, $lockError->getMessage() === '已有安装操作正在执行', '锁冲突异常保留原锁提示文案');
+
+    // ---- 5i. 其他兜底：输出摘录 ----------------------------------------------
     check($failures, DependencyCommandSupport::failureExcerpt('Some unrelated output tail') === 'Some unrelated output tail', '输出摘录保留原文');
     check($failures, DependencyCommandSupport::failureExcerpt("  line1\n\n line2  ") === 'line1 line2', '输出摘录折叠空白');
     $longTail = str_repeat('a', 300);

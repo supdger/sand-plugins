@@ -27,6 +27,26 @@ final class DependencyCommandSupport
     public const OUTPUT_TAIL_BYTES = 16384;
 
     /**
+     * 失败详情中的「安装操作锁冲突」分类记号。flock 非阻塞冲突经
+     * OperationLockException 携带到终端失败详情里，前端编排器按该记号
+     * 判定瞬态并在预算内重试入队，不裸匹配中文错误文案。
+     */
+    public const LOCK_CONFLICT_TOKEN = '【锁冲突】';
+
+    /**
+     * 锁冲突失败详情片段：安装/卸载/恢复事务仍在锁内，解锁后命令即可
+     * 重试。消息体沿用原锁提示，统一带分类记号与重试指引。
+     */
+    public static function lockConflictDetail(string $message): string
+    {
+        $text = trim($message);
+        if ($text === '') {
+            $text = '安装操作仍在执行';
+        }
+        return self::LOCK_CONFLICT_TOKEN . mb_substr($text, 0, 240) . '，请稍后重试';
+    }
+
+    /**
      * 准备依赖命令使用的独立 COMPOSER_HOME 并返回其路径。
      *
      * @param string $homeDir               目标目录（每次重写 config.json）

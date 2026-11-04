@@ -212,6 +212,155 @@ test('服务端登记安装失败 → install-failed 携带行内原因', async 
   assert.equal(outcome.kind === 'install-failed' ? outcome.reason : '', '数据库安装失败')
 })
 
+test('链执行中行快照显示事务在途（operation_pending=1）：预算内等待解锁后再入队', async () => {
+  // 依赖链中途出现 operation_pending=1（安装事务收尾窗口或其他在途
+  // 操作）：此时入队必撞操作锁，应在预算内轮询等待而非直接入队。
+  const snapshots: DependencyChainRow[][] = [
+    [row({ state: 4, composer_dependent_wait_install: 1, operation_pending: 1 })], // 链第 1 步：在途
+    [row({ state: 4, composer_dependent_wait_install: 1, operation_pending: 1 })], // 等待中仍在途
+    [row({ state: 4, composer_dependent_wait_install: 1 })], // 解锁：可入队
+    [row({ state: 1, version: '0.3.1' })]
+  ]
+  let fetches = 0
+  const tasks: DependencyKind[] = []
+  const outcome = await runDependencyChainLoop(
+    baseDeps({
+      fetchRows: async () => snapshots[Math.min(fetches++, snapshots.length - 1)],
+      runDependencyTask: async (kind) => {
+        tasks.push(kind)
+        return true
+      },
+      lockWaitBudgetMs: 50
+    }),
+    'sand-ai',
+    'SandAI'
+  )
+  assert.equal(outcome.kind, 'installed')
+  assert.deepEqual(tasks, ['composer'])
+  assert.ok(fetches >= 3, `在途期应轮询等待而非直接入队（实际读 ${fetches} 次）`)
+})
+
+test('链执行中 operation_pending 持续超过等待预算 → chain-failed，不当成功', async () => {
+  let ticks = 0
+  let taskCalls = 0
+  const outcome = await runDependencyChainLoop(
+    baseDeps({
+      fetchRows: async () => [row({ state: 4, composer_dependent_wait_install: 1, operation_pending: 1 })],
+      runDependencyTask: async () => {
+        taskCalls += 1
+        return true
+      },
+      lockWaitBudgetMs: 3,
+      now: () => ticks,
+      sleep: async () => {
+        ticks += 1
+      }
+    }),
+    'sand-ai',
+    'SandAI'
+  )
+  assert.equal(outcome.kind, 'chain-failed')
+  assert.equal(taskCalls, 0) // 在途期从未入队
+  if (outcome.kind !== 'chain-failed') return
+  assert.match(outcome.failure.reason, /安装操作正在执行/)
+})
+
+test('链执行中等待在途时登记转失败（state=8）→ 立即 chain-failed 携带行内原因', async () => {
+  const snapshots: DependencyChainRow[][] = [
+    [row({ state: 4, composer_dependent_wait_install: 1, operation_pending: 1 })],
+    [row({ state: 8, operation_pending: 1, last_error: '宿主文件部署失败' })]
+  ]
+  let fetches = 0
+  const outcome = await runDependencyChainLoop(
+    baseDeps({
+      fetchRows: async () => snapshots[Math.min(fetches++, snapshots.length - 1)],
+      lockWaitBudgetMs: 50
+    }),
+    'sand-ai',
+    'SandAI'
+  )
+  assert.equal(outcome.kind, 'chain-failed')
+  if (outcome.kind !== 'chain-failed') return
+  assert.equal(outcome.failure.reason, '宿主文件部署失败')
+})
+
+test('锁冲突瞬态重试成功：第一次入队撞锁，预算内重试后收敛', async () => {
+  // 行快照未透出锁持有时（其他插件的在途事务或解锁残余窗口），第一次
+  // 入队被 dependency_begin 拒绝并归类【锁冲突】→ 预算内重试入队。
+  const snapshots: DependencyChainRow[][] = [
+    [row({ state: 4, composer_dependent_wait_install: 1 })], // 首次读：composer 待装
+    [row({ state: 4, composer_dependent_wait_install: 1 })], // 撞锁后重试前读
+    [row({ state: 1, version: '0.3.1' })] // 重试成功：依赖清完已安装
+  ]
+  let fetches = 0
+  let taskCalls = 0
+  let conflicts = 0
+  const outcome = await runDependencyChainLoop(
+    baseDeps({
+      fetchRows: async () => snapshots[Math.min(fetches++, snapshots.length - 1)],
+      runDependencyTask: async () => {
+        taskCalls += 1
+        return taskCalls > 1 // 第一次入队撞锁被拒，重试成功
+      },
+      lockConflict: () => {
+        conflicts += 1
+        return conflicts <= 1 // 仅第一次失败归类为锁冲突
+      },
+      lockWaitBudgetMs: 50
+    }),
+    'sand-ai',
+    'SandAI'
+  )
+  assert.equal(outcome.kind, 'installed')
+  assert.equal(taskCalls, 2)
+  assert.equal(conflicts, 1)
+})
+
+test('锁冲突重试预算耗尽 → chain-failed，仍可一键重试', async () => {
+  let ticks = 0
+  let taskCalls = 0
+  const outcome = await runDependencyChainLoop(
+    baseDeps({
+      fetchRows: async () => [row({ state: 4, composer_dependent_wait_install: 1 })],
+      runDependencyTask: async () => {
+        taskCalls += 1
+        return false
+      },
+      lockConflict: () => true,
+      lockWaitBudgetMs: 3,
+      now: () => ticks,
+      sleep: async () => {
+        ticks += 1
+      }
+    }),
+    'sand-ai',
+    'SandAI'
+  )
+  assert.equal(outcome.kind, 'chain-failed')
+  assert.ok(taskCalls >= 2, `预算内应多次重试而非一次即败（实际 ${taskCalls} 次）`)
+})
+
+test('非锁类失败不经瞬态重试：第一次失败即 chain-failed', async () => {
+  let taskCalls = 0
+  const outcome = await runDependencyChainLoop(
+    baseDeps({
+      fetchRows: async () => [row({ state: 4, composer_dependent_wait_install: 1 })],
+      runDependencyTask: async () => {
+        taskCalls += 1
+        return false
+      },
+      lockConflict: () => false,
+      failureReason: () => '【原因】无法连接 Composer 依赖仓库或镜像，请检查网络后重试'
+    }),
+    'sand-ai',
+    'SandAI'
+  )
+  assert.equal(outcome.kind, 'chain-failed')
+  assert.equal(taskCalls, 1) // 非锁冲突：一次失败即收敛，不重试
+  if (outcome.kind !== 'chain-failed') return
+  assert.match(outcome.failure.reason, /Composer 依赖仓库/)
+})
+
 test('链轮次上限耗尽 → chain-failed 轮次异常，不死循环', async () => {
   let taskCalls = 0
   const outcome = await runDependencyChainLoop(

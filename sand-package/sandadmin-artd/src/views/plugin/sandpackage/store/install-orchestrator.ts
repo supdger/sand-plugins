@@ -26,6 +26,7 @@ import { computed, ref } from 'vue'
 import sandpackageApi from '../api/index'
 import { TaskStatus, useTerminalStore } from './terminal'
 import {
+  DEPENDENCY_LOCK_CONFLICT_TOKEN,
   dependencyTaskMatches,
   readOrchestrationSessions,
   removeOrchestrationSession,
@@ -139,11 +140,11 @@ export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrches
       }
     })
 
-  /** 依赖任务失败后从终端任务输出里归纳通俗原因（与原视图内实现一致）。 */
-  const failureReason = (app: string, kind: DependencyKind): string => {
+  /** 最近一次匹配失败的依赖任务；通俗原因与锁冲突判定共用该查找。 */
+  const dependencyFailureTask = (app: string, kind: DependencyKind) => {
     const extend = 'module-install:' + app
     const prefix = kind === 'composer' ? 'composer.' : 'web-install.'
-    const task = [...terminalStore.taskList]
+    return [...terminalStore.taskList]
       .reverse()
       .find(
         (item) =>
@@ -151,12 +152,33 @@ export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrches
           item.command.startsWith(prefix) &&
           item.status === TaskStatus.FAILED
       )
+  }
+
+  /** 依赖任务失败后从终端任务输出里归纳通俗原因（与原视图内实现一致）。 */
+  const failureReason = (app: string, kind: DependencyKind): string => {
+    const task = dependencyFailureTask(app, kind)
     const messages = (task?.message ?? [])
       .map((line) => line.trim())
       .filter((line) => line !== '')
-    const hinted = messages.filter((line) => line.includes('【原因】') || line.includes('【详情】'))
+    const hinted = messages.filter(
+      (line) =>
+        line.includes('【原因】') ||
+        line.includes('【详情】') ||
+        line.includes(DEPENDENCY_LOCK_CONFLICT_TOKEN)
+    )
     const last = hinted.length > 0 ? hinted[hinted.length - 1] : messages[messages.length - 1]
     return last && last !== '' ? last : '请查看终端输出中的具体错误'
+  }
+
+  /**
+   * 依赖任务失败是否为「安装操作锁冲突」瞬态：服务端把 flock 冲突
+   * （OperationLockException）映射为失败详情里的【锁冲突】记号，
+   * 这里只按记号判定——行快照看不到的解锁残余窗口或其他插件的
+   * 在途事务都由它兜底，编排器在预算内重试入队而非判链失败。
+   */
+  const lockConflict = (app: string, kind: DependencyKind): boolean => {
+    const task = dependencyFailureTask(app, kind)
+    return (task?.message ?? []).some((line) => line.includes(DEPENDENCY_LOCK_CONFLICT_TOKEN))
   }
 
   const chainDeps = (
@@ -167,6 +189,7 @@ export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrches
     fetchRows,
     runDependencyTask,
     failureReason,
+    lockConflict,
     onPhase
   })
 
