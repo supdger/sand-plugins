@@ -2337,6 +2337,13 @@
   // 挂在组件内 readsActive/getList 上，安装完成触发动态路由重建后本页被
   // keep-alive 停用，轮询在停用窗口静默空转、依赖链从未入队。本视图只
   // 渲染编排器暴露的状态：panelTick 请求弹面板、failure 供面板展示原因。
+  //
+  // 会话级断点续跑：插件载荷落盘 src/views/plugin/** 时 vite dev watcher
+  // 触发整页 reload，JS 上下文整体销毁——编排器把最小进度记在
+  // sessionStorage（同 tab 整页刷新保留），本视图挂载/重激活时调用
+  // resumeIfPending() 按服务端行快照裁决断点续跑。本页（/#/plugin）既是
+  // 编排发起页也是 reload 落回页；续跑有重入防护与在途任务 attach，
+  // 多触发点并发安全。
 
   // 依赖链失败 → 请求弹出终端面板。视图停用期间 watcher 暂停，
   // 由 onActivated 里的 failure 检查补开。
@@ -2924,6 +2931,8 @@
     refreshVisibleRepositoryReads()
     // 停用期间依赖链失败时 watcher 暂停，这里补开终端面板展示原因与重试。
     if (orchestrator.failure) terminalRef.value?.open()
+    // 停用再激活也可能发生在整页 reload 之前/之后，幂等补触发断点续跑。
+    void orchestrator.resumeIfPending()
   })
   onUnmounted(() => {
     readsActive = false
@@ -2944,6 +2953,8 @@
   })
 
   onMounted(() => {
+    // 整页 reload 落回本页时先于常规读恢复断点编排（无记录为空操作）。
+    void orchestrator.resumeIfPending()
     getList()
     fetchRepositoryCatalog()
   })

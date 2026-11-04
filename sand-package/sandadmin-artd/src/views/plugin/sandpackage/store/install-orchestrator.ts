@@ -10,6 +10,15 @@
  * 0.2.18 的缺陷正是停用窗口内 getList 静默空转导致轮询失能。安装
  * 请求同样由本 store 发起，视图停用无法中止它。
  *
+ * 会话级断点续跑：安装器把插件前端载荷写入 src/views/plugin/** 时 vite
+ * dev watcher 会触发整页 reload，JS 上下文整体销毁、本 store 随之消失。
+ * 编排发起时把最小进度（app/title/阶段/发起时间）写入 sessionStorage
+ * ——同 tab 整页刷新保留、关 tab 自然失效；视图挂载/重激活时调用
+ * resumeIfPending() 按服务端行快照（state 与 *_dependent_wait_install）
+ * 裁决断点并续跑：安装仍进行则轮询、依赖等待则重入队（服务端在客户端
+ * 断连时已终止并回收依赖进程，等待标志保留）、已安装/失败/未登记则按
+ * 终态收敛并清理记录。
+ *
  * @module store/install-orchestrator
  */
 import { defineStore } from 'pinia'
@@ -17,14 +26,21 @@ import { computed, ref } from 'vue'
 import sandpackageApi from '../api/index'
 import { TaskStatus, useTerminalStore } from './terminal'
 import {
+  dependencyTaskMatches,
+  readOrchestrationSessions,
+  removeOrchestrationSession,
+  resumeInstallOrchestration,
   runDependencyChainLoop,
   runInstallOrchestration,
+  upsertOrchestrationSession,
   type DependencyChainRow,
   type DependencyKind,
   type DependencyOrchestratorDeps,
   type InstallChainFailure,
   type InstallOrchestrationInput,
-  type InstallOrchestrationOutcome
+  type InstallOrchestrationOutcome,
+  type InstallOrchestrationPhase,
+  type OrchestrationSessionStorage
 } from '../install/dependency-chain'
 
 export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrchestrator', () => {
@@ -46,6 +62,33 @@ export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrches
   const busy = computed(() => runningApp.value !== '')
 
   /**
+   * sessionStorage 访问器：非浏览器环境或隐私模式抛错时返回 null，
+   * 断点续跑整体退化为无持久化，不阻断编排本体。
+   */
+  const sessionStorageOf = (): OrchestrationSessionStorage | null => {
+    try {
+      return typeof window === 'undefined' ? null : window.sessionStorage
+    } catch {
+      return null
+    }
+  }
+
+  const persistSession = (app: string, title: string, phase: InstallOrchestrationPhase): void => {
+    const storage = sessionStorageOf()
+    if (storage === null) return
+    upsertOrchestrationSession(storage, { app, title, phase, startedAt: Date.now() })
+  }
+
+  const dropSession = (app: string): void => {
+    const storage = sessionStorageOf()
+    if (storage === null) return
+    removeOrchestrationSession(storage, app)
+  }
+
+  /** resumeIfPending 的重入防护：同一页面会话内多个触发点并发调用安全。 */
+  let resumeRunning = false
+
+  /**
    * 编排器自有读通道：直接请求服务端登记快照，不携带 AbortSignal，
    * 不经视图 localRead/cancelRepositoryReads，也不检查 readsActive。
    * 读失败保留上次快照——轮询预算与人工兜底不变，不中断链。
@@ -63,12 +106,31 @@ export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrches
   /**
    * 依赖任务入队并等待终态。终端任务队列与 fetch-SSE 都在
    * sandpackageTerminal store 内运行，不依附任何组件。
+   *
+   * 幂等：同一插件同一环节已有在途任务（续跑并发触发或人工「处理依赖」
+   * 已入队）时 attach 其回调观察终态，不重复入队。服务端的依赖进程在
+   * 客户端断连时被终止回收，不存在需 attach 的服务端在途任务。
    */
   const runDependencyTask = (kind: DependencyKind, app: string): Promise<boolean> =>
     new Promise<boolean>((resolve) => {
       const extend = 'module-install:' + app
       const done = (status: TaskStatus): void => {
         resolve(status === TaskStatus.SUCCESS)
+      }
+      const inflight = terminalStore.taskList.find(
+        (item) =>
+          dependencyTaskMatches(item, kind, app) &&
+          (item.status === TaskStatus.WAITING ||
+            item.status === TaskStatus.CONNECTING ||
+            item.status === TaskStatus.RUNNING)
+      )
+      if (inflight) {
+        const previous = inflight.callback
+        inflight.callback = (status: TaskStatus): void => {
+          if (typeof previous === 'function') previous(status)
+          done(status)
+        }
+        return
       }
       if (kind === 'composer') {
         terminalStore.addTask('composer.update', extend, done)
@@ -98,12 +160,14 @@ export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrches
   }
 
   const chainDeps = (
-    install?: DependencyOrchestratorDeps['install']
+    install?: DependencyOrchestratorDeps['install'],
+    onPhase?: DependencyOrchestratorDeps['onPhase']
   ): DependencyOrchestratorDeps => ({
     install,
     fetchRows,
     runDependencyTask,
-    failureReason
+    failureReason,
+    onPhase
   })
 
   /** 收敛收尾：依赖失败登记 failure 并请求弹出面板；其余 outcome 原样返回。 */
@@ -130,14 +194,22 @@ export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrches
     }
     failure.value = null
     runningApp.value = input.app
+    // 断点记录先于安装请求写入：整页 reload 发生在安装任何阶段都能续跑。
+    persistSession(input.app, input.title, 'install')
     try {
       const outcome = await runInstallOrchestration(
-        chainDeps((app, confirmation) => sandpackageApi.installApp({ appName: app, confirmation })),
+        chainDeps(
+          (app, confirmation) => sandpackageApi.installApp({ appName: app, confirmation }),
+          (phase) => persistSession(input.app, input.title, phase)
+        ),
         input
       )
       return settle(outcome)
     } finally {
       runningApp.value = ''
+      // 终态（成功/失败/无法确认/业务拒绝）即清除断点；面板失败态独立保留。
+      dropSession(input.app)
+      void resumeIfPending()
     }
   }
 
@@ -146,6 +218,7 @@ export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrches
     const current = failure.value
     if (!current || runningApp.value !== '') return null
     runningApp.value = current.app
+    persistSession(current.app, current.title, 'chain')
     try {
       const outcome = await runDependencyChainLoop(
         chainDeps(),
@@ -158,7 +231,48 @@ export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrches
       return settled
     } finally {
       runningApp.value = ''
+      dropSession(current.app)
+      void resumeIfPending()
     }
+  }
+
+  /**
+   * 整页 reload 后的断点续跑入口（视图 onMounted/onActivated 调用）。
+   * 读取 sessionStorage 待续跑记录，逐个按服务端行快照裁决续跑；
+   * 无记录或本 store 不可达 sessionStorage 时为空操作。终态一律清理
+   * 记录——sessionStorage 有但服务端从未登记（行缺失）也按快照终态
+   * 收敛，不复活陈旧编排。
+   */
+  const resumeIfPending = async (): Promise<InstallOrchestrationOutcome[]> => {
+    const storage = sessionStorageOf()
+    if (storage === null || resumeRunning) return []
+    const pending = readOrchestrationSessions(storage)
+    if (pending.length === 0) return []
+    resumeRunning = true
+    const outcomes: InstallOrchestrationOutcome[] = []
+    try {
+      for (const session of pending) {
+        if (runningApp.value !== '') break
+        runningApp.value = session.app
+        try {
+          const outcome = await resumeInstallOrchestration(
+            chainDeps(undefined, (phase) => persistSession(session.app, session.title, phase)),
+            { app: session.app, title: session.title }
+          )
+          const settled = settle(outcome)
+          if (settled.kind === 'installed') failure.value = null
+          outcomes.push(settled)
+        } catch {
+          // 续跑异常不阻断其余待续跑记录；断点由 finally 清理，避免反复重放。
+        } finally {
+          runningApp.value = ''
+          dropSession(session.app)
+        }
+      }
+    } finally {
+      resumeRunning = false
+    }
+    return outcomes
   }
 
   return {
@@ -169,7 +283,8 @@ export const useInstallOrchestratorStore = defineStore('sandpackageInstallOrches
     panelTick,
     fetchRows,
     start,
-    retryChain
+    retryChain,
+    resumeIfPending
   }
 })
 

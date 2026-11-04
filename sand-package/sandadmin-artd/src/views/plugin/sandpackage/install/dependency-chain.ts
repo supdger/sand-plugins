@@ -202,6 +202,12 @@ export interface DependencyOrchestratorDeps {
   runDependencyTask: (kind: DependencyKind, app: string) => Promise<boolean>
   /** 依赖任务失败后的通俗原因读取（通常为终端输出尾部归纳）。 */
   failureReason?: (app: string, kind: DependencyKind) => string
+  /**
+   * 编排阶段迁移回调：安装请求发出后置 'install'，开始入队依赖链前置
+   * 'chain'。应用级编排器用它更新 sessionStorage 断点记录，整页 reload
+   * 后续跑时按服务端行快照裁决，本字段仅作诊断信息。
+   */
+  onPhase?: (phase: InstallOrchestrationPhase) => void
   /** 测试可注入的睡眠/时钟/轮询预算与链步数上限。 */
   sleep?: (ms: number) => Promise<void>
   now?: () => number
@@ -262,33 +268,13 @@ export const runDependencyChainLoop = async (
   return chainFailed(app, title, '依赖', '依赖任务轮次异常，请到插件管理确认插件状态')
 }
 
-/**
- * 「直接安装/直接升级/继续安装」确认后的完整编排：
- * 安装请求 → 结果未知时按服务端快照轮询 → 依赖等待则跑依赖链 → 收敛。
- * 安装请求的传输类错误（超时、断连、取消）不代表服务端停止安装，交
- * 轮询裁决；业务拒绝原样抛出给调用方（http 层已提示）。
- */
-export const runInstallOrchestration = async (
+/** 轮询服务端登记并按行快照裁决收尾：依赖等待→入队依赖链，其余→终态。 */
+const settleInstallBySnapshot = async (
   deps: DependencyOrchestratorDeps,
-  input: InstallOrchestrationInput
+  input: InstallOrchestrationInput,
+  initialRows: DependencyChainRow[]
 ): Promise<InstallOrchestrationOutcome> => {
-  if (deps.install === undefined) {
-    throw new Error('install orchestration requires an install dependency')
-  }
-  let rows: DependencyChainRow[] = []
-  try {
-    const immediate = (await deps.install(input.app, input.confirmation)) ?? null
-    if (immediate !== null) {
-      rows = [immediate]
-      if (immediate.state === 1 && dependencyKindOf(immediate) === null) {
-        return { kind: 'installed' }
-      }
-    }
-  } catch (error: unknown) {
-    if (!isUncertainInstallError(error)) throw error
-    // 超时/断连/取消：服务端通常仍在登记，交给快照轮询裁决。
-  }
-
+  let rows = initialRows
   const outcome = await pollInstallOutcome({
     app: input.app,
     refreshRows: async () => {
@@ -306,6 +292,7 @@ export const runInstallOrchestration = async (
   })
 
   if (outcome.status === 'wait_dependencies') {
+    deps.onPhase?.('chain')
     return runDependencyChainLoop(deps, input.app, input.title, rows)
   }
   if (outcome.status === 'installed') {
@@ -323,4 +310,163 @@ export const runInstallOrchestration = async (
     reason: '安装请求未及时返回，服务端可能仍在后台执行；请到插件管理查看进度',
     row: outcome.row
   }
+}
+
+/**
+ * 「直接安装/直接升级/继续安装」确认后的完整编排：
+ * 安装请求 → 结果未知时按服务端快照轮询 → 依赖等待则跑依赖链 → 收敛。
+ * 安装请求的传输类错误（超时、断连、取消）不代表服务端停止安装，交
+ * 轮询裁决；业务拒绝原样抛出给调用方（http 层已提示）。
+ */
+export const runInstallOrchestration = async (
+  deps: DependencyOrchestratorDeps,
+  input: InstallOrchestrationInput
+): Promise<InstallOrchestrationOutcome> => {
+  if (deps.install === undefined) {
+    throw new Error('install orchestration requires an install dependency')
+  }
+  deps.onPhase?.('install')
+  let rows: DependencyChainRow[] = []
+  try {
+    const immediate = (await deps.install(input.app, input.confirmation)) ?? null
+    if (immediate !== null) {
+      rows = [immediate]
+      if (immediate.state === 1 && dependencyKindOf(immediate) === null) {
+        return { kind: 'installed' }
+      }
+    }
+  } catch (error: unknown) {
+    if (!isUncertainInstallError(error)) throw error
+    // 超时/断连/取消：服务端通常仍在登记，交给快照轮询裁决。
+  }
+  return settleInstallBySnapshot(deps, input, rows)
+}
+
+/**
+ * 断点续跑：整页 reload（vite watcher 对插件载荷目录整页刷新会销毁一切
+ * JS 驻留编排）后，按 sessionStorage 记录的服务端行快照裁决当前阶段，
+ * 从断点继续——服务端的依赖命令在客户端断连时已被终止回收，等待标志
+ * 仍保留，直接重入队即可；安装仍在进行则轮询，已安装/失败/未登记则
+ * 按终态收敛，绝不把陈旧编排复活为新安装（不重发 install 请求）。
+ */
+export const resumeInstallOrchestration = async (
+  deps: DependencyOrchestratorDeps,
+  input: InstallOrchestrationInput
+): Promise<InstallOrchestrationOutcome> => {
+  return settleInstallBySnapshot(deps, input, [])
+}
+
+// ========== 会话级断点续跑：sessionStorage 持久化 ==========
+// 编排发起时写入最小进度，收敛后清除。sessionStorage 随整页 reload 保留
+// （同 tab），关 tab 自然失效——不意外复活陈旧编排。
+
+/** 编排阶段：install=安装请求已发出等待快照裁决；chain=依赖链执行中。 */
+export type InstallOrchestrationPhase = 'install' | 'chain'
+
+/** sessionStorage 中一条待续跑编排记录。 */
+export interface InstallOrchestrationSession {
+  app: string
+  title: string
+  phase: InstallOrchestrationPhase
+  /** 发起时间（epoch ms），仅作诊断，不参与裁决。 */
+  startedAt: number
+}
+
+/** 最小 Storage 形状（sessionStorage/localStorage 及测试替身）。 */
+export interface OrchestrationSessionStorage {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+  removeItem(key: string): void
+}
+
+export const ORCHESTRATION_SESSION_STORAGE_KEY = 'sandpackageInstallOrchestration.pending'
+
+const normalizeSession = (value: unknown): InstallOrchestrationSession | null => {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Partial<InstallOrchestrationSession>
+  if (typeof record.app !== 'string' || record.app === '') return null
+  return {
+    app: record.app,
+    title: typeof record.title === 'string' && record.title !== '' ? record.title : record.app,
+    phase: record.phase === 'chain' ? 'chain' : 'install',
+    startedAt: typeof record.startedAt === 'number' && isFinite(record.startedAt) ? record.startedAt : 0
+  }
+}
+
+/** 读取全部待续跑编排记录；存储缺失、JSON 损坏或形状不符一律按空处理。 */
+export const readOrchestrationSessions = (
+  storage: OrchestrationSessionStorage
+): InstallOrchestrationSession[] => {
+  try {
+    const raw = storage.getItem(ORCHESTRATION_SESSION_STORAGE_KEY)
+    if (raw === null || raw === '') return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map(normalizeSession)
+      .filter((item): item is InstallOrchestrationSession => item !== null)
+  } catch {
+    return []
+  }
+}
+
+const writeOrchestrationSessions = (
+  storage: OrchestrationSessionStorage,
+  sessions: InstallOrchestrationSession[]
+): void => {
+  try {
+    if (sessions.length === 0) {
+      storage.removeItem(ORCHESTRATION_SESSION_STORAGE_KEY)
+    } else {
+      storage.setItem(ORCHESTRATION_SESSION_STORAGE_KEY, JSON.stringify(sessions))
+    }
+  } catch {
+    // 存储不可用（隐私模式/配额）：退化为无断点续跑，不阻断编排。
+  }
+}
+
+/** 按 app 写入/更新一条待续跑记录。 */
+export const upsertOrchestrationSession = (
+  storage: OrchestrationSessionStorage,
+  session: InstallOrchestrationSession
+): void => {
+  const sessions = readOrchestrationSessions(storage).filter((item) => item.app !== session.app)
+  sessions.push(session)
+  writeOrchestrationSessions(storage, sessions)
+}
+
+/** 编排收敛（成功/失败/无法确认）后移除该插件的待续跑记录。 */
+export const removeOrchestrationSession = (
+  storage: OrchestrationSessionStorage,
+  app: string
+): void => {
+  writeOrchestrationSessions(
+    storage,
+    readOrchestrationSessions(storage).filter((item) => item.app !== app)
+  )
+}
+
+// ========== 幂等：在途依赖任务匹配（attach 而非重复入队） ==========
+
+export interface DependencyTaskRef {
+  command: string
+  extend: string
+}
+
+/** 依赖任务的终端 extend 标识。 */
+export const dependencyTaskExtend = (app: string): string => `module-install:${app}`
+
+/**
+ * 判断终端任务是否就是本插件该环节的依赖任务：续跑时发现已有
+ * WAITING/CONNECTING/RUNNING 的匹配任务则 attach 其回调观察终态，
+ * 不重复入队（同一页面会话内多次触发续跑/手工「处理依赖」并发时安全）。
+ */
+export const dependencyTaskMatches = (
+  task: DependencyTaskRef,
+  kind: DependencyKind,
+  app: string
+): boolean => {
+  if (task.extend !== dependencyTaskExtend(app)) return false
+  // composer.update 为固定命令；npm 侧经 addNodeTask 组装为 web-install.<manager>。
+  return kind === 'composer' ? task.command === 'composer.update' : task.command.startsWith('web-install.')
 }
