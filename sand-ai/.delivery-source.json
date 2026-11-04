@@ -1,14 +1,14 @@
 {
   "format": 2,
   "source_repo": "sand_ai",
-  "source_commit": "da9944799c3d801c51d53b9aec6bddc8fbb4d35b",
-  "generated_at_utc": "2026-11-04T20:21:42Z",
+  "source_commit": "7d886250408c38fde5d1685903f91c7cbf3a4302",
+  "generated_at_utc": "2026-11-04T20:34:52Z",
   "units": [
     {
       "source_subdir": "server/plugin/sand-ai",
       "target_subdir": "sand-ai/plugin/sand-ai",
       "file_count": 239,
-      "content_sha256": "ad386968636f36bb526af2387871cedc79476aae4ed6c8fd871f4788a4dbd415"
+      "content_sha256": "59f3a0d96d9ec7b6fb8affc2084574226aa02ce738b3b374e489298391c68a9b"
     },
     {
       "source_subdir": "server/app",
