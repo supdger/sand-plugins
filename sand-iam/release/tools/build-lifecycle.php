@@ -330,6 +330,14 @@ SQL;
         . $inventoryHeader . "\n" . rtrim($admission) . "\n" . implode("\n", $inventoryLines)
         . $base;
     $install .= collapseDoBlocks(migrationPayload($sourceDirectory, array_slice($migrations, 4)));
+    if (in_array($profile, ['0.8.2', '0.8.3', '0.8.4'], true)) {
+        // The top-level navigation regroup applies only after every flat-menu
+        // seed and ownership guard has run, so a fresh install and an upgrade
+        // converge on the same grouped tree; it only touches
+        // sand_system_menu/sand_system_role_menu rows by stable code.
+        $install .= "\n-- lifecycle source: lifecycle/menu-regroup.pgsql\n"
+            . rtrim(readRequired($root . '/lifecycle/menu-regroup.pgsql')) . "\n";
+    }
     $preflightFile = in_array($profile, ['0.8.0', '0.8.1', '0.8.2', '0.8.3', '0.8.4'], true)
         ? '/lifecycle/update-073-or-075-or-076-to-080-preflight.pgsql'
         : '/lifecycle/update-073-or-075-to-076-preflight.pgsql';
