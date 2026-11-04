@@ -1,8 +1,8 @@
 {
   "format": 2,
-  "source_repo": "sand_ai-src",
-  "source_commit": "4768a8159db624b6e19e80ee3f2951cabc8479cd",
-  "generated_at_utc": "2026-11-04T02:39:52Z",
+  "source_repo": "sand_ai",
+  "source_commit": "bf8ffb934d4665433a09ca72a85438dc697522cc",
+  "generated_at_utc": "2026-11-04T03:09:16Z",
   "units": [
     {
       "source_subdir": "server/plugin/sand-ai",
