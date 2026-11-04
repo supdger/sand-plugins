@@ -28,6 +28,7 @@ namespace {
         return $key === 'plugin.sand-iam.app.context_signing_key' ? str_repeat('fixture', 8) : $default;
     }
     require __DIR__ . '/../app/service/RequestId.php';
+    require __DIR__ . '/../app/runtime/ContextSigningKeyProvisioner.php';
     require __DIR__ . '/../app/runtime/IdentityContextProvider.php';
     $encode = static fn (string $value): string => rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
     foreach ([-1, 0, 1] as $offset) {
