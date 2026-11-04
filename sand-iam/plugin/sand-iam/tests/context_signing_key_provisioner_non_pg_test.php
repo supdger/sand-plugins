@@ -4,6 +4,23 @@ declare(strict_types=1);
 
 // behavior-test-gate: static-rule
 
+namespace Webman {
+    // Mirrors the real framework shape on hosts where Webman\Config has no
+    // setter: refresh() must tolerate it, and the provisioned key must stay
+    // usable inside the same process despite the stale cached config.
+    if (!class_exists(Config::class)) {
+        class Config
+        {
+            public static function get(?string $key = null, mixed $default = null): mixed
+            {
+                return $default;
+            }
+        }
+    }
+}
+
+namespace {
+
 if (!function_exists('config')) {
     function config(string $key, mixed $default = null): mixed
     {
@@ -55,6 +72,13 @@ $assert(substr_count($envAfter, 'SAND_IAM_CONTEXT_SIGNING_KEY=') === 1, 'single 
 $assert(str_contains($envAfter, 'DB_NAME=demo'), 'existing entries preserved');
 $assert(is_file($home . '/.env.sand-iam-context-original'), 'one-time backup created');
 
+// ux_p2b regression: refresh() ran while the stubbed config cache still
+// reports the key as empty (Webman\Config above has no set()); the same
+// process must keep returning the provisioned key instead of latching ''.
+$assert(ContextSigningKeyProvisioner::ensure() === $first, 'repeat ensure returns provisioned key with stale config');
+$assert(($_ENV['SAND_IAM_CONTEXT_SIGNING_KEY'] ?? '') === $first, '$_ENV refreshed');
+$assert(getenv('SAND_IAM_CONTEXT_SIGNING_KEY') === $first, 'putenv refreshed');
+
 // Route + catalog registrations stay in sync with the controller.
 $plugin = dirname(__DIR__);
 $service = (string) file_get_contents($plugin . '/app/service/AccessMatrixService.php');
@@ -71,3 +95,5 @@ $assert(str_contains($catalog, 'access-matrix/ensure-defaults'), 'catalog summar
 $assert(AccessMatrixInput::DEFAULT_APPLICATION_CODE === 'lvxu' && AccessMatrixInput::DEFAULT_APPLICATION_NAME === '律序', 'default application identity');
 
 echo 'context_signing_key_provisioner_non_pg_test OK (' . $checks . " checks)\n";
+
+}

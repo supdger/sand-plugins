@@ -25,6 +25,14 @@ final class ContextSigningKeyProvisioner
     private const LOCK_NAME = '.sand-iam-security.lock';
     private const BACKUP_SUFFIX = '.sand-iam-context-original';
 
+    /**
+     * Last value resolved by this process. `Webman\Config` has no setter on
+     * supported framework versions, so a key provisioned at runtime cannot be
+     * reflected into the cached `plugin.*` config tree; it is kept here so
+     * later calls in the same worker still see it.
+     */
+    private static string $resolved = '';
+
     private static bool $attempted = false;
 
     /**
@@ -38,15 +46,22 @@ final class ContextSigningKeyProvisioner
         if ($configured !== '') {
             return $configured;
         }
+        if (self::$resolved !== '') {
+            return self::$resolved;
+        }
         if (self::$attempted) {
             return '';
         }
         self::$attempted = true;
         try {
-            return self::provision();
+            $key = self::provision();
         } catch (\Throwable) {
             return '';
         }
+        if ($key !== '') {
+            self::$resolved = $key;
+        }
+        return $key;
     }
 
     /** @return array{name:string,config_key:string,environment:string} for the non-PG contract test */
@@ -174,7 +189,11 @@ final class ContextSigningKeyProvisioner
         $_ENV[self::ENVIRONMENT_NAME] = $key;
         $_SERVER[self::ENVIRONMENT_NAME] = $key;
         @putenv(self::ENVIRONMENT_NAME . '=' . $key);
-        if (class_exists(\Webman\Config::class)) {
+        // `Webman\Config` exposes no setter on some supported framework
+        // versions; call it only when present so the post-write refresh can
+        // never fail provisioning after the atomic .env write. In-process
+        // callers are covered by self::$resolved and the refreshed env.
+        if (class_exists(\Webman\Config::class) && method_exists(\Webman\Config::class, 'set')) {
             \Webman\Config::set(self::CONFIG_KEY, $key);
         }
     }

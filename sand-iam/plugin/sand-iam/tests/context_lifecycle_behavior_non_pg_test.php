@@ -179,6 +179,7 @@ namespace {
         'radius/RadiusNetwork.php',
         'security/NetworkPolicy.php',
         'security/ServiceGrantConstraintNormalizer.php',
+        'runtime/ContextSigningKeyProvisioner.php',
         'runtime/EnvironmentReferenceVerifier.php',
         'runtime/IdentityContextProvider.php',
     ] as $file) require_once $app . $file;
