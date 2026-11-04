@@ -55,6 +55,8 @@
         }
       }
     },
+    // mappings：接口映射列表。operation_key 为“大写方法 + 空格 + 规范化路径”，
+    // api_code/resource_code/action 等代码按已登记值填写，示例为配套「工作项」服务。
     mappings: [{
       operation_key: 'GET /work-items/{id}',
       api_code: 'work-item.read',
@@ -131,7 +133,7 @@
       const parsed: unknown = JSON.parse(openApiImportText.value)
       if (!isRecord(parsed)) throw new Error('OpenAPI 导入包必须是 JSON 对象。')
       if (!isRecord(parsed.document) || !Array.isArray(parsed.mappings)) {
-        throw new Error('导入包必须包含 document 对象和 mappings 列表。')
+        throw new Error('导入包必须包含接口文档（document）对象和接口映射（mappings）列表。')
       }
       return parsed
     } catch (error: unknown) {
@@ -441,7 +443,7 @@
             class="mb-4"
             type="info"
             :closable="false"
-            title="先填入完整示例，再替换客户主体、应用、环境、资源和动作代码。operation_key 使用“大写方法 + 空格 + 规范化路径”，非根路径末尾不带斜杠。"
+            title="先填入完整示例，再替换客户主体、应用、环境、资源和动作代码。操作标识（operation_key）使用“大写方法 + 空格 + 规范化路径”，非根路径末尾不带斜杠。"
           />
           <ElAlert
             v-if="openApiImportError"
@@ -472,7 +474,7 @@
                 v-model="openApiImportText"
                 type="textarea"
                 :rows="14"
-                placeholder="粘贴包含客户主体、应用、环境、OpenAPI document 和显式 mappings 的 JSON 导入包"
+                placeholder="粘贴包含客户主体、应用、环境、接口文档（document）和接口映射（mappings）的 JSON 导入包"
               />
               <ElButton class="mt-2" :disabled="acting" @click="fillOpenApiImportExample">
                 填入完整示例

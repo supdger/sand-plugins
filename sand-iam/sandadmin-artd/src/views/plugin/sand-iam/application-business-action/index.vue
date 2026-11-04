@@ -153,7 +153,7 @@
       <ElDivider />
       <h3 class="mt-0 text-base font-semibold">历史待认领</h3>
       <p class="mb-3 text-sm text-gray-500">
-        pending_claim 只出现在本报告。新建、变更和路由同步都不会接受未声明动作。
+        「待认领」（pending_claim）只出现在本报告。新建、变更和路由同步都不会接受未声明动作。
       </p>
       <ElAlert
         v-if="!canReadClaims"

@@ -226,7 +226,7 @@
     try {
       await ElMessageBox.confirm(
         `确认撤销「${row.name}」吗？撤销后不能恢复，目录同步必须改用新令牌。`,
-        '撤销 SCIM 令牌',
+        '撤销自动同步用户（SCIM）令牌',
         { type: 'warning', confirmButtonText: '确认撤销', cancelButtonText: '取消' }
       )
     } catch {
@@ -277,7 +277,7 @@
     <TaskContinuation :context="continuationContext()" />
     <ElCard class="sand-iam-page-card" shadow="never">
       <div class="mb-4">
-        <h2 class="m-0 text-lg font-semibold">SCIM 供给令牌</h2>
+        <h2 class="m-0 text-lg font-semibold">自动同步用户（SCIM）</h2>
         <p class="mb-0 mt-2 text-sm text-gray-500">
           给已挂载到接入应用的身份源签发目录同步令牌，具体可用范围由后端校验。默认列表只显示用途名称、状态、到期和最近使用；令牌明文只在签发成功后出现一次，刷新或关闭后无法再看。
         </p>
@@ -305,7 +305,7 @@
         type="info"
         :closable="false"
         title="当前没有令牌"
-        description="该身份源在所选接入应用下还没有有效 SCIM 令牌。这与没有权限不同。"
+        description="该身份源在所选接入应用下还没有有效的自动同步用户（SCIM）令牌。这与没有权限不同。"
       />
 
       <ElForm label-width="160px" class="mb-4">

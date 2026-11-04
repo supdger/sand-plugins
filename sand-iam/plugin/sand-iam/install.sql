@@ -269,11 +269,11 @@ $sand_iam_fresh_install$;
 -- SandIAM 管理入口与既有权限码。按 code / slug 幂等更新，保留已存在的菜单 ID 与角色绑定。
 INSERT INTO "sand_system_menu"
     ("parent_id","name","code","slug","type","path","component","icon","sort","status","create_time","update_time")
-SELECT 0,'SandIAM 身份与访问','SandIAM','',1,'/sand-iam','','ri:shield-user-line',98,1,NOW(),NOW()
+SELECT 0,'身份与权限（SandIAM）','SandIAM','',1,'/sand-iam','','ri:shield-user-line',98,1,NOW(),NOW()
 WHERE NOT EXISTS (SELECT 1 FROM "sand_system_menu" WHERE "code" = 'SandIAM');
 
 UPDATE "sand_system_menu"
-SET "name" = 'SandIAM 身份与访问',
+SET "name" = '身份与权限（SandIAM）',
     "path" = '/sand-iam',
     "icon" = 'ri:shield-user-line',
     "sort" = 98,
@@ -283,7 +283,7 @@ WHERE "code" = 'SandIAM';
 
 WITH menu_def("code","name","path","component","sort","is_hidden") AS (
     VALUES
-        ('SandIAMOverview','管理总览','overview','/plugin/sand-iam/index/index',100,2),
+        ('SandIAMOverview','首页','overview','/plugin/sand-iam/index/index',100,2),
         ('SandIAMConnection','客户与应用接入','connection','/plugin/sand-iam/connection/index',99,2),
         ('SandIAMPeopleAccess','应用用户与权限','people-access','/plugin/sand-iam/people-access/index',98,2),
         ('SandIAMAuditTroubleshooting','审计与排错','audit-troubleshooting','/plugin/sand-iam/audit-troubleshooting/index',97,2),
@@ -320,11 +320,11 @@ WITH menu_def("code","name","path","component","sort","is_hidden") AS (
         ('SandIAMApplicationExperience','登录外观','application-experience','/plugin/sand-iam/application-experience/index',64,1),
         ('SandIAMMessageProvider','消息服务','message-provider','/plugin/sand-iam/message-provider/index',63,1),
         ('SandIAMFederationConfig','联合配置','federation-config','/plugin/sand-iam/federation-config/index',62,1),
-        ('SandIAMScimTokens','SCIM 令牌','scim-tokens','/plugin/sand-iam/scim-tokens/index',61,1),
-        ('SandIAMRadiusNas','RADIUS 网络设备','radius-nas','/plugin/sand-iam/radius-nas/index',60,1),
-        ('SandIAMOAuthClient','OAuth 客户端','oauth-client','/plugin/sand-iam/oauth-client/index',59,1),
-        ('SandIAMOAuthRegistrationToken','动态注册令牌','oauth-registration-token','/plugin/sand-iam/oauth-registration-token/index',58,1),
-        ('SandIAMCasService','CAS 接入服务','cas-service','/plugin/sand-iam/cas-service/index',57,1),
+        ('SandIAMScimTokens','自动同步用户（SCIM）','scim-tokens','/plugin/sand-iam/scim-tokens/index',61,1),
+        ('SandIAMRadiusNas','网络设备登录认证（RADIUS）','radius-nas','/plugin/sand-iam/radius-nas/index',60,1),
+        ('SandIAMOAuthClient','OAuth 授权接入','oauth-client','/plugin/sand-iam/oauth-client/index',59,1),
+        ('SandIAMOAuthRegistrationToken','OAuth 动态注册令牌','oauth-registration-token','/plugin/sand-iam/oauth-registration-token/index',58,1),
+        ('SandIAMCasService','CAS 单点接入','cas-service','/plugin/sand-iam/cas-service/index',57,1),
         ('SandIAMDeveloperDocs','开发者接入','developer-docs','/plugin/sand-iam/developer-docs/index',56,1),
         ('SandIAMAdminApplicationGrant','应用管理员委派','admin-application-grant','/plugin/sand-iam/admin-application-grant/index',55,1),
         ('SandIAMIdentityGroup','用户组','identity-group','/plugin/sand-iam/identity-group/index',54,1),
@@ -405,7 +405,7 @@ WHERE menu."code" = menu_def."code"
 
 WITH menu_def("code","name","path","component","sort","is_hidden") AS (
     VALUES
-        ('SandIAMOverview','管理总览','overview','/plugin/sand-iam/index/index',100,2),
+        ('SandIAMOverview','首页','overview','/plugin/sand-iam/index/index',100,2),
         ('SandIAMConnection','客户与应用接入','connection','/plugin/sand-iam/connection/index',99,2),
         ('SandIAMPeopleAccess','应用用户与权限','people-access','/plugin/sand-iam/people-access/index',98,2),
         ('SandIAMAuditTroubleshooting','审计与排错','audit-troubleshooting','/plugin/sand-iam/audit-troubleshooting/index',97,2),
@@ -442,11 +442,11 @@ WITH menu_def("code","name","path","component","sort","is_hidden") AS (
         ('SandIAMApplicationExperience','登录外观','application-experience','/plugin/sand-iam/application-experience/index',64,1),
         ('SandIAMMessageProvider','消息服务','message-provider','/plugin/sand-iam/message-provider/index',63,1),
         ('SandIAMFederationConfig','联合配置','federation-config','/plugin/sand-iam/federation-config/index',62,1),
-        ('SandIAMScimTokens','SCIM 令牌','scim-tokens','/plugin/sand-iam/scim-tokens/index',61,1),
-        ('SandIAMRadiusNas','RADIUS 网络设备','radius-nas','/plugin/sand-iam/radius-nas/index',60,1),
-        ('SandIAMOAuthClient','OAuth 客户端','oauth-client','/plugin/sand-iam/oauth-client/index',59,1),
-        ('SandIAMOAuthRegistrationToken','动态注册令牌','oauth-registration-token','/plugin/sand-iam/oauth-registration-token/index',58,1),
-        ('SandIAMCasService','CAS 接入服务','cas-service','/plugin/sand-iam/cas-service/index',57,1),
+        ('SandIAMScimTokens','自动同步用户（SCIM）','scim-tokens','/plugin/sand-iam/scim-tokens/index',61,1),
+        ('SandIAMRadiusNas','网络设备登录认证（RADIUS）','radius-nas','/plugin/sand-iam/radius-nas/index',60,1),
+        ('SandIAMOAuthClient','OAuth 授权接入','oauth-client','/plugin/sand-iam/oauth-client/index',59,1),
+        ('SandIAMOAuthRegistrationToken','OAuth 动态注册令牌','oauth-registration-token','/plugin/sand-iam/oauth-registration-token/index',58,1),
+        ('SandIAMCasService','CAS 单点接入','cas-service','/plugin/sand-iam/cas-service/index',57,1),
         ('SandIAMDeveloperDocs','开发者接入','developer-docs','/plugin/sand-iam/developer-docs/index',56,1),
         ('SandIAMAdminApplicationGrant','应用管理员委派','admin-application-grant','/plugin/sand-iam/admin-application-grant/index',55,1),
         ('SandIAMIdentityGroup','用户组','identity-group','/plugin/sand-iam/identity-group/index',54,1),
@@ -3814,3 +3814,16 @@ WHERE grp."code" IN ('SandIAMGroupAccess','SandIAMGroupPeople','SandIAMGroupAdva
       SELECT 1 FROM "sand_system_role_menu" existing
       WHERE existing."role_id" = role_menu."role_id" AND existing."menu_id" = grp."id"
   );
+
+-- UX-P10 terminology pass: rename menus by stable code only. Fresh installs
+-- already seed the new names from lifecycle/base.pgsql; these updates converge
+-- upgraded installations to the same labels. Codes, slugs, paths, components,
+-- sort and is_hidden are untouched, so permissions and routes are unaffected.
+-- Every statement is idempotent: re-running writes the same name again.
+UPDATE "sand_system_menu" SET "name" = '身份与权限（SandIAM）', "update_time" = NOW() WHERE "code" = 'SandIAM';
+UPDATE "sand_system_menu" SET "name" = '首页', "update_time" = NOW() WHERE "code" = 'SandIAMOverview';
+UPDATE "sand_system_menu" SET "name" = 'OAuth 授权接入', "update_time" = NOW() WHERE "code" = 'SandIAMOAuthClient';
+UPDATE "sand_system_menu" SET "name" = 'OAuth 动态注册令牌', "update_time" = NOW() WHERE "code" = 'SandIAMOAuthRegistrationToken';
+UPDATE "sand_system_menu" SET "name" = 'CAS 单点接入', "update_time" = NOW() WHERE "code" = 'SandIAMCasService';
+UPDATE "sand_system_menu" SET "name" = '自动同步用户（SCIM）', "update_time" = NOW() WHERE "code" = 'SandIAMScimTokens';
+UPDATE "sand_system_menu" SET "name" = '网络设备登录认证（RADIUS）', "update_time" = NOW() WHERE "code" = 'SandIAMRadiusNas';

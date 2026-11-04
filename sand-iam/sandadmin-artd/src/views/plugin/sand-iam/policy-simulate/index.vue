@@ -26,7 +26,7 @@
   const operation = ref('read')
   const organizationScope = ref('')
   const advancedSimulationInput = ref<string[]>([])
-  const attributesText = ref('{"organization_id":1}')
+  const attributesText = ref('{"department": "示例部门"}')
   const simulation = ref<SandIamPolicySimulation | null>(null)
   const requestError = ref<SandIamRequestError | null>(null)
   const acting = ref(false)
@@ -44,7 +44,7 @@
   const apiVersion = ref('v1')
   const decideOrganizationScope = ref('')
   const advancedDecisionInput = ref<string[]>([])
-  const decideAttributes = ref('{"organization_id":1}')
+  const decideAttributes = ref('{"department": "示例部门"}')
   const simulationDetailsOpen = ref<string[]>([])
   const decisionDetailsOpen = ref<string[]>([])
   const decision = ref<SandIamAuthorizationDecision | null>(null)
@@ -299,10 +299,10 @@
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="业务资源代码">
-          <ElInput v-model="resourceCode" placeholder="work_item" />
+          <ElInput v-model="resourceCode" placeholder="例如：合同文件" />
         </ElFormItem>
         <ElFormItem label="语义动作">
-          <ElInput v-model="action" placeholder="work_item.read" />
+          <ElInput v-model="action" placeholder="例如：合同文件.读取" />
         </ElFormItem>
         <ElFormItem label="数据操作">
           <ElSelect v-model="operation">
@@ -334,10 +334,10 @@
               v-model="attributesText"
               type="textarea"
               :rows="4"
-              placeholder='例如：{"organization_id": 1}'
+              placeholder='例如：{"department": "示例部门"}'
             />
             <p class="mb-0 mt-1 text-xs text-gray-500">
-              请填写对象格式，保存前会检查格式是否正确。
+              请填写对象格式，字段名由接入开发者提供；保存前会检查格式是否正确。
             </p>
           </ElCollapseItem>
         </ElCollapse>
@@ -390,7 +390,7 @@
           <ElInput v-model="applicationCode" />
         </ElFormItem>
         <ElFormItem label="接口代码">
-          <ElInput v-model="apiCode" placeholder="work_item.detail" />
+          <ElInput v-model="apiCode" placeholder="例如：合同文件.详情" />
         </ElFormItem>
         <ElFormItem label="接口版本">
           <ElInput v-model="apiVersion" />
@@ -414,10 +414,10 @@
               v-model="decideAttributes"
               type="textarea"
               :rows="4"
-              placeholder='例如：{"organization_id": 1}'
+              placeholder='例如：{"department": "示例部门"}'
             />
             <p class="mb-0 mt-1 text-xs text-gray-500">
-              请填写对象格式，提交前会检查格式是否正确。
+              请填写对象格式，字段名由接入开发者提供；提交前会检查格式是否正确。
             </p>
           </ElCollapseItem>
         </ElCollapse>

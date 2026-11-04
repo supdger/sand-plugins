@@ -18,14 +18,14 @@
 
 <template>
   <ResourceListPage
-    title="CAS 接入服务"
-    create-title="新建 CAS 接入服务"
+    title="CAS 单点接入"
+    create-title="新建 CAS 单点接入"
     object-hint="服务地址创建后不可修改。要改地址请新增服务并停用旧记录。完整地址只在表单出现。"
-    description="登记应用用户确认后可跳转的 CAS 服务。默认列表只显示名称、所属应用、地址摘要、允许返回的用户资料和状态。请求、Ticket 和用户身份编号不进入本页。"
+    description="登记应用用户确认后可跳转的单点接入（CAS）服务。默认列表只显示名称、所属应用、地址摘要、允许返回的用户资料和状态。请求、Ticket 和用户身份编号不进入本页。"
     endpoint="cas-service"
     index-permission="sand_iam:cas_service:index"
     permission-prefix="sand_iam:cas_service"
-    disable-impact="停用后，该服务地址不能再发起新的 CAS 确认。已发出的 Ticket 仍按各自有效期失效。改地址必须新增记录。"
+    disable-impact="停用后，该服务地址不能再发起新的单点接入（CAS）确认。已发出的 Ticket 仍按各自有效期失效。改地址必须新增记录。"
     :columns="columns"
     :filters="filters"
     :form-fields="casServiceFields"

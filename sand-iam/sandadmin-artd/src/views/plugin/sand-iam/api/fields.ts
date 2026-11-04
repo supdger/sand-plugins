@@ -155,8 +155,8 @@ export const clientFields: SandIamFormField[] = [
   }),
   field('audience', 'text', {
     required: true,
-    placeholder: '例如：provider-b（以服务提供方为准）',
-    help: '请向服务提供方取得准确值，用于确认调用的目标服务。配套文档服务示例为 provider-b；真实接入请使用提供方配置单中的受众。'
+    placeholder: '例如：provider-b（示例文档服务的受众，以服务提供方为准）',
+    help: '请向服务提供方取得准确值，用于确认调用的目标服务。配套「文档服务」示例的受众为 provider-b；真实接入请使用提供方配置单中的受众。'
   }),
   statusField
 ]
@@ -179,7 +179,7 @@ export const grantFields: SandIamFormField[] = [
   }),
   field('audience', 'text', {
     required: true,
-    placeholder: '例如：provider-b（以服务提供方为准）',
+    placeholder: '例如：provider-b（示例文档服务的受众，以服务提供方为准）',
     help: '创建时从所选调用身份自动带入“服务受众”，请与服务提供方核对；无法读取时先重新选择身份，不凭名称猜测。必须逐字一致。创建后不能更改调用身份、服务动作或受众。'
   }),
   field('quota_policy', 'json', {
@@ -390,7 +390,7 @@ export const resourceFields: SandIamFormField[] = [
     required: true,
     createOnly: true,
     ...codeGuidance('standalone_work_item'),
-    help: '向接入开发者取得资源代码。仅配套工作项示例使用 standalone_work_item；已有业务必须使用其实际鉴权代码，创建后不可修改。'
+    help: '向接入开发者取得资源代码。仅在使用配套「工作项」示例时填示例代码 standalone_work_item；已有业务必须使用其实际鉴权代码，创建后不可修改。'
   }),
   field('name', 'text', { required: true }),
   field('owner_field', 'text', { placeholder: '例如 owner_identity_id', help: '可选，由开发者提供业务记录中保存所有者身份的字段名。不是员工姓名。' }),

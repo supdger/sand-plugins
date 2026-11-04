@@ -22,7 +22,7 @@
     if (id !== null) {
       logoutClient.value = {
         id,
-        name: typeof row.name === 'string' ? row.name : 'OAuth 客户端'
+        name: typeof row.name === 'string' ? row.name : 'OAuth 授权接入'
       }
     }
   }
@@ -84,10 +84,10 @@
 
 <template>
   <ResourceListPage
-    title="OAuth 客户端"
-    create-title="新建 OAuth 客户端"
+    title="OAuth 授权接入"
+    create-title="新建 OAuth 授权接入"
     object-hint="机密客户端的密钥只在创建或轮换成功后展示一次。完整回调和登出地址在表单高级区，不进入默认列表。"
-    description="登记接入应用的标准 OAuth/OIDC 客户端。默认列表只显示名称、所属应用、类型、回调摘要、范围摘要、前/后通道是否已配置、密钥是否已配置和状态。公开客户端没有密钥；原生客户端可用本机回环 HTTP。"
+    description="登记接入应用的标准开放授权（OAuth/OIDC）客户端。默认列表只显示名称、所属应用、类型、回调摘要、范围摘要、前/后通道是否已配置、密钥是否已配置和状态。公开客户端没有密钥；原生客户端可用本机回环 HTTP。"
     endpoint="oauth-client"
     index-permission="sand_iam:oauth_client:index"
     permission-prefix="sand_iam:oauth_client"

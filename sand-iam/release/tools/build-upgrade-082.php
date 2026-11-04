@@ -104,7 +104,7 @@ function sandIamBuild082Update(string $root): string
     $migrationBody = withoutOuterTransaction($migration, '043_scope_audit_event_key.pgsql');
     $menuRegroup = file_get_contents($root . '/lifecycle/menu-regroup.pgsql');
     if (!is_string($menuRegroup)
-        || hash('sha256', $menuRegroup) !== 'a1d1f58f128150196f89953509daad82922165d206334276982de1a94c781463'
+        || hash('sha256', $menuRegroup) !== '82293799a56ec1cf30092f8cf1b440f2d47f88560cff4ae3a1c9014a0670302f'
         || str_contains($menuRegroup, '$iam082_menu_regroup$')) {
         throw new RuntimeException('Menu regroup lifecycle source differs from the exact reviewed input');
     }

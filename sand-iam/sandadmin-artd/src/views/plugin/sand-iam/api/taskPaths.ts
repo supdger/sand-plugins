@@ -320,7 +320,7 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
       },
       {
         key: 'mfa',
-        label: 'MFA 与通行密钥',
+        label: '两步验证（MFA）与通行密钥',
         path: SAND_IAM_APPLICATION_PORTAL_URL,
         emptyHint: '验证器和通行密钥属于应用用户。请在接入应用的个人中心设置或撤销。',
         contractStatus: 'runtime'
@@ -361,7 +361,7 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
       },
       {
         key: 'scim-tokens',
-        label: 'SCIM 令牌',
+        label: '自动同步用户（SCIM）',
         permission: 'sand_iam:scim:token_index',
         path: '/sand-iam/scim-tokens',
         emptyHint: '签发目录同步令牌；明文只展示一次。',
@@ -369,11 +369,11 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
       },
       {
         key: 'radius-nas',
-        label: 'RADIUS 网络设备',
+        label: '网络设备登录认证（RADIUS）',
         endpoint: 'radius-nas',
         permission: 'sand_iam:radius_nas:index',
         path: '/sand-iam/radius-nas',
-        emptyHint: '登记来源 CIDR 并轮换共享密钥。当前只支持用户名+密码，MFA 账号会被拒绝。',
+        emptyHint: '登记来源 CIDR 并轮换共享密钥。当前只支持用户名+密码，已启用两步验证（MFA）的账号会被拒绝。',
         contractStatus: 'frozen'
       }
     ]
@@ -387,7 +387,7 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
     steps: [
       {
         key: 'oauth-client',
-        label: 'OAuth 客户端',
+        label: 'OAuth 授权接入',
         endpoint: 'oauth-client',
         permission: 'sand_iam:oauth_client:index',
         path: '/sand-iam/oauth-client',
@@ -396,7 +396,7 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
       },
       {
         key: 'oauth-registration-token',
-        label: '动态注册令牌',
+        label: 'OAuth 动态注册令牌',
         permission: 'sand_iam:oauth_registration_token:index',
         path: '/sand-iam/oauth-registration-token',
         emptyHint: '按接入应用签发动态注册令牌；令牌只展示一次，请立即安全保存。',
@@ -404,7 +404,7 @@ export const sandIamTaskPaths: Readonly<Record<SandIamTaskPath, SandIamTaskPathD
       },
       {
         key: 'cas-service',
-        label: 'CAS 接入服务',
+        label: 'CAS 单点接入',
         endpoint: 'cas-service',
         permission: 'sand_iam:cas_service:index',
         path: '/sand-iam/cas-service',
