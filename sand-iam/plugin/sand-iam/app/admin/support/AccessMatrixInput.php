@@ -63,9 +63,18 @@ final class AccessMatrixInput
             throw new ApiException('SAND_IAM_ACCESS_MATRIX_SERVICE_NOT_ALLOWED: 该服务不支持一键授权', 400);
         }
 
+        $issueCredential = filter_var($input['issue_credential'] ?? false, FILTER_VALIDATE_BOOL);
+
         $actionCodes = $input['action_codes'] ?? null;
-        if (!is_array($actionCodes) || $actionCodes === []) {
+        if (!is_array($actionCodes)) {
             throw new ApiException('SAND_IAM_VALIDATION_ERROR: 请选择至少一个能力', 400);
+        }
+        if ($actionCodes === []) {
+            // The only meaningful no-grant form is credential re-issuance for
+            // an existing application: it must never resurrect revoked grants.
+            if ($applicationId === null || !$issueCredential) {
+                throw new ApiException('SAND_IAM_VALIDATION_ERROR: 未选择能力时仅支持为已有应用生成调用密钥', 400);
+            }
         }
         $normalizedActions = [];
         foreach ($actionCodes as $code) {
@@ -97,7 +106,7 @@ final class AccessMatrixInput
             'service_code' => $serviceCode,
             'action_codes' => $normalizedActions,
             'environment_code' => $environmentCode,
-            'issue_credential' => filter_var($input['issue_credential'] ?? false, FILTER_VALIDATE_BOOL),
+            'issue_credential' => $issueCredential,
             'credential_name' => $credentialName,
         ];
     }

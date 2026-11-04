@@ -129,14 +129,30 @@ async function run(): Promise<void> {
     credential: { id: 300, key_prefix: 'siam_abcd1234', credential: 'siam_plain', expire_time: null },
   })
   assert.equal(granted.credential?.credential, 'siam_plain')
+  assert.equal(granted.secret_available, true)
+  // credential-only issuance (empty action_codes): zero grants, credential present
+  const credentialOnly = parseMatrixGrantResult({
+    application_id: 10,
+    environment_id: 100,
+    workload_client_id: 200,
+    organization_id: 1,
+    granted: [],
+    credential: { id: 301, key_prefix: 'siam_efgh5678', credential: 'siam_plain2', expire_time: null },
+  })
+  assert.equal(credentialOnly.granted.length, 0)
+  assert.equal(credentialOnly.credential?.key_prefix, 'siam_efgh5678')
+  assert.equal(credentialOnly.secret_available, true)
+  // idempotent replay: backend strips secret material and flags it
   const replayed = parseMatrixGrantResult({
     application_id: 10,
     environment_id: 100,
     workload_client_id: 200,
     organization_id: 1,
     granted: [],
+    secret_available: false,
   })
   assert.equal(replayed.credential, undefined)
+  assert.equal(replayed.secret_available, false)
   assert.throws(() => parseMatrixGrantResult({ application_id: 'x' }))
 
   // --- lvxu preset contract ---

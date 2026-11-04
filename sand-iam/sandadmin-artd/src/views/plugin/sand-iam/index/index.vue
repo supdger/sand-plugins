@@ -17,6 +17,7 @@
     type SandIamAccessMatrix,
     type SandIamMatrixApplication,
     type SandIamMatrixAction,
+    type SandIamMatrixGrantInput,
     type SandIamIssuedCredential,
   } from '../api/accessMatrix'
 
@@ -69,7 +70,12 @@
       return id !== undefined && !grantActive(lvxuClient.value, id)
     })
   })
-  const showLvxuPending = computed(() => canGrant.value && !dismissedPending.value && lvxuMissingDefault.value)
+  /** Scoped admins must name an organization they manage when creating apps. */
+  const defaultOrganizationId = computed(() => matrix.value?.organizations[0]?.id)
+  /** Without any manageable organization the grant endpoint cannot be used. */
+  const hasOrganizationScope = computed(() => (matrix.value?.organizations.length ?? 0) > 0)
+  const showLvxuPending = computed(() =>
+    canGrant.value && hasOrganizationScope.value && !dismissedPending.value && lvxuMissingDefault.value)
 
   // --- pending actions ---
   const granting = ref(false)
@@ -77,7 +83,14 @@
   async function allowLvxu(): Promise<void> {
     granting.value = true
     try {
-      await grantAccessMatrix({ ...LVXU_GRANT_PRESET })
+      const input: SandIamMatrixGrantInput = lvxuApp.value === undefined
+        ? { ...LVXU_GRANT_PRESET, organization_id: defaultOrganizationId.value }
+        : {
+            application: { id: lvxuApp.value.id },
+            service_code: LVXU_GRANT_PRESET.service_code,
+            action_codes: [...LVXU_GRANT_PRESET.action_codes],
+          }
+      await grantAccessMatrix(input)
       ElMessage.success('已允许律序使用选中的能力')
       await reload()
     } catch {
@@ -108,6 +121,7 @@
   }
 
   const issuingFor = ref<number | null>(null)
+  /** Issuing only creates a credential — it never changes granted capabilities. */
   async function issueCredential(app: SandIamMatrixApplication): Promise<void> {
     if (!canIssue.value || issuingFor.value !== null) return
     issuingFor.value = app.id
@@ -115,14 +129,16 @@
       const result = await grantAccessMatrix({
         application: { id: app.id },
         service_code: 'sand_ai',
-        action_codes: LVXU_GRANT_PRESET.action_codes,
+        action_codes: [],
         issue_credential: true,
       })
-      if (result.credential) {
+      if (result.credential !== undefined && result.secret_available) {
         issuedCredential.value = result.credential
         secretDialogOpen.value = true
+        ElMessage.success('调用密钥已生成，请立即安全保存')
+      } else {
+        ElMessage.success('该请求已处理过；密钥明文只会在首次生成时下发，如需新密钥请再次操作')
       }
-      ElMessage.success('调用密钥已生成，请立即安全保存')
       await reload()
     } catch {
       ElMessage.error('生成密钥失败，请稍后重试')
@@ -185,16 +201,21 @@
     newAppSaving.value = true
     try {
       const result = await grantAccessMatrix({
+        organization_id: defaultOrganizationId.value,
         application: { code: newAppCode.value.trim(), name: newAppName.value.trim() },
         service_code: 'sand_ai',
         action_codes: newAppActions.value,
         issue_credential: newAppIssue.value,
       })
-      if (result.credential) {
+      if (result.credential !== undefined && result.secret_available) {
         issuedCredential.value = result.credential
         secretDialogOpen.value = true
+        ElMessage.success(`已接入「${newAppName.value.trim()}」，调用密钥已生成，请立即安全保存`)
+      } else if (newAppIssue.value) {
+        ElMessage.success(`已接入「${newAppName.value.trim()}」；该请求已处理过，未生成新密钥`)
+      } else {
+        ElMessage.success(`已接入「${newAppName.value.trim()}」`)
       }
-      ElMessage.success(`已接入「${newAppName.value.trim()}」`)
       newAppDialogOpen.value = false
       await reload()
     } catch {
@@ -308,9 +329,16 @@
         <div v-if="loading" class="py-10 text-center text-gray-400">正在加载…</div>
 
         <template v-else>
+          <ElAlert
+            v-if="canGrant && !hasOrganizationScope"
+            class="mb-3"
+            type="info"
+            :closable="false"
+            title="当前账号没有可管理的客户主体，无法使用一键授权；请联系平台管理员授权"
+          />
           <div v-if="(matrix?.applications.length ?? 0) === 0" class="sand-iam-home__empty">
             <p class="m-0 text-gray-500">还没有应用接入</p>
-            <ElButton v-if="canGrant" class="mt-4" type="primary" @click="openNewApp">接入新应用</ElButton>
+            <ElButton v-if="canGrant && hasOrganizationScope" class="mt-4" type="primary" @click="openNewApp">接入新应用</ElButton>
           </div>
 
           <div v-else class="sand-iam-home__table-wrap">
@@ -337,7 +365,7 @@
                       title="已允许"
                     >✔</button>
                     <button
-                      v-else-if="canGrant"
+                      v-else-if="canGrant && hasOrganizationScope"
                       class="sand-iam-home__mark sand-iam-home__mark--off"
                       :disabled="granting"
                       title="点击允许"
@@ -356,6 +384,7 @@
                       v-if="canIssue"
                       size="small"
                       :loading="issuingFor === app.id"
+                      title="仅生成调用密钥，不改变已允许的能力"
                       @click="issueCredential(app)"
                     >{{ credentialFor(app) ? '生成新密钥' : '生成调用密钥' }}</ElButton>
                   </td>
@@ -365,7 +394,7 @@
           </div>
 
           <div v-if="canGrant && (matrix?.applications.length ?? 0) > 0" class="mt-4">
-            <ElButton @click="openNewApp">+ 接入新应用</ElButton>
+            <ElButton v-if="hasOrganizationScope" @click="openNewApp">+ 接入新应用</ElButton>
             <ElButton text type="primary" @click="openApplications">管理应用</ElButton>
           </div>
         </template>

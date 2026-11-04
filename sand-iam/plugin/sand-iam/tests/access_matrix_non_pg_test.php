@@ -25,10 +25,11 @@ function amxThrows(callable $fn, string $message): void
 
 $plugin = dirname(__DIR__);
 $service = (string) file_get_contents($plugin . '/app/service/AccessMatrixService.php');
+$idempotency = (string) file_get_contents($plugin . '/app/service/IdempotencyService.php');
 $controller = (string) file_get_contents($plugin . '/app/admin/controller/AccessMatrixController.php');
 $routes = (string) file_get_contents($plugin . '/config/route.php');
 $catalog = (string) file_get_contents($plugin . '/app/developer/ManagementApiCatalog.php');
-amxAssert($service !== '' && $controller !== '' && $routes !== '' && $catalog !== '', 'access matrix sources unreadable');
+amxAssert($service !== '' && $idempotency !== '' && $controller !== '' && $routes !== '' && $catalog !== '', 'access matrix sources unreadable');
 
 // --- Input normalization ---
 $normalized = AccessMatrixInput::normalizeGrant([
@@ -51,6 +52,19 @@ $withIds = AccessMatrixInput::normalizeGrant([
 amxAssert($withIds['organization_id'] === 7 && $withIds['application']['id'] === 12, 'positive id fields not normalized');
 amxAssert(count($withIds['action_codes']) === 1, 'duplicate action codes must be deduplicated');
 amxAssert($withIds['issue_credential'] === false, 'issue_credential must default to false');
+
+// Credential-only issuance: existing application id + empty action_codes is the
+// only accepted no-grant form — it must never resurrect revoked grants.
+$credentialOnly = AccessMatrixInput::normalizeGrant([
+    'application' => ['id' => '9'],
+    'action_codes' => [],
+    'issue_credential' => true,
+]);
+amxAssert($credentialOnly['action_codes'] === [], 'credential-only issuance must keep an empty action list');
+amxAssert($credentialOnly['issue_credential'] === true, 'credential-only issuance must keep issue_credential');
+amxThrows(fn () => AccessMatrixInput::normalizeGrant(['application' => ['id' => '9'], 'action_codes' => []]), 'empty action list without issue_credential must be rejected');
+amxThrows(fn () => AccessMatrixInput::normalizeGrant(['application' => ['id' => '9'], 'action_codes' => [], 'issue_credential' => false]), 'empty action list with issue_credential=false must be rejected');
+amxThrows(fn () => AccessMatrixInput::normalizeGrant(['application' => ['id' => '9'], 'issue_credential' => true]), 'missing action_codes must still be rejected');
 
 // Invalid inputs are rejected
 amxThrows(fn () => AccessMatrixInput::normalizeGrant(['application' => ['code' => 'lvxu'], 'action_codes' => ['sand_ai.chat.complete']]), 'application without name must be rejected');
@@ -103,6 +117,20 @@ amxAssert(str_contains($service, 'isSuperAdmin') && str_contains($service, 'orga
 // Grant-only semantics: no delete/revoke inside the matrix flow
 amxAssert(!str_contains($service, '->delete()'), 'access matrix must never delete rows');
 amxAssert(!str_contains($service, "'revoked_time' => date"), 'access matrix must not revoke grants');
+
+// Credential-only issuance skips the whole grant orchestration
+amxAssert(str_contains($service, "['action_codes'] !== []"), 'grant orchestration must be skippable for credential-only issuance');
+
+// S-3: explicit organization_id must match the resolved application's org
+amxAssert(str_contains($service, 'ORGANIZATION_MISMATCH'), 'service must reject organization_id/application org mismatch');
+// id-only callers are re-anchored to the application's own organization so
+// audits and issued credentials are attributed correctly
+amxAssert(str_contains($service, '(int) $application->organization_id !== (int) $organization->id'), 'service must re-anchor organization for id-only calls');
+
+// Replayed responses never re-serve one-time plaintext and must be markable
+amxAssert(str_contains($idempotency, "'secret_available' => false"), 'replayed results must mark secrets unavailable');
+amxAssert(str_contains($idempotency, "'credential',\n"), 'credential must stay a redacted result key');
+amxAssert(str_contains($controller, '请求已处理'), 'controller must flag replayed responses');
 
 // --- Controller guarantees ---
 foreach ([

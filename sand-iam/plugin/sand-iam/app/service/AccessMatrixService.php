@@ -209,6 +209,16 @@ final class AccessMatrixService
                     [$application, $applicationCreated] = $this->resolveApplication($normalized, (int) $organization->id);
                     // Re-check scope for applications upserted by code inside the lock.
                     $access->assertApplication((int) $application->id);
+                    if ($normalized['organization_id'] === null
+                        && (int) $application->organization_id !== (int) $organization->id) {
+                        // Callers may name an existing application by id alone;
+                        // audits and issued credentials must then attribute to
+                        // the application's own organization, not the default.
+                        $organization = Organization::where('id', (int) $application->organization_id)->where('status', 1)->lock(true)->find();
+                        if ($organization === null) {
+                            throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 客户主体不存在或已停用', 400);
+                        }
+                    }
                     if ($applicationCreated) {
                         $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'application.create', 'application', (int) $application->id, 'succeeded', $requestId);
                     }
@@ -226,33 +236,41 @@ final class AccessMatrixService
                         throw new ApiException('SAND_IAM_ACCESS_MATRIX_AUDIENCE_MISMATCH: 服务调用身份的受众与目标服务不一致', 409);
                     }
 
-                    $service = Service::where('code', $normalized['service_code'])->where('status', 1)->find();
-                    if ($service === null) {
-                        throw new ApiException('SAND_IAM_ACCESS_MATRIX_SERVICE_MISSING: 目标服务未登记或已停用', 400);
-                    }
-                    $activeActions = ServiceAction::where('service_id', (int) $service->id)->where('status', 1)->field('id,code')->select()->toArray();
-                    $activeCodes = array_map(static fn (array $row): string => (string) $row['code'], $activeActions);
-                    $clip = AccessMatrixInput::clipActionCodes($normalized['action_codes'], $activeCodes);
-                    if ($clip['granted'] === []) {
-                        throw new ApiException('SAND_IAM_ACCESS_MATRIX_ACTION_MISSING: 所选能力未登记或已停用，请先完成服务目录登记', 400);
-                    }
-                    $actionsByCode = array_column($activeActions, null, 'code');
-
+                    // Empty action_codes is the credential-only form accepted
+                    // by normalizeGrant for existing applications: the whole
+                    // grant orchestration is skipped so no revoked grant can
+                    // be silently reactivated here.
                     $granted = [];
-                    foreach ($clip['granted'] as $actionCode) {
-                        $action = $actionsByCode[$actionCode];
-                        [$grant, $grantState] = $this->upsertGrant((int) $client->id, (int) $action['id']);
-                        if ($grantState === 'created') {
-                            $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'service_grant.create', 'service_grant', (int) $grant->id, 'succeeded', $requestId, ['action_code' => $actionCode]);
-                        } elseif ($grantState === 'reactivated') {
-                            $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'service_grant.reactivate', 'service_grant', (int) $grant->id, 'succeeded', $requestId, ['action_code' => $actionCode]);
+                    $skippedActionCodes = [];
+                    if ($normalized['action_codes'] !== []) {
+                        $service = Service::where('code', $normalized['service_code'])->where('status', 1)->find();
+                        if ($service === null) {
+                            throw new ApiException('SAND_IAM_ACCESS_MATRIX_SERVICE_MISSING: 目标服务未登记或已停用', 400);
                         }
-                        $granted[] = [
-                            'service_action_id' => (int) $action['id'],
-                            'action_code' => $actionCode,
-                            'service_code' => (string) $service->code,
-                            'state' => $grantState,
-                        ];
+                        $activeActions = ServiceAction::where('service_id', (int) $service->id)->where('status', 1)->field('id,code')->select()->toArray();
+                        $activeCodes = array_map(static fn (array $row): string => (string) $row['code'], $activeActions);
+                        $clip = AccessMatrixInput::clipActionCodes($normalized['action_codes'], $activeCodes);
+                        if ($clip['granted'] === []) {
+                            throw new ApiException('SAND_IAM_ACCESS_MATRIX_ACTION_MISSING: 所选能力未登记或已停用，请先完成服务目录登记', 400);
+                        }
+                        $actionsByCode = array_column($activeActions, null, 'code');
+
+                        foreach ($clip['granted'] as $actionCode) {
+                            $action = $actionsByCode[$actionCode];
+                            [$grant, $grantState] = $this->upsertGrant((int) $client->id, (int) $action['id']);
+                            if ($grantState === 'created') {
+                                $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'service_grant.create', 'service_grant', (int) $grant->id, 'succeeded', $requestId, ['action_code' => $actionCode]);
+                            } elseif ($grantState === 'reactivated') {
+                                $writer->write('admin', $actor, (int) $organization->id, (int) $application->id, 'service_grant.reactivate', 'service_grant', (int) $grant->id, 'succeeded', $requestId, ['action_code' => $actionCode]);
+                            }
+                            $granted[] = [
+                                'service_action_id' => (int) $action['id'],
+                                'action_code' => $actionCode,
+                                'service_code' => (string) $service->code,
+                                'state' => $grantState,
+                            ];
+                        }
+                        $skippedActionCodes = $clip['skipped'];
                     }
 
                     $result = [
@@ -262,8 +280,8 @@ final class AccessMatrixService
                         'organization_id' => (int) $organization->id,
                         'granted' => $granted,
                     ];
-                    if ($clip['skipped'] !== []) {
-                        $result['skipped_action_codes'] = $clip['skipped'];
+                    if ($skippedActionCodes !== []) {
+                        $result['skipped_action_codes'] = $skippedActionCodes;
                     }
                     if ($normalized['issue_credential']) {
                         $issued = (new CredentialIssuanceService())->issue(
@@ -340,6 +358,9 @@ final class AccessMatrixService
             $model = Application::where('id', $application['id'])->where('status', 1)->lock(true)->find();
             if ($model === null) {
                 throw new ApiException('SAND_IAM_RESOURCE_NOT_FOUND: 接入应用不存在或已停用', 400);
+            }
+            if ($normalized['organization_id'] !== null && (int) $model->organization_id !== $organizationId) {
+                throw new ApiException('SAND_IAM_ACCESS_MATRIX_ORGANIZATION_MISMATCH: 接入应用不属于所选客户主体', 400);
             }
             return [$model, false];
         }

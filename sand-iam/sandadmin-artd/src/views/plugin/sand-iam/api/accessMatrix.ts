@@ -104,6 +104,8 @@ export interface SandIamMatrixGrantResult {
   granted: SandIamMatrixGrantedItem[]
   skipped_action_codes?: string[]
   credential?: SandIamIssuedCredential
+  /** False on idempotent replays — the one-time plaintext is never re-served. */
+  secret_available: boolean
 }
 
 function fail(message: string): never {
@@ -231,6 +233,7 @@ export function parseMatrixGrantResult(raw: unknown): SandIamMatrixGrantResult {
       }
     }),
     skipped_action_codes: list(source.skipped_action_codes).map(String),
+    secret_available: source.secret_available !== false,
     credential: credential === null
       ? undefined
       : {
