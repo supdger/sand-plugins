@@ -62,7 +62,7 @@
   async function searchApplications(keywords: string): Promise<void> {
     const attempt = ++searchVersion
     try {
-      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords }, false)
       if (disposed || attempt !== searchVersion) return
       const data = isRecord(result) ? result.data : result
       const rows = Array.isArray(data) ? data.filter(isRecord) : []
@@ -163,7 +163,7 @@
             ? '先选择要配置的应用，再进入本步骤核对。' : '请打开页面核对所选应用的配置。'
         }
         try {
-          const response = await listSandIamResource(item.endpoint, params)
+          const response = await listSandIamResource(item.endpoint, params, false)
           const total = totalFromResponse(response)
           if (total === null) {
             return {

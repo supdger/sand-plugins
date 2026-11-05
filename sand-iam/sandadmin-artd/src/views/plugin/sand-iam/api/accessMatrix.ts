@@ -293,6 +293,7 @@ export async function fetchAccessMatrix(): Promise<SandIamAccessMatrix> {
   const raw = await request.get<unknown>({
     url: `${PREFIX}/access-matrix/index`,
     headers: { 'X-Request-Id': createSandIamRequestId() },
+    showErrorMessage: false,
   })
   return parseAccessMatrix(raw)
 }
@@ -302,6 +303,7 @@ export async function grantAccessMatrix(input: SandIamMatrixGrantInput): Promise
     url: `${PREFIX}/access-matrix/grant`,
     data: input,
     headers: { 'X-Request-Id': createSandIamRequestId() },
+    showErrorMessage: false,
   })
   return parseMatrixGrantResult(raw)
 }
@@ -311,6 +313,7 @@ export async function ensureAccessMatrixDefaults(): Promise<unknown> {
     url: `${PREFIX}/access-matrix/ensure-defaults`,
     data: {},
     headers: { 'X-Request-Id': createSandIamRequestId() },
+    showErrorMessage: false,
   })
 }
 

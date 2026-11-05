@@ -69,7 +69,7 @@
     const attempt = ++searchGeneration
     searching.value = true
     try {
-      const data = list(await listSandIamResource('application', { page, limit: 30, keywords: keywords.value, status: 1 }))
+      const data = list(await listSandIamResource('application', { page, limit: 30, keywords: keywords.value, status: 1 }, false))
       if (disposed || attempt !== searchGeneration) return
       error.value = ''
       applications.value = data.rows
@@ -101,7 +101,7 @@
       context.value = verified.context
       rows.value = verified.rows
       if (goal.value?.id === 'machine' && verified.context.application_id && hasAuth('sand_iam:environment:index')) {
-        const data = list(await listSandIamResource('environment', { page: 1, limit: 100, application_id: verified.context.application_id, status: 1 }))
+        const data = list(await listSandIamResource('environment', { page: 1, limit: 100, application_id: verified.context.application_id, status: 1 }, false))
         if (disposed || attempt !== generation) return
         environments.value = data.rows
         if (data.total === 1 && verified.context.environment_id === undefined && data.rows.length === 1) {
@@ -110,7 +110,7 @@
         }
       }
       if (goal.value?.id === 'machine' && verified.context.environment_id && hasAuth('sand_iam:client:index')) {
-        const data = list(await listSandIamResource('client', { page: 1, limit: 100, application_id: verified.context.application_id, environment_id: verified.context.environment_id, status: 1 }))
+        const data = list(await listSandIamResource('client', { page: 1, limit: 100, application_id: verified.context.application_id, environment_id: verified.context.environment_id, status: 1 }, false))
         if (disposed || attempt !== generation) return
         clients.value = data.rows
         if (data.total === 1 && verified.context.workload_client_id === undefined && data.rows.length === 1) {
@@ -132,7 +132,7 @@
           const params = goalStepParams(item, verified.context)
           if (!params || !item.endpoint) break
           try {
-            const existing = list(await listSandIamResource(item.endpoint, params))
+            const existing = list(await listSandIamResource(item.endpoint, params, false))
             if (disposed || attempt !== generation) return
             if (existing.total === 0) break
           } catch { break }
@@ -155,7 +155,7 @@
     if (!params || !item.endpoint) { status.value = item.contractStatus === 'runtime' ? '由应用用户实际登录后核对结果。' : '请进入页面核对已有配置；本页不能自动确认使用结果。'; return }
     status.value = '正在读取当前应用的配置…'
     try {
-      const result = list(await listSandIamResource(item.endpoint, params))
+      const result = list(await listSandIamResource(item.endpoint, params, false))
       if (disposed || attempt !== statusGeneration) return
       status.value = item.endpoint === 'application-experience'
         ? result.total > 0

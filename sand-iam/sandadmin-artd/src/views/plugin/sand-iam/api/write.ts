@@ -16,7 +16,8 @@ export function readSandIamResource(
 ): Promise<unknown> {
   return request.get<unknown>({
     url: `${SAND_IAM_ADMIN_PREFIX}/${endpoint}/read`,
-    params: { id }
+    params: { id },
+    showErrorMessage: false
   })
 }
 
@@ -46,19 +47,22 @@ export function updateSandIamResource(
 
 export function disableSandIamResource(
   endpoint: SandIamResourceEndpoint,
-  id: number
+  id: number,
+  showErrorMessage = true
 ): Promise<unknown> {
   return request.post<unknown>({
     url: `${SAND_IAM_ADMIN_PREFIX}/${endpoint}/disable`,
-    data: { id }
+    data: { id },
+    showErrorMessage
   })
 }
 
-export function postSandIamAction(path: string, data: SandIamWriteBody): Promise<unknown> {
+export function postSandIamAction(path: string, data: SandIamWriteBody, showErrorMessage = true): Promise<unknown> {
   return request.post<unknown>({
     url: `${SAND_IAM_ADMIN_PREFIX}/${path}`,
     data,
-    headers: requestHeaders()
+    headers: requestHeaders(),
+    showErrorMessage
   })
 }
 
