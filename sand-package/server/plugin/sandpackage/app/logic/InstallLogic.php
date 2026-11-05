@@ -1943,6 +1943,15 @@ class InstallLogic
             if (!empty($this->getInfo()['existing_schema_attached'])) {
                 throw new ApiException('插件接管的是既有数据库结构，普通卸载会删除原有数据；此入口禁止卸载');
             }
+            $dependents = $this->installedDependents();
+            if ($dependents !== []) {
+                $names = array_map(
+                    static fn(array $item): string => $item['title'] . '（' . $item['app'] . '）',
+                    $dependents,
+                );
+                throw new ApiException('插件仍被以下已安装插件依赖：' . implode('、', $names)
+                    . '；直接卸载会使它们无法正常工作。请先卸载依赖它的插件，再卸载本插件', 400);
+            }
             $this->hostPayloadUninstallFinalization()->retireCompleted();
             $this->retireRuntimeChangeIfFinished();
             $this->retireDependencyChangeIfFinished();
@@ -2032,6 +2041,66 @@ class InstallLogic
         } finally {
             $this->unlock();
         }
+    }
+
+    /**
+     * Read-only uninstall preview: which installed plugins still declare this
+     * app in their package `plugin_dependencies`. The dialog shows the list as
+     * a plain-language warning; uninstall() re-checks under the write lock and
+     * refuses while any dependent remains installed.
+     *
+     * @return array{app:string,title:string,version:?string,dependents:array<int,array{app:string,title:string,version:?string}>}
+     */
+    public function inspectUninstall(): array
+    {
+        $info = [];
+        try { $info = $this->getInfo(); } catch (Throwable) { $info = []; }
+        return [
+            'app' => $this->appName,
+            'title' => is_string($info['title'] ?? null) && $info['title'] !== '' ? $info['title'] : $this->appName,
+            'version' => is_string($info['version'] ?? null) ? $info['version'] : null,
+            'dependents' => $this->installedDependents(),
+        ];
+    }
+
+    /**
+     * Installed plugins whose staged config.json names this app in
+     * `plugin_dependencies`. Only the presence of the declaration matters, so a
+     * loose key lookup is deliberate: it does not re-validate versions or
+     * digests. Plugins whose registration or config cannot be read are skipped —
+     * an unreadable record cannot present a dependency declaration this host
+     * ever accepted, and a corrupt neighbour must not lock uninstall forever.
+     *
+     * @return array<int,array{app:string,title:string,version:?string}>
+     */
+    private function installedDependents(): array
+    {
+        $dependents = [];
+        foreach ($this->storage->managedRecords() as $app => $record) {
+            if ($app === $this->appName || isset($record['_error'])
+                || !in_array($record['state'] ?? null, [self::INSTALLED, (string) self::INSTALLED], true)) {
+                continue;
+            }
+            $path = is_string($record['_path'] ?? null) ? $record['_path'] : '';
+            $configPath = $path . DIRECTORY_SEPARATOR . 'config.json';
+            if ($path === '' || !is_file($configPath) || is_link($configPath) || filesize($configPath) > 16384) {
+                continue;
+            }
+            try {
+                $config = json_decode((string) file_get_contents($configPath), true, 32, JSON_THROW_ON_ERROR);
+            } catch (Throwable) {
+                continue;
+            }
+            $declared = is_array($config) && is_array($config['plugin_dependencies'] ?? null)
+                ? $config['plugin_dependencies'] : [];
+            if (!is_array($declared) || !array_key_exists($this->appName, $declared)) continue;
+            $dependents[] = [
+                'app' => $app,
+                'title' => is_string($record['title'] ?? null) && $record['title'] !== '' ? $record['title'] : $app,
+                'version' => is_string($record['version'] ?? null) ? $record['version'] : null,
+            ];
+        }
+        return $dependents;
     }
 
     /** Inspection and execution share the existing host/app locks, never the ordinary uninstall gate. */
