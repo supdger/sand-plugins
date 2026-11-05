@@ -30,10 +30,21 @@ export function uninstallDependentLabel(entry: UninstallDependentLike): string {
 
 /**
  * 卸载对话框里的依赖方警告行；无依赖方返回空串，由调用方决定是否渲染。
+ * 与服务端实际行为一致：存在依赖方时卸载会被拒绝，需先卸载依赖方。
  * 只出现插件通俗名与标识，不暴露内部名词。
  */
 export function uninstallDependentsText(dependents: UninstallDependentLike[]): string {
   if (!Array.isArray(dependents) || dependents.length === 0) return ''
   const names = dependents.map(uninstallDependentLabel).join('、')
-  return `以下已安装插件依赖它：${names}；卸载后这些插件可能无法正常工作。`
+  return `以下已安装插件依赖它：${names}；需要先卸载这些插件，才能卸载本插件。`
+}
+
+/**
+ * 卸载对话框里的「无法确认依赖」警告行：这些已安装插件的登记无法核对，
+ * 服务端同样会拒绝卸载。无条目返回空串。
+ */
+export function uninstallUnverifiableText(entries: UninstallDependentLike[]): string {
+  if (!Array.isArray(entries) || entries.length === 0) return ''
+  const names = entries.map(uninstallDependentLabel).join('、')
+  return `以下插件的安装信息暂时无法核对，无法确认是否依赖它：${names}；卸载可能被拒绝。`
 }

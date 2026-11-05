@@ -1008,7 +1008,8 @@
   import {
     discardUpgradeCandidateConfirmation,
     registerExistingConfirmation,
-    uninstallDependentsText
+    uninstallDependentsText,
+    uninstallUnverifiableText
   } from './plain-confirmations'
   import InstallForm from './install-box.vue'
   import TerminalBox from './terminal.vue'
@@ -1995,14 +1996,17 @@
     // 只读预检仍依赖本插件的已安装插件；检查失败时照常打开对话框，
     // 服务端的卸载前依赖检查仍是最终防线。
     let dependentsWarning = ''
+    let unverifiableWarning = ''
     try {
       const inspection = await sandpackageApi.inspectUninstall(
         { appName: record.app },
         { showErrorMessage: false }
       )
       dependentsWarning = uninstallDependentsText(inspection.dependents)
+      unverifiableWarning = uninstallUnverifiableText(inspection.unverifiable)
     } catch {
       dependentsWarning = ''
+      unverifiableWarning = ''
     }
     try {
       await ElMessageBox({
@@ -2024,6 +2028,13 @@
                   'p',
                   { style: 'margin:0 0 12px;font-weight:600;color:var(--el-color-danger)' },
                   dependentsWarning
+                )
+              : null,
+            unverifiableWarning !== ''
+              ? h(
+                  'p',
+                  { style: 'margin:0 0 12px;font-weight:600;color:var(--el-color-warning)' },
+                  unverifiableWarning
                 )
               : null,
             h(

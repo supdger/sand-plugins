@@ -158,6 +158,7 @@ export interface UninstallInspection {
   title: string
   version: string | null
   dependents: UninstallDependent[]
+  unverifiable: UninstallDependent[]
 }
 
 export interface GlobalGuardInspection {

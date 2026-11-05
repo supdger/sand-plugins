@@ -14,7 +14,8 @@ import {
   discardUpgradeCandidateConfirmation,
   registerExistingConfirmation,
   uninstallDependentLabel,
-  uninstallDependentsText
+  uninstallDependentsText,
+  uninstallUnverifiableText
 } from '../../sandadmin-artd/src/views/plugin/sandpackage/install/plain-confirmations.ts'
 
 test('撤回升级包确认串与服务端 DISCARD app@version 校验一致', () => {
@@ -43,18 +44,28 @@ test('依赖方展示名：优先通俗标题，缺省回退标识', () => {
   assert.equal(uninstallDependentLabel({ app: 'sand-ai', title: 'sand-ai' }), 'sand-ai')
 })
 
-test('卸载依赖方警告：列出依赖方并说明后果', () => {
+test('卸载依赖方警告：列出依赖方并表达需先卸载依赖方', () => {
   const text = uninstallDependentsText([
     { app: 'sand-ai', title: 'SandAI AI 能力底座' },
     { app: 'sand-workflow', title: 'SandWorkflow 工作流' }
   ])
   assert.ok(text.includes('SandAI AI 能力底座（sand-ai）'))
   assert.ok(text.includes('SandWorkflow 工作流（sand-workflow）'))
-  assert.ok(text.includes('无法正常工作'))
+  // 与服务端硬拒绝一致：需要先卸载依赖方，而非暗示卸载会放行。
+  assert.ok(text.includes('需要先卸载'))
+  assert.ok(!text.includes('可能无法正常工作'))
   // 不出现内部名词或英文指令。
   assert.ok(!/config\.json|plugin_dependencies|DISCARD|sha256|JSON/.test(text))
 })
 
-test('无依赖方返回空串，由调用方决定是否渲染警告行', () => {
+test('无法核对的依赖方警告：说明可能被拒绝且不夸张承诺', () => {
+  const text = uninstallUnverifiableText([{ app: 'sand-ai', title: 'SandAI AI 能力底座' }])
+  assert.ok(text.includes('SandAI AI 能力底座（sand-ai）'))
+  assert.ok(text.includes('无法确认'))
+  assert.ok(!/config\.json|plugin_dependencies|DISCARD|sha256|JSON/.test(text))
+})
+
+test('无依赖方/无无法核对项返回空串，由调用方决定是否渲染警告行', () => {
   assert.equal(uninstallDependentsText([]), '')
+  assert.equal(uninstallUnverifiableText([]), '')
 })

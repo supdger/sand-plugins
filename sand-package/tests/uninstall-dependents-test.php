@@ -201,29 +201,72 @@ try {
     writeCandidate('sand-ai', ['version' => '0.4.8', 'state' => 2, 'title' => 'SandAI AI 能力底座'],
         depConfig('sand-iam', '0.8.6', str_repeat('a', 64)));
     $preview = (new InstallLogic('sand-iam'))->inspectUninstall();
-    check($failures, $preview['dependents'] === [],
+    check($failures, $preview['dependents'] === [] && $preview['unverifiable'] === [],
         '依赖方仅处于待安装候选状态时不拦截卸载');
 
     // ---- 5. 依赖方声明的是其它插件 → 不拦截 ----------------------------------------
-    put(registryRoot() . '/sand-ai/config.json',
-        (string) json_encode(depConfig('sand-other', '1.0.0', str_repeat('b', 64)), JSON_UNESCAPED_SLASHES));
     writeCandidate('sand-ai', ['version' => '0.4.8', 'state' => 1, 'title' => 'SandAI AI 能力底座'],
         depConfig('sand-other', '1.0.0', str_repeat('b', 64)));
     $preview = (new InstallLogic('sand-iam'))->inspectUninstall();
-    check($failures, $preview['dependents'] === [],
+    check($failures, $preview['dependents'] === [] && $preview['unverifiable'] === [],
         '依赖方声明其它依赖目标时不算本插件依赖方');
 
-    // ---- 6. 依赖方配置缺失 → 跳过不报错 ---------------------------------------------
+    // ---- 5b. list 形态依赖声明同样计入依赖方 -----------------------------------------
+    put(registryRoot() . '/sand-ai/config.json',
+        (string) json_encode(['schema' => 1, 'plugin_dependencies' => ['sand-iam']], JSON_UNESCAPED_SLASHES));
+    $preview = (new InstallLogic('sand-iam'))->inspectUninstall();
+    check($failures, count($preview['dependents']) === 1
+        && $preview['dependents'][0]['app'] === 'sand-ai',
+        'list 形态 plugin_dependencies 声明也计入依赖方');
+
+    // ---- 5c. 超限（>1MiB）配置 → 无法核对，列入 unverifiable ---------------------------
+    $oversized = str_repeat(' ', 1048577);
+    put(registryRoot() . '/sand-ai/config.json', $oversized);
+    $preview = (new InstallLogic('sand-iam'))->inspectUninstall();
+    check($failures, $preview['dependents'] === []
+        && count($preview['unverifiable']) === 1
+        && $preview['unverifiable'][0]['app'] === 'sand-ai',
+        '超限配置不可证明安全 → 列入 unverifiable 而非静默跳过');
+
+    // ---- 5d. 超限 + uninstall() 用独立文案拒绝 ----------------------------------------
+    $message = '';
+    try {
+        (new InstallLogic('sand-iam'))->uninstall();
+    } catch (\plugin\sandadmin\exception\ApiException $error) {
+        $message = $error->getMessage();
+    }
+    check($failures, str_contains($message, '无法确认以下已安装插件是否依赖本插件')
+        && str_contains($message, 'sand-ai'),
+        '存在无法核对的依赖方时 uninstall() 拒绝并列出待检查插件');
+
+    // ---- 5e. 超过旧 16KB 但在 1MiB 内的合法配置正常识别依赖 ----------------------------
+    $largeConfig = depConfig('sand-iam', '0.8.6', str_repeat('a', 64));
+    $largeConfig['notes'] = str_repeat('x', 20480);
+    put(registryRoot() . '/sand-ai/config.json',
+        (string) json_encode($largeConfig, JSON_UNESCAPED_SLASHES));
+    $preview = (new InstallLogic('sand-iam'))->inspectUninstall();
+    check($failures, count($preview['dependents']) === 1
+        && $preview['dependents'][0]['app'] === 'sand-ai'
+        && $preview['unverifiable'] === [],
+        '大于 16KiB 的合法配置正常识别依赖（旧上限不再漏判）');
+
+    // ---- 6. 依赖方配置缺失 → 无法核对，列入 unverifiable ------------------------------
+    put(registryRoot() . '/sand-ai/config.json',
+        (string) json_encode(depConfig('sand-other', '1.0.0', str_repeat('b', 64)), JSON_UNESCAPED_SLASHES));
     unlink(registryRoot() . '/sand-ai/config.json');
     $preview = (new InstallLogic('sand-iam'))->inspectUninstall();
-    check($failures, $preview['dependents'] === [],
-        '依赖方缺少配置文件时跳过且不报错');
+    check($failures, $preview['dependents'] === []
+        && count($preview['unverifiable']) === 1
+        && $preview['unverifiable'][0]['app'] === 'sand-ai',
+        '依赖方缺少配置文件时列入 unverifiable（不静默漏判）');
 
-    // ---- 7. 依赖方配置损坏 → 跳过不报错 ---------------------------------------------
+    // ---- 7. 依赖方配置损坏 → 列入 unverifiable ----------------------------------------
     put(registryRoot() . '/sand-ai/config.json', '{broken json');
     $preview = (new InstallLogic('sand-iam'))->inspectUninstall();
-    check($failures, $preview['dependents'] === [],
-        '依赖方配置不可解析时跳过且不报错');
+    check($failures, $preview['dependents'] === []
+        && count($preview['unverifiable']) === 1
+        && $preview['unverifiable'][0]['app'] === 'sand-ai',
+        '依赖方配置不可解析时列入 unverifiable');
 
     // ---- 8. 无任何依赖方 → uninstall() 通过依赖检查（继续走到后续生命周期）-----------
     // 桩环境没有真实数据库：越过依赖检查后会在卸载 SQL 阶段失败，断言失败
@@ -238,7 +281,8 @@ try {
     } catch (\Throwable $error) {
         $message = $error->getMessage();
     }
-    check($failures, $message !== '' && !str_contains($message, '仍被以下已安装插件依赖'),
+    check($failures, $message !== '' && !str_contains($message, '仍被以下已安装插件依赖')
+        && !str_contains($message, '无法确认以下已安装插件是否依赖'),
         '无已安装依赖方时 uninstall() 不被依赖检查拦截');
 } finally {
     removeTree($hostRoot);
