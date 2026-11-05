@@ -84,7 +84,7 @@
     try {
       const result = await getSandIamAdmin('application-business-action/pending-claims', {
         application_id: parsed
-      })
+      }, false)
       if (disposed || !canReadClaims.value || version !== claimVersion) return
       const payload = isRecord(result) && isRecord(result.data) ? result.data : result
       if (!isRecord(payload) || payload.application_id !== parsed || !Array.isArray(payload.items)) throw new Error('待认领报告返回的应用或格式不匹配，请重新加载。')
@@ -118,7 +118,7 @@
     applicationLoading.value = true
     applicationError.value = ''
     try {
-      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords })
+      const result = await listSandIamResource('application', { page: 1, limit: 100, keywords }, false)
       if (disposed || attempt !== applicationRequest) return
       const selected = applications.value.find(row => String(row.id) === applicationId.value)
       const rows = listRows(result)

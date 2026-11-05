@@ -394,7 +394,7 @@
     referenceLoading[key] = true
     referenceError[key] = ''
     try {
-      const response = await listSandIamResource(endpoint, params)
+      const response = await listSandIamResource(endpoint, params, false)
       if (disposed || referenceRequestId[key] !== requestId ||
         (relationTarget && relationIdentity !== identityId.value)) return
       const options = referenceRows(response)
@@ -608,7 +608,7 @@
     loading.value = true
     requestError.value = null
     try {
-      const response = await listSandIamResource(props.endpoint, buildParams())
+      const response = await listSandIamResource(props.endpoint, buildParams(), false)
       if (disposed || requestId !== listRequestId) return
       const page = normalizePage(response)
       rows.value = page.data
@@ -848,7 +848,7 @@
     const current = () => version === editorVersion && editorOpen.value &&
       editorQuery === JSON.stringify(buildParams()) && editorListVersion === listRequestId
     if (props.writeMode === 'credential') {
-      await runWrite(() => postSandIamAction('credential/issue', payload), '凭证已签发', undefined, true, current,
+      await runWrite(() => postSandIamAction('credential/issue', payload, false), '凭证已签发', undefined, true, current,
         typeof payload.workload_client_id === 'number' ? { workload_client_id: payload.workload_client_id } : {})
       return
     }
@@ -897,7 +897,7 @@
     }
     try {
       if (!current() || !canDisable.value) return
-      await runWrite(() => disableSandIamResource(props.endpoint, id), '已停用', undefined, false, current)
+      await runWrite(() => disableSandIamResource(props.endpoint, id, false), '已停用', undefined, false, current)
     } finally {
       actionConfirming.value = false
     }
@@ -960,7 +960,7 @@
           ? '已轮换'
           : '已保存'
     try {
-      await runWrite(() => postSandIamAction(path, { id }), successText,
+      await runWrite(() => postSandIamAction(path, { id }, false), successText,
         describeSandIamError, false, current)
     } finally {
       actionConfirming.value = false
@@ -996,7 +996,7 @@
       })
       if (!allowed()) return
       // 轮换响应中的一次性密钥必须交付；换页后仍由 runWrite 保存，不能丢弃。
-      await runWrite(() => postSandIamAction(path, { id }), rotates ? '已轮换' : '已撤销',
+      await runWrite(() => postSandIamAction(path, { id }, false), rotates ? '已轮换' : '已撤销',
         describeSandIamError, rotates, rotates ? () => true : current,
         typeof row.workload_client_id === 'number' ? { workload_client_id: row.workload_client_id } :
           typeof row.application_id === 'number' ? { application_id: row.application_id } : {})
@@ -1024,7 +1024,7 @@
         type: 'warning', confirmButtonText: '确认撤销', cancelButtonText: '取消'
       })
       if (!valid()) return
-      await runWrite(() => postSandIamAction(`${props.endpoint}/revoke`, { id }),
+      await runWrite(() => postSandIamAction(`${props.endpoint}/revoke`, { id }, false),
         '已撤销', describeSandIamError, false, valid)
     } catch {
       // 取消确认不会改变当前列表。
@@ -1052,7 +1052,7 @@
         : { identity_id: identity, role_id: target }
     const selectedIdentity = identityId.value
     const version = referenceRequestId[key]
-    await runWrite(() => postSandIamAction(`${props.endpoint}/grant`, data), '已保存',
+    await runWrite(() => postSandIamAction(`${props.endpoint}/grant`, data, false), '已保存',
       describeSandIamError, false,
       () => selectedIdentity === identityId.value && version === referenceRequestId[key])
   }

@@ -26,11 +26,13 @@ function compactParams(params: SandIamListParams): Record<string, string | numbe
 
 export function listSandIamResource(
   endpoint: SandIamResourceEndpoint,
-  params: SandIamListParams
+  params: SandIamListParams,
+  showErrorMessage = true
 ): Promise<unknown> {
   return request.get<unknown>({
     url: `${SAND_IAM_ADMIN_PREFIX}/${endpoint}/index`,
-    params: compactParams(params)
+    params: compactParams(params),
+    showErrorMessage
   })
 }
 
