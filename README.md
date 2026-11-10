@@ -34,6 +34,6 @@ SandAdmin 主体和统一插件目录位于 [supdger/sandadmin](https://github.c
 
 ## 许可与反馈
 
-本仓只包含索引与交接文档，不单独声明许可；各组件的许可以其仓库内的 LICENSE 为准：[Sand Core](https://github.com/supdger/sand-core/blob/main/LICENSE) 与 [Sand Package](https://github.com/supdger/sand-package/blob/main/LICENSE) 为 MIT，[SandAI](https://github.com/supdger/sand-ai/blob/main/LICENSE) 为 MIT，[SandIAM](https://github.com/supdger/sand-iam/blob/main/LICENSE) 为 Apache-2.0，[SandWorkflow](https://github.com/supdger/sand-workflow/blob/main/LICENSE) 为 AGPL-3.0。
+本仓采用 MIT 许可证，全文见 [LICENSE](LICENSE)。各组件的许可以其仓库内的 LICENSE 为准：[Sand Core](https://github.com/supdger/sand-core/blob/main/LICENSE) 与 [Sand Package](https://github.com/supdger/sand-package/blob/main/LICENSE) 为 MIT，[SandAI](https://github.com/supdger/sand-ai/blob/main/LICENSE) 为 MIT，[SandIAM](https://github.com/supdger/sand-iam/blob/main/LICENSE) 为 Apache-2.0，[SandWorkflow](https://github.com/supdger/sand-workflow/blob/main/LICENSE) 为 AGPL-3.0。
 
 组件的问题与建议请提交到对应仓库的 Issues；与本仓索引或交接文档有关的问题提交到 [Issues](https://github.com/supdger/sand-plugins/issues)。
